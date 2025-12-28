@@ -6,8 +6,8 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// КОНФИГУРАЦИЯ
 const BOT_TOKEN = '7908672389:AAFqJsmCmlJHSckewNPue_XVa_WTxKY7-Aw';
 const ADMIN_ID = 6846149935;
 const ROOT_FOLDER_ID = '1BsUQsAIKOEd9Q07vsT1daq-3sRTn0ck3';
@@ -38,25 +38,20 @@ async function getOrCreateFolder(name, parentId) {
     } catch (e) { return parentId; }
 }
 
-// ПРОВЕРКА СВЯЗИ
-app.get('/status', (req, res) => {
-    res.json({ status: "ok", message: "Server is ready" });
-});
+app.get('/status', (req, res) => res.json({ status: "ok" }));
 
-// ПРИЕМ ФОТО
 app.post('/upload', async (req, res) => {
-    console.log("--- ВХОДЯЩИЙ ЗАПРОС НА ФОТО ---");
+    console.log("--- ПОПЫТКА ЗАГРУЗКИ ФОТО ---");
     try {
         const { worker, city, client, address, pod, image, coords, workType } = req.body;
         
-        if (!image) {
-            console.log("ОШИБКА: Нет данных изображения");
-            return res.status(400).json({ success: false });
-        }
+        if (!image) return res.status(400).json({ success: false, error: "No image" });
+
+        // Очищаем и конвертируем Base64 в Buffer
+        const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+        const imageBuffer = Buffer.from(base64Data, 'base64');
 
         const date = new Date().toLocaleDateString('ru-RU');
-        
-        // Пошаговое создание папок
         const f1 = await getOrCreateFolder(worker || "Сотрудник", ROOT_FOLDER_ID);
         const f2 = await getOrCreateFolder(city || "Город", f1);
         const f3 = await getOrCreateFolder(date, f2);
@@ -66,25 +61,19 @@ app.post('/upload', async (req, res) => {
         
         await drive.files.create({
             resource: { name: fileName, parents: [f4] },
-            media: { mimeType: 'image/jpeg', body: Buffer.from(image, 'base64') }
+            media: { mimeType: 'image/jpeg', body: require('stream').Readable.from(imageBuffer) }
         });
         
-        console.log(`✅ ЗАГРУЖЕНО НА ДИСК: ${fileName}`);
-
-        // Уведомление в ТГ (не блокирует ответ телефону)
-        bot.sendMessage(ADMIN_ID, `✅ ФОТО ПРИНЯТО\n🏠 ${address}\n👤 ${worker}\n🛠 ${workType || 'Работа'}`)
-           .catch(e => console.log("ТГ не отправил, но это не важно"));
-
+        console.log(`✅ УСПЕХ: ${fileName}`);
+        bot.sendMessage(ADMIN_ID, `✅ ПРИНЯТО: ${address}\n👤 ${worker}`).catch(e => {});
+        
         res.json({ success: true });
     } catch (e) {
-        console.error("❌ КРИТИЧЕСКАЯ ОШИБКА:", e.message);
+        console.error("❌ ОШИБКА:", e.message);
         res.status(500).json({ success: false, error: e.message });
     }
 });
 
-// ЛИЦЕНЗИЯ
-app.post('/check-license', (req, res) => {
-    res.json({ status: "active", expiry: Date.now() + 31536000000 });
-});
+app.post('/check-license', (req, res) => res.json({ status: "active", expiry: Date.now() + 31536000000 }));
 
-app.listen(process.env.PORT || 3000, () => console.log("--- LOGIST_X ONLINE ---"));
+app.listen(process.env.PORT || 3000, () => console.log("--- LOGIST_X READY ---"));
