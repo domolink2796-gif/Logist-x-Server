@@ -1,50 +1,62 @@
 const express = require('express');
 const cors = require('cors');
+const { google } = require('googleapis');
+const { Readable } = require('stream');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Твой токен (я вставила его максимально аккуратно)
-const DBX_TOKEN = 'Sl.u.AGMVlhUlBPwfAlQ5EgUo0TlXIKvu-55LFR2UoIZxD8ZnUFNAZlQnx6KWgBeBSigRrN_nd7zhILVcqf-Gu4hoNwhSi-18CELbPRP-GVz9Ck2TenmVnLuWYFjLEpe2Fqjt7KGkMLlt9I2acl-a7q9vXdZ2chrj9zqCS2qxfRCM-LO8RWrJq2Ho8Pdy0Okcdf_-MERWQHE0cAYnUoSydAQTHokOe5agU_sXXS97VRJ4C8y0NmMQpXqgC6wHjp0QHZ45_unSA0s2DKbQp66Re2_ascZ28ZjGZ0cBb_4Z1PW4tETVfcAsrZz1y2_lHcZA_EBAtyfoZrFq93VjcgM0YUrXbtxsK0ofMJ2EEYckObeV9xloefR5PdZ2pufzXtnptb67aU338hOQ2O5IzxNrWIwXnVUsVmMwAdxVGfThx3dJEqrwyY1x-3G3NK1KpsHAOkkjU743mn_xufFUGWNL_CeEfmekLchYWGeG7CJO1muUt3e_Ynm1CcYjY450K3TCzXhakC6OSYrLuGqD6XKeL_vhKnuy9Xg3ehMcp68NAvkczBiEi72R1IhkYRUYChSPXhZuvLR3mBka6MVqwKsn11tcOovfodPF7eTvph4MFhSTmVkXyeg2S_O71aKHoyjMUvC7-p84tuasY_7X35B7jYAYiHsb048OW7XmkGsDZO6A4u4axPyHd-B3mu4OuoPLCwYfdo7EhVJfm8f6O7CQCd8dby7sLA_m_4M0pg3uCxju-rCzarapz8gr-DZmtMx2HHksMLzkf-4nnvb90AKpcEqf8hvo8y0_PAMXQ6TMHjsqg_nWF-y9NjCvFqNvHOIDpDy2NINlgDnA8AcUKsRwHLt0cVAxPJp56KAttkR8bRZB7UXWoAEHgBdJucTJ8WNpn1qRvjHcnXJMJavbKEd1U_sn_5hlkRGBJWexNKlfHxZQr0YGGtLq09VRAnufKOKubVwgSsdwGeoxYKcyksYtoYNH7Funzs5Qbgy1efH_-0op_nIv_3noPzPyPisq50ik5BApuMXNfQ1P31GpyOpcUUs7fdaPD-S3zA-5p3s-KjiPpELGRP_Fb7GCu7ZjOmytWqxMhfnd5Nulydlv4y1b4QMNvIZ5jZWt6759qjWqlE4J4mbJfjZ6jYQMFq1pXiaChjW2rP4jfiY2D0Zz3N7ReQu9wWdTi1TzwBK_k-5cfh6_VGdUVcZglDN8oScLJbjWaT0ZwjK2nD2yWalWuttjvC47xw2ioF-gwqGEjwTBMp58AeFQaRm3sJ8kywccbQOVvfUWn-A2u16JoDrZ2PZAY8ojtFAJSa_iNDvAfMRG8_GjqTS8YL4pPLRG5Peh6NeL6ZE';
+const KEY = {
+  "client_email": "firebase-adminsdk-fbsvc@logistx-system.iam.gserviceaccount.com",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC0Ub6OldzhZhgV\n+47pxI9FTAVkuTF0h7IpL65to/V1b2WHEkbR2AxBkMGwWwL1F28Y864jTlNrlKeY\n/IyByZ4n6P0dPiJdtVccJ8b9He0Npr3L96H8fa/+2J2MoUbiUNaqcwtvoYSsaOxx\njolenopEJWCO6Dbgx/8yKBS3wxRy/82ermvXec4b3RlXYcePG9HW3oteW/Bw0jOn\nUeEeYcWQy1VdYlnaiX13UKuGeJRr1Wj0XEDjBaysBavdEyTjOzGJ78DrM2FARHhi\njueT/fik6bpxn8PewiySPmxpWT0InMmPfESyZ65QLJ8tmVTmfjs0VsxRPTKB6n78\nJ2EptGMdAgMBAAECggEAB3CX/CoSwvoDZGTMsLh7cNCCKHW7pKM0pp5hBAUPy5id\nB8WpRl8zokDmvPAEXzhoTQ9A0BQbPQUVJSrGYVSAQgVK7Dn0EQm6Xl8FxsvFTBrl\nGdVNya0l5c3qMjM1SYEsWjwE7MYtQy/REZ5f7Jd9/PHN2hearAuUa+1bbXmPDm+N\nwYoH+XAaKJf/aIdAh7zaMFZ8cU76+TFyShA9Pm2TA998SLIBTE+pqhb/x26sAr0P\nY/F7XStgQT5GgxV2OGfEthXPsRe2gECzcASByAbiVathPJteJlDgzbnRu+gTcN14\nSb6LHFw001jqCpXboqWZwRSDAeeqA3FdUtGi0j4mAQKBgQDW8ehvkyQmin3XXBsa\ne1M9iRrnHljnKNEadcX0dUgf8q8qTUyqcRHoPWvhjI/1AFI/SHyTSgRmvtxl3TUs\nG5f95wRnJ0n53OoxHs6ZhitEciShhXszGtQtPbrBfnjKfz9lna9r958WDmmupp0/\n9SpVAD/XEKS86N9fXj+4AzRspQKBgQDWwsIOHbM7Mbxq1MaTa+OpxuI+BV5GnSvw\nuB+uriKZXLy4rcj/2vxRpuVekwym3ENXBSn380EjZ/+jybc4mmJWrgqdRv9oJhQ/\nn2bDBW2/IM8MDEZjKYNJr+k1vIETxd7LyEEGp+nO1OkOfefM8TXxsHeEjNbzyfRU\PQ6C6dD7GQKBgAI/IwvPgOg6OFiA6POc6GDTRwm1Yn6ACbd6FaiZdTiIQ9ZwWmXJ\qsM/qRoBaxvHdhSdQFgVxPgB9LHH3x9n5m3L9VrSqU5IRdZfmQ83vMoJW2Koz4HY\nPPGAHKybEs4jCFmajVPWkb4cRnSB31Dk0h1zVDd+QAqNcJBBnu7gcbLVAoGBAJ7w\n/tuhoX9ivNa36Ms8Yv7IwbIzGOXb9qQuMMx/9f1YxBdODt9Eu87WXRUUcZ2gkHn7\nyWbHcmL42hrm9CIBKFyMbDCgVfBHll7L4yrcfq+gYXvCLem/1HmZplhtzX3LyKs6\n5t09Mm4v5tgh2Ic10b2w45OHBKLiyV/63B2JXHApAoGAKfmGKx8MsH8ULi682WAA\nWpiVZpkyWupk7srezMBoTSOxHG0MFhgLWueadW5Udrf7CCN6IPwFgiczi+TtwFJe\nWP/qJaGgGsBK8Z2fedX1oAtpoqzoYeh4m1MYePDyR0NdO/68vsBPGwMvD9mjoko3\nRgCzfWgr1AUixmoIVi7J1fU=\n-----END PRIVATE KEY-----\n"
+};
+
+const PARENT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A';
+
+const auth = new google.auth.JWT(KEY.client_email, null, KEY.private_key, ['https://www.googleapis.com/auth/drive']);
+const drive = google.drive({ version: 'v3', auth });
+
+async function getOrCreateFolder(name, parentId) {
+    const res = await drive.files.list({
+        q: `name='${name}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+        fields: 'files(id)'
+    });
+    if (res.data.files.length > 0) return res.data.files[0].id;
+    const folder = await drive.files.create({
+        resource: { name, parentId, mimeType: 'application/vnd.google-apps.folder' },
+        fields: 'id'
+    });
+    return folder.data.id;
+}
 
 app.post('/upload', async (req, res) => {
-    console.log("--- СТАРТ ЗАГРУЗКИ ---");
+    console.log("🚀 Загрузка: Имя -> Город -> Клиент...");
     try {
         const { image, address, city, worker, client, pod } = req.body;
-        const date = new Date().toLocaleDateString('ru-RU').replace(/\//g, '-');
-        const fileName = `${address}_p${pod}_${Date.now()}.jpg`;
-        const fullPath = `/${client}/${city}/${date}/${worker}/${fileName}`;
+        const dateStr = new Date().toLocaleDateString('ru-RU').replace(/\./g, '-');
+        
+        // ПОРЯДОК: ИМЯ -> ГОРОД -> КЛИЕНТ
+        const workerFolder = await getOrCreateFolder(worker || "БезИмени", PARENT_ID);
+        const cityFolder = await getOrCreateFolder(city || "БезГорода", workerFolder);
+        const clientFolder = await getOrCreateFolder(client || "БезКлиента", cityFolder);
 
-        // Важно: Dropbox требует этот заголовок в JSON формате, но без лишних символов
-        const dbxArg = JSON.stringify({
-            path: fullPath,
-            mode: 'add',
-            autorename: true
-        }).replace(/[^\x00-\x7F]/g, c => "\\u" + ("000" + c.charCodeAt(0).toString(16)).slice(-4));
+        // В названии файла оставляем дату и адрес
+        const fileName = `${dateStr}_${address}_п${pod || 0}_${Date.now()}.jpg`;
+        const buffer = Buffer.from(image, 'base64');
 
-        const response = await fetch('https://content.dropboxapi.com/2/files/upload', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${DBX_TOKEN.trim()}`,
-                'Dropbox-API-Arg': dbxArg,
-                'Content-Type': 'application/octet-stream'
-            },
-            body: Buffer.from(image, 'base64')
+        await drive.files.create({
+            resource: { name: fileName, parents: [clientFolder] },
+            media: { mimeType: 'image/jpeg', body: Readable.from(buffer) },
+            fields: 'id'
         });
 
-        if (response.ok) {
-            console.log("✅ УСПЕХ! Файл в облаке.");
-            res.json({ success: true });
-        } else {
-            const errText = await response.text();
-            console.log("❌ ОШИБКА DROPBOX:", errText);
-            res.status(400).send(errText);
-        }
+        console.log(`✅ Готово! Файл ${fileName} сохранен.`);
+        res.json({ success: true });
     } catch (e) {
-        console.log("❌ ОШИБКА СЕРВЕРА:", e.message);
+        console.error("❌ ОШИБКА:", e.message);
         res.status(500).send(e.message);
     }
 });
 
-app.listen(process.env.PORT || 3000, () => console.log("Elite Server Active"));
+app.listen(process.env.PORT || 3000, () => console.log("Google Drive Server Active"));
