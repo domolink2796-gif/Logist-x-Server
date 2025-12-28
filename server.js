@@ -1,50 +1,61 @@
 const express = require('express');
-const { google } = require('googleapis');
+const axios = require('axios');
 const cors = require('cors');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-const P_KEY = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC0Ub6OldzhZhgV\n+47pxI9FTAVkuTF0h7IpL65to/V1b2WHEkbR2AxBkMGwWwL1F28Y864jTlNrlKeY\n/IyByZ4n6P0dPiJdtVccJ8b9He0Npr3L96H8fa/+2J2MoUbiUNaqcwtvoYSsaOxx\njolenopEJWCO6Dbgx/8yKBS3wxRy/82ermvXec4b3RlXYcePG9HW3oteW/Bw0jOn\nUeEeYcWQy1VdYlnaiX13UKuGeJRr1Wj0XEDjBaysBavdEyTjOzGJ78DrM2FARHhi\njueT/fik6bpxn8PewiySPmxpWT0InMmPfESyZ65QLJ8tmVTmfjs0VsxRPTKB6n78\nJ2EptGMdAgMBAAECggEAB3CX/CoSwvoDZGTMsLh7cNCCKHW7pKM0pp5hBAUPy5id\nB8WpRl8zokDmvPAEXzhoTQ9A0BQbPQUVJSrGYVSAQgVK7Dn0EQm6Xl8FxsvFTBrl\nGdVNya0l5c3qMjM1SYEsWjwE7MYtQy/REZ5f7Jd9/PHN2hearAuUa+1bbXmPDm+N\nwYoH+XAaKJf/aIdAh7zaMFZ8cU76+TFyShA9Pm2TA998SLIBTE+pqhb/x26sAr0P\nY/F7XStgQT5GgxV2OGfEthXPsRe2gECzcASByAbiVathPJteJlDgzbnRu+gTcN14\nSb6LHFw001jqCpXboqWZwRSDAeeqA3FdUtGi0j4mAQKBgQDW8ehvkyQmin3XXBsa\ne1M9iRrnHljnKNEadcX0dUgf8q8qTUyqcRHoPWvhjI/1AFI/SHyTSgRmvtxl3TUs\nG5f95wRnJ0n53OoxHs6ZhitEciShhXszGtQtPbrBfnjKfz9lna9r958WDmmupp0/\n9SpVAD/XEKS86N9fXj+4AzRspQKBgQDWwsIOHbM7Mbxq1MaTa+OpxuI+BV5GnSvw\nuB+uriKZXLy4rcj/2vxRpuVekwym3ENXBSn380EjZ/+jybc4mmJWrgqdRv9oJhQ/\nn2bDBW2/IM8MDEZjKYNJr+k1vIETxd7LyEEGp+nO1OkOfefM8TXxsHeEjNbzyfRU\PQ6C6dD7GQKBgAI/IwvPgOg6OFiA6POc6GDTRwm1Yn6ACbd6FaiZdTiIQ9ZwWmXJ\qsM/qRoBaxvHdhSdQFgVxPgB9LHH3x9n5m3L9VrSqU5IRdZfmQ83vMoJW2Koz4HY\PPGAHKybEs4jCFmajVPWkb4cRnSB31Dk0h1zVDd+QAqNcJBBnu7gcbLVAoGBAJ7w\n/tuhoX9ivNa36Ms8Yv7IwbIzGOXb9qQuMMx/9f1YxBdODt9Eu87WXRUUcZ2gkHn7\nyWbHcmL42hrm9CIBKFyMbDCgVfBHll7L4yrcfq+gYXvCLem/1HmZplhtzX3LyKs6\n5t09Mm4v5tgh2Ic10b2w45OHBKLiyV/63B2JXHApAoGAKfmGKx8MsH8ULi682WAA\nWpiVZpkyWupk7srezMBoTSOxHG0MFhgLWueadW5Udrf7CCN6IPwFgiczi+TtwFJe\nWP/qJaGgGsBK8Z2fedX1oAtpoqzoYeh4m1MYePDyR0NdO/68vsBPGwMvD9mjoko3\nRgCzfWgr1AUixmoIVi7J1fU=\n-----END PRIVATE KEY-----\n";
+// ВСТАВЬ СВОЙ ТОКЕН НИЖЕ МЕЖДУ КАВЫЧКАМИ
+const DROPBOX_TOKEN = 'Sl.u.AGMQi4Tv5zDLFH0PCu8O2lX-rGA1Ad5Xp_1R3E2ryqApDVho5MDqM5ESnPpvWQ1cNO-dw2YuBHz-YC_ciGo_focnemsbSIYRUq3Q5zhWTvfuO9OIow5iAlH_rjTZ_nOJx-ShuI1Bu0Ig6Z90rcsvG1r763FzVnoyqIDNHG-J7QUSoqlIRqN7PIznzjSyzZQg-VDv42N3mxUuDrWV1_UPEr5xSXOuY1da2LWU7QHm7vVVozt7zCzwVow91gcIll8UAP6xK1ge81cxb-OG5cfg_IjTYznyutDJ7-8-35wRFR90ztJhBNt1bn6IO31jOEcKNpmvZO9xO41y8QZDGem5UiGCZelVFHMz3pzWfZmmt9co_ONM3JrtsgPrfAdwILhCzHOdue6Aj4OAFP7ToahWC_6PnfhaWhO-UoIo4geIODhTeMMGWCNczCAJYlSpkVFwHgwClqB-oGxshK_jeA4K-OhG-lJwx-YSEOXRjcRAIDLybBPQCCaQi5hrQWBskp91eOdehReBQ92T_8qbtQDopCRh83zLXxhZjxhbrdOqd5X3jsT5KyiRIvC_7F1n1NnfEMc75nYO36HFzffvmkTxEPacVbd-vUvlYytcD37k3hNyvLwVqawrh1l1MT8g5vLXjWYczT4N3M4a-8eq-A_F7GhCnFOxbt3F0m7440-NSb3psYJLI4uBc7LJsOmytu1scOUivhGFPgISEEF6WUJOUD6ylKxEsLPK5qRr0jCt_ze2BaXbvIskc9eAoCPL-GQ6--KqNnNtKUoyiKp-c1uJe2f1gePLKaAsGq-A0E-3ZRMD1H3ce0wzrC3n7Ogfn-Nhc2dNRh7p_bII5pvNI4QsCQaf65EucmDEojc-PU0F7aSV8KCdvHX2eciLaQkXKS1mZtyEpMa94-ZxJce5ghKww-b1-kLOJGLeb7F-6F5z1NPx4ucYcviHfE1b89D_S7nODjbEz7f2H-cQkK6orujW3CKPARUY0ZVt1SLwk93c2oPWniSA_peCWAOB55axKtxrO37QISeDDQ7p3LNjrxqFt8jMGJ3-LwACXZdY-I7HkQ0d8QoWdvsqmJT3JpsosGdQZInW6U2him_0wdPXk0qVNiO3MtCqqtkklwmgkH69jGYBP-o-cp2xfQ5G-ylvU3l3IEf2aUm4cy6RcRncHuSKPHrqjNu3EUU1LSIc6NWZodGGQWmdwnHQtdL-HZDX6dwApcC8fu-1gPY0UJvUMViaG7LM6iOilwOxXfNE1M-4Vkaavq8bUSZmJfTOTn1S2-AxhdnPL0vzoesz-q7uPgBLcE_s-MkiRfMTQrxcDvvItVHYJHa9sI8TcKX6pVJCXQIqECY';
 
-const auth = new google.auth.JWT(
-    "firebase-adminsdk-fbsvc@logistx-system.iam.gserviceaccount.com",
-    null,
-    P_KEY.replace(/\\n/g, '\n'),
-    ['https://www.googleapis.com/auth/drive']
-);
-const drive = google.drive({ version: 'v3', auth });
-
-app.get('/status', (req, res) => res.json({ status: "ok" }));
+app.get('/status', (req, res) => res.json({ status: "Dropbox Server Online" }));
 
 app.post('/upload', async (req, res) => {
-    console.log("--- СТАРТ ЗАГРУЗКИ ---");
+    console.log("--- ПОЛУЧЕН ЗАПРОС НА DROPBOX ---");
     try {
-        const { image, address, pod, workType } = req.body;
+        const { image, address, pod, workType, city } = req.body;
         
-        const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
-        const fileName = `${address || 'отчет'}_п.${pod || '0'}_${workType || ''}.jpg`;
+        if (!image) return res.status(400).json({ success: false, error: "No image" });
 
-        await drive.files.create({
-            resource: { 
-                name: fileName, 
-                parents: ['1BsUQsAIKOEd9Q07vsT1daq-3sRTn0ck3'] // ЛЬЕМ ПРЯМО В КОРЕНЬ ПАПКИ ДЛЯ ТЕСТА
-            },
-            media: { 
-                mimeType: 'image/jpeg', 
-                body: require('stream').Readable.from(Buffer.from(base64Data, 'base64')) 
-            }
-        });
+        // Убираем лишний заголовок base64
+        const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+        const buffer = Buffer.from(base64Data, 'base64');
+
+        // Формируем дату для папки
+        const date = new Date().toLocaleDateString('ru-RU').replace(/\//g, '-');
         
-        console.log("✅ УРА! ФАЙЛ НА ДИСКЕ!");
-        res.json({ success: true });
+        // Формируем путь: /LogistX / [ТипРаботы] / [Город] / [Дата] / [Адрес].jpg
+        const folderPath = `/LogistX/${workType || 'Без_категории'}/${city || 'Без_города'}/${date}`;
+        const fileName = `${address || 'отчет'}_п.${pod || '0'}.jpg`;
+        const fullPath = `${folderPath}/${fileName}`;
+
+        console.log(`Загрузка в: ${fullPath}`);
+
+        const response = await axios({
+            method: 'post',
+            url: 'https://content.dropboxapi.com/2/files/upload',
+            headers: {
+                'Authorization': `Bearer ${DROPBOX_TOKEN}`,
+                'Content-Type': 'application/octet-stream',
+                'Dropbox-API-Arg': JSON.stringify({
+                    path: fullPath,
+                    mode: 'add',
+                    autorename: true,
+                    mute: false
+                })
+            },
+            data: buffer
+        });
+
+        console.log("✅ УСПЕШНО ЗАГРУЖЕНО В DROPBOX!");
+        res.json({ success: true, path: response.data.path_display });
+
     } catch (e) {
-        console.error("❌ ОШИБКА DRIVE:", e.message);
+        console.error("❌ ОШИБКА DROPBOX:", e.response ? e.response.data : e.message);
         res.status(500).json({ success: false, error: e.message });
     }
 });
 
-app.post('/check-license', (req, res) => res.json({ status: "active" }));
-
-app.listen(process.env.PORT || 3000, () => console.log("--- SERVER RUNNING ---"));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Сервер на порту ${PORT} готов к Dropbox`));
