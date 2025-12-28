@@ -25,7 +25,6 @@ const drive = google.drive({
 
 let licenses = {}; 
 
-// --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ПАПОК ---
 async function getOrCreateFolder(name, parentId) {
     try {
         const res = await drive.files.list({
@@ -33,54 +32,50 @@ async function getOrCreateFolder(name, parentId) {
             fields: 'files(id)'
         });
         if (res.data.files && res.data.files.length > 0) return res.data.files[0].id;
-        
         const folder = await drive.files.create({
             resource: { name: name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
             fields: 'id'
         });
         return folder.data.id;
-    } catch (err) {
-        console.error("Ошибка папки:", err);
-        throw err;
-    }
+    } catch (err) { return parentId; }
 }
 
-// --- ПРИЕМ ДАННЫХ И СОЗДАНИЕ ИЕРАРХИИ ---
 app.post('/upload', async (req, res) => {
     const data = req.body;
     try {
-        const dateStr = new Date().toLocaleDateString('ru-RU').replace(/\//g, '.');
+        const dateStr = new Date().toLocaleDateString('ru-RU');
         
-        // Поэтапное создание пути: Имя -> Город -> Дата -> Клиент
-        const workerFolder = await getOrCreateFolder(data.worker || "Без_имени", ROOT_FOLDER_ID);
-        const cityFolder = await getOrCreateFolder(data.city || "Без_города", workerFolder);
-        const dateFolder = await getOrCreateFolder(dateStr, cityFolder);
-        const clientFolder = await getOrCreateFolder(data.client || "ОБЩИЙ", dateFolder);
+        // Иерархия: Имя -> Город -> Дата -> Клиент
+        const f1 = await getOrCreateFolder(data.worker || "Монтажник", ROOT_FOLDER_ID);
+        const f2 = await getOrCreateFolder(data.city || "Город", f1);
+        const f3 = await getOrCreateFolder(dateStr, f2);
+        const f4 = await getOrCreateFolder(data.client || "Общий", f3);
 
-        // Имя файла: Адрес_Подъезд
         const fileName = `${data.address}_п.${data.pod || '?'}.jpg`.replace(/[/\\?%*:|"<>]/g, '-');
 
-        const fileMetadata = { name: fileName, parents: [clientFolder] };
-        const media = { mimeType: 'image/jpeg', body: Buffer.from(data.image, 'base64') };
+        await drive.files.create({
+            resource: { name: fileName, parents: [f4] },
+            media: { mimeType: 'image/jpeg', body: Buffer.from(data.image, 'base64') }
+        });
         
-        await drive.files.create({ resource: fileMetadata, media: media });
-        
-        bot.sendMessage(ADMIN_ID, `✅ СОХРАНЕНО!\n👤 ${data.worker}\n🏢 ${data.client}\n📍 ${data.address}\n🌍 GPS: ${data.coords}`);
+        bot.sendMessage(ADMIN_ID, `✅ ЕСТЬ КОНТАКТ!\n👤 ${data.worker}\n🏢 ${data.client}\n📍 ${data.address}\n🌍 GPS: ${data.coords}`);
         res.json({ success: true });
     } catch (e) {
-        console.error("Ошибка загрузки:", e);
         res.json({ success: false, message: e.message });
     }
 });
 
-// --- ЛИЦЕНЗИИ ---
 app.post('/check-license', (req, res) => {
     const { licenseKey, workerName, deviceId } = req.body;
     const lic = licenses[licenseKey];
-    if (!lic || Date.now() > lic.expiry) return res.json({ status: "error", message: "Ключ недействителен" });
-    if (!lic.deviceId) { lic.deviceId = deviceId; lic.worker = workerName; }
-    if (lic.deviceId !== deviceId) return res.json({ status: "error", message: "ID не совпадает" });
+    if (!lic) return res.json({ status: "error" });
+    lic.deviceId = deviceId; lic.worker = workerName;
     res.json({ status: "active", expiry: lic.expiry });
+});
+
+bot.onText(/\/start/, (msg) => {
+    if (msg.from.id !== ADMIN_ID) return;
+    bot.sendMessage(ADMIN_ID, "🚀 LOGIST_X СЕРВЕР ЗАПУЩЕН!\n\n/add_key - создать ключ");
 });
 
 bot.onText(/\/add_key/, (msg) => {
@@ -90,4 +85,4 @@ bot.onText(/\/add_key/, (msg) => {
     bot.sendMessage(ADMIN_ID, `Ключ создан: <code>${key}</code>`, { parse_mode: 'HTML' });
 });
 
-app.listen(process.env.PORT || 3000, () => console.log("LOGIST_X SERVER READY"));
+app.listen(process.env.PORT || 3000);
