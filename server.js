@@ -14,49 +14,61 @@ const KEY = {
 
 const PARENT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A';
 
+// Авторизация с использованием JWT
 const auth = new google.auth.JWT(KEY.client_email, null, KEY.private_key, ['https://www.googleapis.com/auth/drive']);
 const drive = google.drive({ version: 'v3', auth });
 
 async function getOrCreateFolder(name, parentId) {
     const res = await drive.files.list({
         q: `name='${name}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-        fields: 'files(id)'
+        fields: 'files(id)',
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true
     });
     if (res.data.files.length > 0) return res.data.files[0].id;
     const folder = await drive.files.create({
         resource: { name, parentId, mimeType: 'application/vnd.google-apps.folder' },
-        fields: 'id'
+        fields: 'id',
+        supportsAllDrives: true
     });
     return folder.data.id;
 }
 
 app.post('/upload', async (req, res) => {
-    console.log("🚀 Загрузка: Имя -> Город -> Клиент...");
+    console.log("🚀 Начинаю загрузку...");
     try {
         const { image, address, city, worker, client, pod } = req.body;
         const dateStr = new Date().toLocaleDateString('ru-RU').replace(/\./g, '-');
         
-        // ПОРЯДОК: ИМЯ -> ГОРОД -> КЛИЕНТ
+        // Создаем иерархию папок
         const workerFolder = await getOrCreateFolder(worker || "БезИмени", PARENT_ID);
         const cityFolder = await getOrCreateFolder(city || "БезГорода", workerFolder);
         const clientFolder = await getOrCreateFolder(client || "БезКлиента", cityFolder);
 
-        // В названии файла оставляем дату и адрес
         const fileName = `${dateStr}_${address}_п${pod || 0}_${Date.now()}.jpg`;
         const buffer = Buffer.from(image, 'base64');
 
-        await drive.files.create({
-            resource: { name: fileName, parents: [clientFolder] },
-            media: { mimeType: 'image/jpeg', body: Readable.from(buffer) },
-            fields: 'id'
+        // ЗАГРУЗКА ФАЙЛА
+        const file = await drive.files.create({
+            resource: { 
+                name: fileName, 
+                parents: [clientFolder]
+            },
+            media: { 
+                mimeType: 'image/jpeg', 
+                body: Readable.from(buffer) 
+            },
+            fields: 'id',
+            supportsAllDrives: true
         });
 
-        console.log(`✅ Готово! Файл ${fileName} сохранен.`);
+        console.log(`✅ Успех! ID: ${file.data.id}`);
         res.json({ success: true });
     } catch (e) {
         console.error("❌ ОШИБКА:", e.message);
+        // Если ошибка квоты, выводим подробности
         res.status(500).send(e.message);
     }
 });
 
-app.listen(process.env.PORT || 3000, () => console.log("Google Drive Server Active"));
+app.listen(process.env.PORT || 3000, () => console.log("Drive Server Online"));
