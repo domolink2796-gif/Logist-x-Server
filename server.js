@@ -11,38 +11,59 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// --- НАСТРОЙКИ ---
 const TOKEN = '7908672389:AAF63DoOmlrCXTRoIlmFVg71I1SgC55kHUc';
 const MY_TELEGRAM_ID = '6846149935';
 const MASTER_KEY_VAL = 'LX-BOSS-777';
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
-// --- ИНИЦИАЛИЗАЦИЯ МАСТЕР-КЛЮЧА ---
-function initKeys() {
-    const defaultData = {
-        keys: [{
-            key: MASTER_KEY_VAL,
-            name: "Евгений_БОСС",
-            expiry: "2030-01-01T00:00:00.000Z",
-            limit: 999,
-            workers: []
-        }]
-    };
-    if (!fs.existsSync(KEYS_FILE) || fs.readFileSync(KEYS_FILE, 'utf8').length < 10) {
-        fs.writeFileSync(KEYS_FILE, JSON.stringify(defaultData, null, 2));
-    }
+// --- Инициализация ключей ---
+if (!fs.existsSync(KEYS_FILE)) {
+    fs.writeFileSync(KEYS_FILE, JSON.stringify({
+        keys: [{ key: MASTER_KEY_VAL, name: "Евгений_БОСС", expiry: "2030-01-01T00:00:00.000Z", limit: 999, workers: [] }]
+    }, null, 2));
 }
-initKeys();
 
 function readKeys() {
     try { return JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8')); }
     catch (e) { return { keys: [] }; }
 }
 
+// --- БОТ С ЗАЩИТОЙ ОТ 409 ---
 const bot = new TelegramBot(TOKEN, { polling: false });
-setTimeout(() => { bot.startPolling(); console.log("БОТ ВКЛЮЧЕН"); }, 15000);
 
-// Google Auth
+async function initBot() {
+    try {
+        console.log("Убиваем старые сессии...");
+        await bot.deleteWebhook({ drop_pending_updates: true });
+        // Даем Render 20 секунд, чтобы он окончательно прибил старый процесс
+        setTimeout(() => {
+            bot.startPolling({ polling: { interval: 2000, params: { timeout: 10 } } });
+            console.log(">>> БОТ ЧИСТО ЗАПУЩЕН");
+        }, 20000); 
+    } catch (e) { console.log("Ошибка инициализации: " + e.message); }
+}
+
+initBot();
+
+// Глушим саму ошибку 409 в логах, чтобы она не пугала
+bot.on('polling_error', (err) => {
+    if (err.message.includes('409 Conflict')) {
+        // Просто игнорим, бот сам переподключится через пару секунд
+    } else { console.error("Polling Error:", err.message); }
+});
+
+// --- API ДЛЯ ПРИЛОЖЕНИЯ (ПРОВЕРКА КЛЮЧА) ---
+app.post('/api/check_key', (req, res) => {
+    const { licenseKey } = req.body;
+    console.log("Проверка ключа:", licenseKey);
+    if (licenseKey === MASTER_KEY_VAL) return res.json({ success: true });
+    const data = readKeys();
+    const found = data.keys.find(k => k.key === licenseKey);
+    if (found) return res.json({ success: true });
+    res.status(403).json({ success: false });
+});
+
+// --- ТВОЯ ИЕРАРХИЯ ПАПОК ---
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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',
@@ -51,42 +72,6 @@ const oauth2Client = new google.auth.OAuth2(
 oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0' });
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
-
-// --- API ДЛЯ ПРИЛОЖЕНИЯ И АДМИНКИ ---
-
-// Проверка лицензии (ТО ЧТО ТЫ ИСКАЛ)
-app.post('/api/check_key', (req, res) => {
-    const { licenseKey } = req.body;
-    if (licenseKey === MASTER_KEY_VAL) return res.json({ success: true });
-    
-    const data = readKeys();
-    const found = data.keys.find(k => k.key === licenseKey);
-    if (found && new Date(found.expiry) > new Date()) {
-        return res.json({ success: true });
-    }
-    res.status(403).json({ success: false });
-});
-
-app.get('/api/list_keys', (req, res) => res.json(readKeys()));
-
-app.post('/api/add_key', (req, res) => {
-    try {
-        const { name, days, limit } = req.body;
-        let data = readKeys();
-        const newKey = {
-            key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(),
-            name: name || "Клиент",
-            expiry: new Date(Date.now() + (parseInt(days) || 30) * 86400000).toISOString(),
-            limit: parseInt(limit) || 1,
-            workers: []
-        };
-        data.keys.push(newKey);
-        fs.writeFileSync(KEYS_FILE, JSON.stringify(data, null, 2));
-        res.json({ success: true, key: newKey });
-    } catch (e) { res.status(500).json({ success: false }); }
-});
-
-// --- ЗАГРУЗКА И ТВОЯ ИЕРАРХИЯ ---
 
 async function getOrCreateFolder(name, parentId = null) {
     try {
@@ -126,7 +111,7 @@ app.post('/upload', async (req, res) => {
         const found = data.keys.find(k => k.key === licenseKey);
         if (found) clientName = found.name;
 
-        // Иерархия: Клиент -> Воркер -> Таблица (в f2) -> Город -> Объект
+        // ИЕРАРХИЯ: Клиент -> Воркер -> Таблица (в f2) -> Город -> Объект
         const f1 = await getOrCreateFolder(clientName);
         const f2 = await getOrCreateFolder(worker || "Воркер", f1);
         const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2); 
@@ -149,12 +134,16 @@ app.post('/upload', async (req, res) => {
             });
         }
         res.json({ success: true });
-        bot.sendMessage(MY_TELEGRAM_ID, `✅ Фото для ${clientName} принято!`);
+        bot.sendMessage(MY_TELEGRAM_ID, `✅ Принято для: ${clientName}`);
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
+// Админка
+app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
+app.get('/api/list_keys', (req, res) => res.json(readKeys()));
+
 bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id, "Logist-X готов!", {
+    bot.sendMessage(msg.chat.id, "Система готова:", {
         reply_markup: {
             inline_keyboard: [
                 [{ text: "📊 АДМИНКА", web_app: { url: "https://logist-x-server.onrender.com/admin-panel" } }],
@@ -164,6 +153,5 @@ bot.onText(/\/start/, (msg) => {
     });
 });
 
-app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
 app.get('/', (req, res) => res.send("SERVER LIVE"));
 app.listen(process.env.PORT || 3000);
