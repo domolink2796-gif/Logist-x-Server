@@ -8,9 +8,7 @@ const { Readable } = require('stream');
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
-
-// 1. ПУСКАЕМ ПРИЛОЖЕНИЕ (CORS)
-app.use(cors({ origin: '*' }));
+app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
 const TOKEN = '7908672389:AAF63DoOmlrCXTRoIlmFVg71I1SgC55kHUc';
@@ -18,51 +16,23 @@ const MY_TELEGRAM_ID = '6846149935';
 const MASTER_KEY_VAL = 'LX-BOSS-777';
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
-// 2. ПОДГОТОВКА ФАЙЛА КЛЮЧЕЙ
-if (!fs.existsSync(KEYS_FILE)) {
-    fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }, null, 2));
-}
+if (!fs.existsSync(KEYS_FILE)) fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }));
 
-// 3. БОТ (С ЗАЩИТОЙ ОТ 409)
 const bot = new TelegramBot(TOKEN, { polling: false });
 
-async function restartBot() {
+// ЖЕСТКИЙ СБРОС ТЕЛЕГРАМА (Чтобы не было 409)
+setTimeout(async () => {
     try {
-        console.log(">>> [BOT] Сброс старых обновлений...");
         await bot.deleteWebhook({ drop_pending_updates: true });
+        console.log(">>> [LOG] Очередь обновлений очищена");
         setTimeout(() => {
             bot.startPolling();
-            console.log(">>> [BOT] БОТ АКТИВЕН");
-        }, 15000); // 15 секунд паузы для Render
-    } catch (e) {
-        console.log(">>> [BOT] Ошибка старта (повтор через 5 сек):", e.message);
-        setTimeout(restartBot, 5000);
-    }
-}
-restartBot();
+            console.log(">>> [LOG] БОТ ЗАПУЩЕН");
+        }, 5000);
+    } catch (e) { console.log("Ошибка старта бота: " + e.message); }
+}, 10000);
 
-// Игнорируем 409 в логах, чтобы не засорять
-bot.on('polling_error', (err) => {
-    if (!err.message.includes('409 Conflict')) console.log("Bot Error:", err.message);
-});
-
-// 4. API ДЛЯ ПРИЛОЖЕНИЯ (ПРОВЕРКА ЛИЦЕНЗИИ)
-app.post('/api/check_key', (req, res) => {
-    const { licenseKey } = req.body;
-    console.log(`>>> [APP] Попытка входа с ключом: ${licenseKey}`);
-
-    if (licenseKey === MASTER_KEY_VAL) return res.json({ success: true });
-
-    try {
-        const data = JSON.parse(fs.readFileSync(KEYS_FILE));
-        const found = data.keys.find(k => k.key === licenseKey);
-        if (found) return res.json({ success: true });
-    } catch (e) { console.log("Ошибка БД"); }
-
-    res.status(403).json({ success: false });
-});
-
-// 5. GOOGLE И ТВОЯ ИЕРАРХИЯ
+// GOOGLE AUTH
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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',
@@ -72,6 +42,23 @@ oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
+// --- ПРОВЕРКА КЛЮЧА (ОБА ВАРИАНТА ПУТИ) ---
+const checkKeyLogic = (req, res) => {
+    const { licenseKey } = req.body;
+    console.log(">>> [APP] Попытка активации: " + licenseKey);
+    if (licenseKey === MASTER_KEY_VAL) return res.json({ success: true });
+    try {
+        const data = JSON.parse(fs.readFileSync(KEYS_FILE));
+        const found = data.keys.find(k => k.key === licenseKey);
+        if (found) return res.json({ success: true });
+    } catch (e) {}
+    res.status(403).json({ success: false });
+};
+
+app.post('/api/check_key', checkKeyLogic);
+app.post('/check_key', checkKeyLogic); // На случай если приложение лезет сюда
+
+// --- ИЕРАРХИЯ ПАПОК (ВОЗВРАЩАЕМ КАК БЫЛО) ---
 async function getOrCreateFolder(name, parentId = null) {
     try {
         let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
@@ -83,7 +70,7 @@ async function getOrCreateFolder(name, parentId = null) {
             fields: 'id'
         });
         return folder.data.id;
-    } catch (e) { return null; }
+    } catch (err) { return null; }
 }
 
 async function getOrCreateSheet(name, parentId) {
@@ -96,25 +83,23 @@ async function getOrCreateSheet(name, parentId) {
         await drive.files.update({ fileId, addParents: parentId, removeParents: 'root' });
         await sheets.spreadsheets.values.append({
             spreadsheetId: fileId, range: 'Sheet1!A1', valueInputOption: 'RAW',
-            resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'GPS', 'Фото']] }
+            resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'GPS', 'Ссылка']] }
         });
         return fileId;
-    } catch (e) { return null; }
+    } catch (err) { return null; }
 }
 
-// ЗАГРУЗКА
 app.post('/upload', async (req, res) => {
     try {
         const { worker, city, address, house, entrance, client, image, licenseKey, latitude, longitude } = req.body;
-        let clientName = "Евгений_БОСС";
-        
+        let clientName = (licenseKey === MASTER_KEY_VAL) ? "Евгений_БОСС" : "Клиент";
         try {
             const data = JSON.parse(fs.readFileSync(KEYS_FILE));
             const found = data.keys.find(k => k.key === licenseKey);
             if (found) clientName = found.name;
         } catch (e) {}
 
-        // ИЕРАРХИЯ: Клиент -> Воркер -> ТАБЛИЦА (в воркере) -> Город -> Объект
+        // ИЕРАРХИЯ: Клиент -> Воркер -> Таблица (в воркере) -> Город -> Объект
         const f1 = await getOrCreateFolder(clientName);
         const f2 = await getOrCreateFolder(worker || "Воркер", f1);
         const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2);
@@ -137,27 +122,11 @@ app.post('/upload', async (req, res) => {
             });
         }
         res.json({ success: true });
-        bot.sendMessage(MY_TELEGRAM_ID, `✅ Принято для: ${clientName}`);
-    } catch (e) {
-        console.log("Ошибка загрузки:", e.message);
-        res.status(500).json({ success: false });
-    }
-});
-
-// КНОПКИ
-bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id, "Logist-X активен!", {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: "📊 АДМИНКА", web_app: { url: "https://logist-x-server.onrender.com/admin-panel" } }],
-                [{ text: "📂 ДИСК", url: "https://drive.google.com/drive/my-drive" }]
-            ]
-        }
-    });
+        bot.sendMessage(MY_TELEGRAM_ID, `✅ Фото от ${worker} принято!`);
+    } catch (e) { res.status(500).json({ success: false }); }
 });
 
 app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
 app.get('/api/list_keys', (req, res) => res.json(JSON.parse(fs.readFileSync(KEYS_FILE))));
-app.get('/', (req, res) => res.send("SERVER LIVE"));
-
-app.listen(process.env.PORT || 3000, () => console.log("SERVER READY"));
+app.get('/', (req, res) => res.send("SERVER READY"));
+app.listen(process.env.PORT || 3000);
