@@ -127,4 +127,4 @@ app.get('/api/list_keys', async (req, res) => {
 app.get('/admin-panel', (req, res) => res.sendFile(require('path').join(__dirname, 'admin.html')));
 app.get('/', (req, res) => res.send("LOGIST-X PRO LIVE"));
 
-app.listen(process.env.PORT || 3000, () => console.log("[СИСТЕМА] СЕРВЕР В СТРОЮ"));
+app.listen(process.env.PORT || 3000, () => console.log("[СИСТЕМА] СЕРВЕР В СТРОЮ")); 
