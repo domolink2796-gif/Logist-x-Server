@@ -11,39 +11,25 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// --- 1. ЗАПУСК ПОРТА (СРАЗУ ДЛЯ RENDER) ---
+// --- ПОРТ ---
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`>>> [OK] СЕРВЕР ЖИВОЙ НА ПОРТУ ${PORT}`);
-});
+app.listen(PORT, '0.0.0.0', () => console.log(`>>> [HQ] СЕРВЕР ЗАПУЩЕН НА ПОРТУ ${PORT}`));
 
-// --- 2. НАСТРОЙКИ ---
+// --- НАСТРОЙКИ ---
 const TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const MY_ID = '6846149935'; 
 const APP_URL = 'https://logist-x-server.onrender.com';
-const MASTER_KEY = 'LX-BOSS-777';
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
 if (!fs.existsSync(KEYS_FILE)) fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }));
 
-// --- 3. БОТ (БЕЗ ОШИБОК) ---
+// БОТ С ЗАЩИТОЙ ОТ КОНФЛИКТОВ
 const bot = new TelegramBot(TOKEN, { polling: true });
-bot.on('polling_error', (err) => console.log("Ошибка бота:", err.message));
-
-bot.onText(/\/start/, (msg) => {
-    if (msg.chat.id.toString() === MY_ID) {
-        bot.sendMessage(MY_ID, "Евгений, система готова! Выбирай:", {
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: "📊 АДМИНКА", web_app: { url: `${APP_URL}/admin-panel` } }],
-                    [{ text: "📂 МОЙ ДИСК", url: "https://drive.google.com/drive/my-drive" }]
-                ]
-            }
-        });
-    }
+bot.on('polling_error', (err) => {
+    if (!err.message.includes('409 Conflict')) console.log("Ошибка бота:", err.message);
 });
 
-// --- 4. API ДЛЯ АДМИНКИ (ЧТОБЫ КЛЮЧИ СОЗДАВАЛИСЬ) ---
+// --- API ДЛЯ АДМИНКИ ---
 app.get('/api/list_keys', (req, res) => {
     const data = JSON.parse(fs.readFileSync(KEYS_FILE));
     res.json(data);
@@ -54,14 +40,32 @@ app.post('/api/add_key', (req, res) => {
         const { name, days, limit } = req.body;
         const data = JSON.parse(fs.readFileSync(KEYS_FILE));
         const newKey = {
-            key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(),
+            key: 'LX-' + Math.random().toString(36).substr(2, 7).toUpperCase(),
             name: name,
-            expiry: new Date(Date.now() + days * 86400000).toISOString(),
-            limit: parseInt(limit) || 1
+            expiry: new Date(Date.now() + (parseInt(days) || 30) * 86400000).toISOString(),
+            limit: parseInt(limit) || 1,
+            workers: []
         };
         data.keys.push(newKey);
         fs.writeFileSync(KEYS_FILE, JSON.stringify(data, null, 2));
         res.json({ success: true, key: newKey });
+    } catch (e) { res.status(500).json({ success: false }); }
+});
+
+app.post('/api/update_key', (req, res) => {
+    try {
+        const { key, addDays, addLimit } = req.body;
+        let data = JSON.parse(fs.readFileSync(KEYS_FILE));
+        const k = data.keys.find(i => i.key === key);
+        if (k) {
+            if (addDays) {
+                const current = new Date(k.expiry) > new Date() ? new Date(k.expiry) : new Date();
+                k.expiry = new Date(current.getTime() + addDays * 86400000).toISOString();
+            }
+            if (addLimit) k.limit = (k.limit || 1) + addLimit;
+            fs.writeFileSync(KEYS_FILE, JSON.stringify(data, null, 2));
+            res.json({ success: true });
+        } else { res.status(404).json({ success: false }); }
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
@@ -73,21 +77,22 @@ app.post('/api/delete_key', (req, res) => {
     res.json({ success: true });
 });
 
-// ПРОВЕРКА ДЛЯ ПРИЛОЖЕНИЯ (Чтобы зайти в него)
 app.post('/check-license', (req, res) => {
-    const { licenseKey } = req.body;
-    if (licenseKey === MASTER_KEY || licenseKey === "DEV-MASTER-999") {
-        return res.json({ status: "active", expiry: Date.now() + 315360000000 });
-    }
-    const data = JSON.parse(fs.readFileSync(KEYS_FILE));
-    const found = data.keys.find(k => k.key === licenseKey);
+    const { licenseKey, workerName } = req.body;
+    if (licenseKey === "LX-BOSS-777") return res.json({ status: "active", expiry: Date.now() + 315360000000 });
+    let data = JSON.parse(fs.readFileSync(KEYS_FILE));
+    let found = data.keys.find(k => k.key === licenseKey);
     if (found && new Date(found.expiry) > new Date()) {
+        if (workerName && !found.workers.includes(workerName) && found.workers.length < found.limit) {
+            found.workers.push(workerName);
+            fs.writeFileSync(KEYS_FILE, JSON.stringify(data, null, 2));
+        }
         return res.json({ status: "active", expiry: new Date(found.expiry).getTime() });
     }
-    res.json({ status: "error", message: "Ключ не подходит" });
+    res.json({ status: "error", message: "Лицензия не активна" });
 });
 
-// --- 5. GOOGLE И ЗАГРУЗКА ---
+// --- GOOGLE DRIVE ---
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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',
@@ -125,9 +130,22 @@ app.post('/upload', async (req, res) => {
         });
 
         res.json({ success: true });
-        bot.sendMessage(MY_ID, `✅ Отчет: ${worker}\n🛠 ${workType}\n📍 ${address}\n💰 ${price}₽`);
+        bot.sendMessage(MY_ID, `✅ Отчет: ${worker}\n🛠 ${workType}\n📍 ${address}, ${house}\n💰 ${price}₽`);
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
+bot.onText(/\/start/, (msg) => {
+    if (msg.chat.id.toString() === MY_ID) {
+        bot.sendMessage(MY_ID, "LOGIST HQ ONLINE", {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "📊 MASTER CONTROL", web_app: { url: `${APP_URL}/admin-panel` } }],
+                    [{ text: "📂 GOOGLE DRIVE", url: "https://drive.google.com/drive/my-drive" }]
+                ]
+            }
+        });
+    }
+});
+
 app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
-app.get('/', (req, res) => res.send("SERVER LIVE"));
+app.get('/', (req, res) => res.send("HQ SYSTEM LIVE"));
