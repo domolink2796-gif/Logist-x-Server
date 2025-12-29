@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { Readable } = require('stream'); // ВЫНЕСЛИ СЮДА ДЛЯ СКОРОСТИ
 
 const app = express();
 app.use(cors());
@@ -68,7 +69,7 @@ async function logToWorkerSheet(spreadsheetId, workerName, data) {
             });
         }
 
-        // --- ЛОГИКА ССЫЛКИ НА КАРТУ (ИСПРАВЛЕНО) ---
+        // --- ЛОГИКА ССЫЛКИ НА КАРТУ (ИСПРАВЛЕНО $) ---
         let gpsValue = data.coords || "Нет GPS";
         if (data.coords && data.coords.includes(',')) {
             const cleanCoords = data.coords.replace(/\s+/g, ''); 
@@ -76,15 +77,7 @@ async function logToWorkerSheet(spreadsheetId, workerName, data) {
             gpsValue = `=HYPERLINK("${mapUrl}"; "${data.coords}")`;
         }
 
-        const row = [
-            new Date().toLocaleString('ru-RU'), 
-            data.city, 
-            data.address, 
-            data.client, 
-            data.workType, 
-            data.price, 
-            gpsValue
-        ];
+        const row = [new Date().toLocaleString('ru-RU'), data.city, data.address, data.client, data.workType, data.price, gpsValue];
 
         await sheets.spreadsheets.values.append({
             spreadsheetId, 
@@ -96,45 +89,6 @@ async function logToWorkerSheet(spreadsheetId, workerName, data) {
 }
 
 // --- API МАРШРУТЫ ---
-app.post('/api/add_key', async (req, res) => {
-    let folderId = null;
-    let sheetId = null;
-    try {
-        const { name, days, limit } = req.body;
-        console.log(`[PROCESS] Создаю ключ для ${name}`);
-
-        folderId = await getOrCreateFolder(name);
-        await sleep(1000);
-
-        try {
-            const ss = await sheets.spreadsheets.create({ resource: { properties: { title: `ОТЧЕТЫ_${name}` } } });
-            sheetId = ss.data.spreadsheetId;
-            console.log(`[API] Таблица создана: ${sheetId}`);
-            
-            await sleep(1500);
-            const parentData = await drive.files.get({fileId: sheetId, fields: 'parents'});
-            await drive.files.update({
-                fileId: sheetId, 
-                addParents: folderId, 
-                removeParents: parentData.data.parents.join(','), 
-                fields: 'id, parents'
-            });
-        } catch (e) { console.error("[!!!] Таблица НЕ создана. Проверь Sheets API!"); }
-
-        const key = { 
-            key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(), 
-            name, 
-            expiry: new Date(Date.now() + (parseInt(days) || 30) * 86400000).toISOString(), 
-            limit: parseInt(limit) || 1, 
-            workers: [], folderId, sheetId 
-        };
-
-        DB.keys.push(key);
-        saveDB();
-        res.json({ success: true, key });
-    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
-});
-
 app.post('/upload', async (req, res) => {
     try {
         const { worker, city, address, client, image, fileName, licenseKey } = req.body;
@@ -148,58 +102,62 @@ app.post('/upload', async (req, res) => {
         const f5 = await getOrCreateFolder(new Date().toLocaleDateString('ru-RU'), f4);
 
         const buffer = Buffer.from(image, 'base64');
+        
+        // ИСПОЛЬЗУЕМ ВЫНЕСЕННЫЙ READABLE (ИСПРАВЛЕНО)
         await drive.files.create({
             resource: { name: `${fileName}.jpg`, parents: [f5] },
-            media: { mimeType: 'image/jpeg', body: require('stream').Readable.from(buffer) }
+            media: { mimeType: 'image/jpeg', body: Readable.from(buffer) }
         });
 
         if (keyData.sheetId) await logToWorkerSheet(keyData.sheetId, worker, req.body);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    } catch (e) { 
+        console.error("Ошибка загрузки:", e.message);
+        res.status(500).json({ success: false, error: e.message }); 
+    }
 });
 
+// Все остальные API (add_key, list_keys, delete_key, update_key, check-license) остаются без изменений...
+app.post('/api/add_key', async (req, res) => {
+    let folderId = null; let sheetId = null;
+    try {
+        const { name, days, limit } = req.body;
+        folderId = await getOrCreateFolder(name);
+        await sleep(1000);
+        const ss = await sheets.spreadsheets.create({ resource: { properties: { title: `ОТЧЕТЫ_${name}` } } });
+        sheetId = ss.data.spreadsheetId;
+        await sleep(1500);
+        const parentData = await drive.files.get({fileId: sheetId, fields: 'parents'});
+        await drive.files.update({ fileId: sheetId, addParents: folderId, removeParents: parentData.data.parents.join(','), fields: 'id, parents' });
+        const key = { key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(), name, expiry: new Date(Date.now() + (parseInt(days) || 30) * 86400000).toISOString(), limit: parseInt(limit) || 1, workers: [], folderId, sheetId };
+        DB.keys.push(key); saveDB(); res.json({ success: true, key });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
 app.get('/api/list_keys', (req, res) => res.json({ keys: DB.keys }));
 app.post('/api/delete_key', (req, res) => { DB.keys = DB.keys.filter(k => k.key !== req.body.key); saveDB(); res.json({ success: true }); });
 app.post('/api/update_key', (req, res) => {
     const { key, addDays, addLimit } = req.body;
     const k = DB.keys.find(x => x.key === key);
     if (k) {
-        let exp = new Date(k.expiry);
-        if (exp < new Date()) exp = new Date();
-        exp.setDate(exp.getDate() + parseInt(addDays || 0));
-        k.expiry = exp.toISOString();
-        k.limit += parseInt(addLimit || 0);
-        saveDB(); res.json({ success: true });
+        let exp = new Date(k.expiry); if (exp < new Date()) exp = new Date();
+        exp.setDate(exp.getDate() + parseInt(addDays || 0)); k.expiry = exp.toISOString();
+        k.limit += parseInt(addLimit || 0); saveDB(); res.json({ success: true });
     } else res.status(404).json({ success: false });
 });
-
 app.post('/check-license', (req, res) => {
     const { licenseKey, workerName } = req.body;
     const k = DB.keys.find(x => x.key === licenseKey);
     if (!k) return res.json({ status: "error", message: "Ключ не найден" });
     if (new Date(k.expiry) < new Date()) return res.json({ status: "error", message: "Срок истек" });
-    if (!k.workers.includes(workerName)) {
-        if (k.workers.length >= k.limit) return res.json({ status: "error", message: "Лимит воркеров исчерпан" });
-        k.workers.push(workerName); saveDB();
-    }
+    if (!k.workers.includes(workerName)) { if (k.workers.length >= k.limit) return res.json({ status: "error", message: "Лимит воркеров исчерпан" }); k.workers.push(workerName); saveDB(); }
     res.json({ status: "active", expiry: new Date(k.expiry).getTime() });
 });
 
-// --- ОБРАБОТКА ФАЙЛОВ ---
-// Оставляем только админку, проверяя её наличие
 app.get('/admin-panel', (req, res) => {
     const adminPath = path.join(__dirname, 'admin.html');
-    if (fs.existsSync(adminPath)) {
-        res.sendFile(adminPath);
-    } else {
-        res.status(404).send("Файл админки не найден в этом репозитории");
-    }
+    if (fs.existsSync(adminPath)) { res.sendFile(adminPath); } else { res.status(404).send("Файл админки не найден"); }
 });
-
-// Заглушка для главной (так как лендинг в другом месте)
-app.get('/', (req, res) => {
-    res.send("LOGIST_X API SERVER ONLINE. Лендинг запущен отдельно.");
-});
+app.get('/', (req, res) => res.send("LOGIST_X API SERVER ONLINE."));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`LOGIST_X SERVER ONLINE [PORT ${PORT}]`));
