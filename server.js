@@ -64,12 +64,33 @@ async function logToWorkerSheet(spreadsheetId, workerName, data) {
             });
             await sheets.spreadsheets.values.update({
                 spreadsheetId, range: `${sheetName}!A1`, valueInputOption: 'RAW',
-                resource: { values: [["Дата", "Город", "Адрес", "Объект", "Работа", "Цена", "GPS"]] }
+                resource: { values: [["Дата", "Город", "Адрес", "Объект", "Работа", "Цена", "GPS (Карта)"]] }
             });
         }
-        const row = [new Date().toLocaleString('ru-RU'), data.city, data.address, data.client, data.workType, data.price, data.coords || "Нет GPS"];
+
+        // --- ЛОГИКА ССЫЛКИ НА КАРТУ ---
+        let gpsValue = data.coords || "Нет GPS";
+        if (data.coords && data.coords.includes(',')) {
+            const cleanCoords = data.coords.replace(/\s+/g, ''); // Чистим пробелы
+            const mapUrl = `https://www.google.com/maps/search/?api=1&query=${cleanCoords}`;
+            gpsValue = `=HYPERLINK("${mapUrl}"; "${data.coords}")`;
+        }
+
+        const row = [
+            new Date().toLocaleString('ru-RU'), 
+            data.city, 
+            data.address, 
+            data.client, 
+            data.workType, 
+            data.price, 
+            gpsValue
+        ];
+
         await sheets.spreadsheets.values.append({
-            spreadsheetId, range: `${sheetName}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [row] }
+            spreadsheetId, 
+            range: `${sheetName}!A1`, 
+            valueInputOption: 'USER_ENTERED', // Важно для работы формул!
+            resource: { values: [row] }
         });
     } catch (err) { console.error("Ошибка записи в таблицу:", err.message); }
 }
@@ -91,10 +112,14 @@ app.post('/api/add_key', async (req, res) => {
             console.log(`[API] Таблица создана: ${sheetId}`);
             
             await sleep(1500);
+            const parentData = await drive.files.get({fileId: sheetId, fields: 'parents'});
             await drive.files.update({
-                fileId: sheetId, addParents: folderId, removeParents: (await drive.files.get({fileId: sheetId, fields: 'parents'})).data.parents.join(','), fields: 'id, parents'
+                fileId: sheetId, 
+                addParents: folderId, 
+                removeParents: parentData.data.parents.join(','), 
+                fields: 'id, parents'
             });
-        } catch (e) { console.error("[!!!] Таблица НЕ создана. Проверь Sheets API в Google Console!"); }
+        } catch (e) { console.error("[!!!] Таблица НЕ создана. Проверь Sheets API!"); }
 
         const key = { 
             key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(), 
