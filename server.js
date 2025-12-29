@@ -17,21 +17,20 @@ const CLIENT_ID = '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleuser
 const CLIENT_SECRET = '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';
 const REFRESH_TOKEN = '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0';
 
-// Чтение базы (защита старых ключей)
+// Чтение базы
 const DB_FILE = 'db.json';
 let DB = { keys: [] };
 if (fs.existsSync(DB_FILE)) {
     try {
-        const fileContent = fs.readFileSync(DB_FILE, 'utf8');
-        DB = JSON.parse(fileContent);
-        console.log(`База загружена. Ключей найдено: ${DB.keys.length}`);
-    } catch (e) { console.error("Ошибка чтения базы данных:", e); }
+        DB = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+        console.log(`[DB] Загружено ключей: ${DB.keys.length}`);
+    } catch (e) { console.error("[DB] Ошибка чтения:", e); }
 }
 
 const saveDB = () => {
     try {
         fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
-    } catch (e) { console.error("Ошибка сохранения базы:", e); }
+    } catch (e) { console.error("[DB] Ошибка сохранения:", e); }
 };
 
 const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, 'https://developers.google.com/oauthplayground');
@@ -39,7 +38,8 @@ oauth2Client.setCredentials({ refresh_token: REFRESH_TOKEN });
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+// Хелпер для пауз (чтобы Google успевал за нами)
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- ЛОГИКА ПАПОК ---
 async function getOrCreateFolder(folderName, parentId = null) {
@@ -81,7 +81,7 @@ async function logToWorkerSheet(spreadsheetId, workerName, data) {
             spreadsheetId, range: `${sheetName}!A1`, valueInputOption: 'USER_ENTERED',
             resource: { values: [row] }
         });
-    } catch (err) { console.error("Ошибка записи в лист воркера:", err); }
+    } catch (err) { console.error("Ошибка записи в лист:", err.message); }
 }
 
 // --- API ---
@@ -115,12 +115,16 @@ app.post('/upload', async (req, res) => {
 app.post('/api/add_key', async (req, res) => {
     try {
         const { name, days, limit } = req.body;
+        console.log(`[API] Создание ключа для: ${name}`);
+
         const folderId = await getOrCreateFolder(name);
-        
+        await sleep(500); // Даем Google выдохнуть
+
         const ss = await sheets.spreadsheets.create({
             resource: { properties: { title: `ОТЧЕТЫ_${name}` } }
         });
         const sheetId = ss.data.spreadsheetId;
+        console.log(`[API] Таблица создана: ${sheetId}`);
 
         const file = await drive.files.get({ fileId: sheetId, fields: 'parents' });
         await drive.files.update({
@@ -136,10 +140,15 @@ app.post('/api/add_key', async (req, res) => {
             folderId, 
             sheetId 
         };
+
         DB.keys.push(key); 
         saveDB(); 
+        console.log(`[API] Ключ сохранен в базу: ${key.key}`);
         res.json({ success: true, key });
-    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    } catch (e) { 
+        console.error("[API] Ошибка создания ключа:", e.message);
+        res.status(500).json({ success: false, error: e.message }); 
+    }
 });
 
 app.post('/api/update_key', (req, res) => {
@@ -156,7 +165,10 @@ app.post('/api/update_key', (req, res) => {
     } else { res.status(404).json({ success: false }); }
 });
 
-app.get('/api/list_keys', (req, res) => res.json({ keys: DB.keys }));
+app.get('/api/list_keys', (req, res) => {
+    console.log(`[API] Запрос списка ключей. Всего: ${DB.keys.length}`);
+    res.json({ keys: DB.keys });
+});
 
 app.post('/api/delete_key', (req, res) => {
     DB.keys = DB.keys.filter(k => k.key !== req.body.key); 
@@ -177,10 +189,9 @@ app.post('/check-license', (req, res) => {
     res.json({ status: "active", expiry: new Date(keyData.expiry).getTime() });
 });
 
-// --- РОУТИНГ СТРАНИЦ ---
 app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
 app.get('/game', (req, res) => res.sendFile(path.join(__dirname, 'tamagotchi.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`LOGIST_X MASTER SERVER RUNNING ON PORT ${PORT}`));
+app.listen(PORT, () => console.log(`LOGIST_X MASTER SERVER ONLINE`));
