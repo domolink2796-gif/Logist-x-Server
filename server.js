@@ -11,27 +11,27 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
+// --- НАСТРОЙКИ (Я ВСЁ ПОМНЮ) ---
 const TOKEN = '7908672389:AAF63DoOmlrCXTRoIlmFVg71I1SgC55kHUc';
 const MY_TELEGRAM_ID = '6846149935';
-const MASTER_KEY_VAL = 'LX-BOSS-777';
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
-// --- НАСТРОЙКА БОТА С ЗАЩИТОЙ ---
-const bot = new TelegramBot(TOKEN, { 
-    polling: {
-        autoStart: true,
-        params: { timeout: 30 } // Увеличили время ожидания
-    } 
-});
+// Инициализируем бота БЕЗ автоматического старта
+const bot = new TelegramBot(TOKEN, { polling: false });
 
-// Если бот видит 409, он просто молчит и ждет, а не забивает логи
+// Запускаем бота с задержкой, чтобы Render успел убить старую копию
+setTimeout(() => {
+    console.log("Запуск бота после паузы для очистки сессий...");
+    bot.startPolling();
+}, 15000); // 15 секунд паузы при старте
+
+// Игнорируем 409 ошибку в логах
 bot.on('polling_error', (error) => {
-    if (error.code !== 'ETELEGRAM' || !error.message.includes('409 Conflict')) {
-        console.error("Ошибка:", error.code);
+    if (!error.message.includes('409 Conflict')) {
+        console.error("Ошибка бота:", error.message);
     }
 });
 
-// Кнопки WebApp
 const mainMenu = {
     reply_markup: {
         keyboard: [[
@@ -42,6 +42,7 @@ const mainMenu = {
     }
 };
 
+// Твои доступы Google
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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',
@@ -51,8 +52,7 @@ oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
-// --- ЛОГИКА ПАПОК (КЛИЕНТ -> ВОРКЕР -> ГОРОД -> ОБЪЕКТ) ---
-
+// --- ЛОГИКА ПАПОК И ТАБЛИЦ (ЗАФИКСИРОВАНО) ---
 async function getOrCreateFolder(name, parentId = null) {
     try {
         let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
@@ -64,7 +64,7 @@ async function getOrCreateFolder(name, parentId = null) {
             fields: 'id'
         });
         return folder.data.id;
-    } catch (err) { return null; }
+    } catch (e) { return null; }
 }
 
 async function getOrCreateSheet(name, parentId) {
@@ -80,7 +80,7 @@ async function getOrCreateSheet(name, parentId) {
             resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'Карта GPS', 'Ссылка на фото']] }
         });
         return fileId;
-    } catch (err) { return null; }
+    } catch (e) { return null; }
 }
 
 app.post('/upload', async (req, res) => {
@@ -88,11 +88,13 @@ app.post('/upload', async (req, res) => {
         const { worker, city, address, house, entrance, client, image, licenseKey, latitude, longitude } = req.body;
         
         let clientFolderName = "Евгений_БОСС";
-        const data = JSON.parse(fs.readFileSync(KEYS_FILE));
-        const keyData = data.keys.find(k => k.key === licenseKey);
-        if (keyData) clientFolderName = keyData.name;
+        if (fs.existsSync(KEYS_FILE)) {
+            const data = JSON.parse(fs.readFileSync(KEYS_FILE));
+            const found = data.keys.find(k => k.key === licenseKey);
+            if (found) clientFolderName = found.name;
+        }
 
-        // Иерархия: Клиент (из админки) -> Воркер -> Город -> Объект
+        // Иерархия: Клиент -> Воркер -> Город -> Объект
         const f1 = await getOrCreateFolder(clientFolderName);
         const f2 = await getOrCreateFolder(worker || "Воркер", f1);
         const f3 = await getOrCreateFolder(city || "Город", f2);
@@ -106,18 +108,18 @@ app.post('/upload', async (req, res) => {
             fields: 'id, webViewLink'
         });
 
-        // Таблица в папке воркера (f2)
+        // Таблица В ПАПКЕ ВОРКЕРА (f2)
         const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2);
-        const gpsLink = (latitude && longitude) ? `https://www.google.com/maps?q=${latitude},${longitude}` : "Нет GPS";
-        
         if (sheetId) {
+            const gps = (latitude && longitude) ? `https://www.google.com/maps?q=${latitude},${longitude}` : "Нет GPS";
             await sheets.spreadsheets.values.append({
                 spreadsheetId: sheetId, range: 'Sheet1!A2', valueInputOption: 'RAW',
-                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, д.${house}`, client, gpsLink, file.data.webViewLink]] }
+                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, д.${house}`, client, gps, file.data.webViewLink]] }
             });
         }
+
         res.json({ success: true });
-        bot.sendMessage(MY_TELEGRAM_ID, `✅ Принято для: ${clientFolderName}`, mainMenu);
+        bot.sendMessage(MY_TELEGRAM_ID, `✅ Принято от ${worker} для ${clientFolderName}`, mainMenu);
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
@@ -129,7 +131,7 @@ bot.on('message', (msg) => {
     }
 });
 
-bot.onText(/\/start/, (msg) => bot.sendMessage(msg.chat.id, "Система активна. Используй кнопки ниже:", mainMenu));
+bot.onText(/\/start/, (msg) => bot.sendMessage(msg.chat.id, "Бот активирован!", mainMenu));
 
 app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
 app.get('/api/list_keys', (req, res) => res.json(JSON.parse(fs.readFileSync(KEYS_FILE))));
