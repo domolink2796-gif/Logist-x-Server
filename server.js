@@ -185,9 +185,21 @@ app.post('/check-license', (req, res) => {
     res.json({ status: "active", expiry: new Date(k.expiry).getTime() });
 });
 
-app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
-app.get('/game', (req, res) => res.sendFile(path.join(__dirname, 'tamagotchi.html')));
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+// --- ОБРАБОТКА ФАЙЛОВ ---
+// Оставляем только админку, проверяя её наличие
+app.get('/admin-panel', (req, res) => {
+    const adminPath = path.join(__dirname, 'admin.html');
+    if (fs.existsSync(adminPath)) {
+        res.sendFile(adminPath);
+    } else {
+        res.status(404).send("Файл админки не найден в этом репозитории");
+    }
+});
+
+// Заглушка для главной (так как лендинг в другом месте)
+app.get('/', (req, res) => {
+    res.send("LOGIST_X API SERVER ONLINE. Лендинг запущен отдельно.");
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`LOGIST_X SERVER ONLINE [PORT ${PORT}]`));
