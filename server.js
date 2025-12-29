@@ -11,53 +11,33 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// --- ТВОИ ПРОВЕРЕННЫЕ ДАННЫЕ ---
-const TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
-const MY_TELEGRAM_ID = '6846149935'; 
-const APP_URL = 'https://logist-x-server.onrender.com';
-const KEYS_FILE = path.join(__dirname, 'keys.json');
-
-if (!fs.existsSync(KEYS_FILE)) fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }));
-
-// 1. ЗАПУСК СЕРВЕРА
+// --- 1. ПОРТ ЗАПУСКАЕМ СРАЗУ (Чтобы Render не ругался на Time-out) ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`>>> [SYSTEM] СЕРВЕР ЗАПУЩЕН НА ПОРТУ ${PORT}`);
 });
 
-// 2. НАСТРОЙКА БОТА И КНОПОК
+// --- 2. НАСТРОЙКИ (Твой новый токен и ID) ---
+const TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
+const MY_TELEGRAM_ID = '6846149935';
+const MASTER_KEY_VAL = 'LX-BOSS-777';
+const APP_URL = 'https://logist-x-server.onrender.com';
+const KEYS_FILE = path.join(__dirname, 'keys.json');
+
+if (!fs.existsSync(KEYS_FILE)) fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }));
+
 const bot = new TelegramBot(TOKEN, { polling: false });
 
-// Функция для вызова меню с кнопками
-const sendMainMenu = (chatId) => {
-    bot.sendMessage(chatId, "Евгений, система Logist_X активна. Выбери действие:", {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: "📊 АДМИН-ПАНЕЛЬ", web_app: { url: `${APP_URL}/admin-panel` } }],
-                [{ text: "📂 МОЙ GOOGLE ДИСК", url: "https://drive.google.com/drive/my-drive" }]
-            ]
-        }
-    });
-};
-
-// Просыпаемся через 15 секунд и чистим хвосты
-setTimeout(() => {
-    bot.deleteWebhook({ drop_pending_updates: true }).then(() => {
+// Очистка и запуск бота (фоном)
+setTimeout(async () => {
+    try {
+        await bot.deleteWebhook({ drop_pending_updates: true });
         bot.startPolling({ restart: true });
-        console.log(">>> [BOT] БОТ ПОДКЛЮЧЕН И ЖДЕТ КОМАНД");
-    });
+        console.log(">>> [BOT] БОТ АКТИВИРОВАН");
+    } catch (e) { console.log("Ошибка старта бота:", e.message); }
 }, 15000);
 
-// Обработка любого сообщения от тебя
-bot.on('message', (msg) => {
-    const chatId = msg.chat.id.toString();
-    if (chatId === MY_TELEGRAM_ID) {
-        // Если прислал /start или просто любое слово - даем кнопки
-        sendMainMenu(chatId);
-    }
-});
-
-// 3. GOOGLE AUTH
+// Google Auth
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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',
@@ -67,79 +47,104 @@ oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
-// --- ФУНКЦИИ РАБОТЫ С ДИСКОМ ---
+// --- ЛОГИКА ПАПОК И ЗАГРУЗКИ ---
 async function getOrCreateFolder(name, parentId = null) {
-    let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    if (parentId) q += ` and '${parentId}' in parents`;
-    const res = await drive.files.list({ q, fields: 'files(id)' });
-    if (res.data.files.length > 0) return res.data.files[0].id;
-    const folder = await drive.files.create({
-        resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: parentId ? [parentId] : [] },
-        fields: 'id'
-    });
-    return folder.data.id;
+    try {
+        let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        if (parentId) q += ` and '${parentId}' in parents`;
+        const res = await drive.files.list({ q, fields: 'files(id)' });
+        if (res.data.files.length > 0) return res.data.files[0].id;
+        const folder = await drive.files.create({
+            resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: parentId ? [parentId] : [] },
+            fields: 'id'
+        });
+        return folder.data.id;
+    } catch (err) { return null; }
 }
 
 async function getOrCreateSheet(name, parentId) {
-    let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false and '${parentId}' in parents`;
-    const res = await drive.files.list({ q, fields: 'files(id)' });
-    if (res.data.files.length > 0) return res.data.files[0].id;
-    const ss = await sheets.spreadsheets.create({ resource: { properties: { title: name } }, fields: 'spreadsheetId' });
-    const fileId = ss.data.spreadsheetId;
-    await drive.files.update({ fileId, addParents: parentId, removeParents: 'root' });
-    await sheets.spreadsheets.values.append({
-        spreadsheetId: fileId, range: 'Sheet1!A1', valueInputOption: 'RAW',
-        resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'Работа', 'Цена', 'GPS', 'Ссылка']] }
-    });
-    return fileId;
+    try {
+        let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false and '${parentId}' in parents`;
+        const res = await drive.files.list({ q, fields: 'files(id)' });
+        if (res.data.files.length > 0) return res.data.files[0].id;
+        const ss = await sheets.spreadsheets.create({ resource: { properties: { title: name } }, fields: 'spreadsheetId' });
+        const fileId = ss.data.spreadsheetId;
+        await drive.files.update({ fileId, addParents: parentId, removeParents: 'root' });
+        // ДОБАВИЛ НОВЫЕ ЗАГОЛОВКИ (Цена, Работа)
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: fileId, range: 'Sheet1!A1', valueInputOption: 'RAW',
+            resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'Работа', 'Цена', 'GPS Карта', 'Фото']] }
+        });
+        return fileId;
+    } catch (err) { return null; }
 }
 
-// 4. ОБРАБОТКА ДАННЫХ ИЗ ПРИЛОЖЕНИЯ
+// --- API ЭНДПОИНТЫ ---
 app.post('/check-license', (req, res) => {
     const { licenseKey } = req.body;
-    if (licenseKey === "LX-BOSS-777" || licenseKey === "DEV-MASTER-999") {
-        return res.json({ status: "active", expiry: Date.now() + 315360000000 });
-    }
+    if (licenseKey === MASTER_KEY_VAL || licenseKey === "DEV-MASTER-999") return res.json({ status: "active", expiry: Date.now() + 315360000000 });
+    try {
+        const data = JSON.parse(fs.readFileSync(KEYS_FILE));
+        const found = data.keys.find(k => k.key === licenseKey);
+        if (found && new Date(found.expiry) > new Date()) return res.json({ status: "active", expiry: new Date(found.expiry).getTime() });
+    } catch (e) {}
     res.json({ status: "error", message: "Ключ не подходит" });
 });
 
 app.post('/upload', async (req, res) => {
     try {
-        const { worker, city, address, pod, client, image, coords, workType, price, fileName } = req.body;
+        // Достаем все данные из приложения (включая работу и цену)
+        const { worker, city, address, house, entrance, client, image, licenseKey, latitude, longitude, workType, price } = req.body;
         
-        // Создаем структуру папок: Евгений_БОСС -> Воркер -> Город -> Объект
-        const f1 = await getOrCreateFolder("Евгений_БОСС");
-        const f2 = await getOrCreateFolder(worker || "Без_имени", f1);
-        const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2);
+        let clientFolderName = "Евгений_БОСС";
+        const data = JSON.parse(fs.readFileSync(KEYS_FILE));
+        const keyData = data.keys.find(k => k.key === licenseKey);
+        if (keyData) clientFolderName = keyData.name;
+
+        // Иерархия папок
+        const f1 = await getOrCreateFolder(clientFolderName);
+        const f2 = await getOrCreateFolder(worker || "Воркер", f1);
         const f3 = await getOrCreateFolder(city || "Город", f2);
         const f4 = await getOrCreateFolder(client || "Объект", f3);
 
-        // Грузим фото
+        const photoName = `${address}_${house}_${entrance}_${Date.now()}.jpg`.replace(/\s+/g, '_');
         const buffer = Buffer.from(image, 'base64');
         const file = await drive.files.create({
-            resource: { name: `${fileName}.jpg`, parents: [f4] },
+            resource: { name: photoName, parents: [f4] },
             media: { mimeType: 'image/jpeg', body: Readable.from(buffer) },
             fields: 'id, webViewLink'
         });
 
-        // Пишем в таблицу (монтаж, замена рекламы, pseudomona)
+        const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2);
         if (sheetId) {
-            const gps = coords && coords.includes(',') ? `https://www.google.com/maps?q=${coords.replace(/\s+/g, '')}` : coords;
+            // Исправленная ссылка GPS
+            const gps = (latitude && longitude) ? `https://www.google.com/maps?q=${latitude},${longitude}` : "Нет GPS";
             await sheets.spreadsheets.values.append({
                 spreadsheetId: sheetId, range: 'Sheet1!A2', valueInputOption: 'USER_ENTERED',
-                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, п.${pod}`, client, workType, price, gps, file.data.webViewLink]] }
+                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, д.${house}`, client, workType || "Монтаж", price || 0, gps, file.data.webViewLink]] }
             });
         }
-
+        
         res.json({ success: true });
-        bot.sendMessage(MY_TELEGRAM_ID, `✅ Отчет СОХРАНЕН!\n👷 Воркер: ${worker}\n🛠 Работа: ${workType}\n📍 Адрес: ${address}\n💰 Сумма: ${price}₽`);
-
-    } catch (e) {
-        console.log("Ошибка Google:", e.message);
-        bot.sendMessage(MY_TELEGRAM_ID, `❌ Ошибка записи на Диск: ${e.message}`);
-        res.status(500).json({ success: false });
+        bot.sendMessage(MY_TELEGRAM_ID, `✅ Отчет от ${worker} принят!\n🛠 ${workType}\n📍 ${address}\n💰 ${price}₽`);
+    } catch (e) { 
+        console.log("Ошибка загрузки:", e.message);
+        res.status(500).json({ success: false }); 
     }
 });
 
+// Кнопки
+bot.onText(/\/start/, (msg) => {
+    if (msg.chat.id.toString() !== MY_TELEGRAM_ID) return;
+    bot.sendMessage(msg.chat.id, "Евгений, система Logist-X готова:", {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: "📊 ОТКРЫТЬ АДМИНКУ", web_app: { url: `${APP_URL}/admin-panel` } }],
+                [{ text: "📂 ПЕРЕЙТИ НА ДИСК", url: "https://drive.google.com/drive/my-drive" }]
+            ]
+        }
+    });
+});
+
 app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
-app.get('/', (req, res) => res.send("SERVER IS LIVE"));
+app.get('/', (req, res) => res.send("SERVER LIVE"));
