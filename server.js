@@ -11,29 +11,30 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// --- НАСТРОЙКИ БОТА И СЕРВЕРА ---
+// --- КОНФИГУРАЦИЯ ---
 const TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
-const MY_ID = '6846149935'; 
+const MY_ID = '6846149935';
 const APP_URL = 'https://logist-x-server.onrender.com';
+const MASTER_KEY = "LX-BOSS-777";
 
 const CLIENT_ID = '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com';
 const CLIENT_SECRET = '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';
 const REFRESH_TOKEN = '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0';
 
-// База данных
-const DB_FILE = 'db.json';
+// Работа с файлом ключей
+const DB_FILE = path.join(__dirname, 'keys.json');
 let DB = { keys: [] };
-if (fs.existsSync(DB_FILE)) {
-    try {
-        DB = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    } catch (e) { console.error("[DB] Ошибка чтения базы:", e); }
-}
 
-const saveDB = () => {
-    try {
-        fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
-    } catch (e) { console.error("[DB] Ошибка записи базы:", e); }
+const loadDB = () => {
+    if (fs.existsSync(DB_FILE)) {
+        try {
+            DB = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+        } catch (e) { DB = { keys: [] }; }
+    }
 };
+loadDB();
+
+const saveDB = () => { fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2)); };
 
 // Инициализация Google
 const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, 'https://developers.google.com/oauthplayground');
@@ -47,7 +48,8 @@ bot.on('polling_error', (err) => { if(!err.message.includes('409')) console.log(
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// --- ФУНКЦИИ ГУГЛА ---
+// --- ГЛУБОКАЯ ЛОГИКА GOOGLE ---
+
 async function getOrCreateFolder(folderName, parentId = null) {
     try {
         let q = `name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
@@ -68,6 +70,7 @@ async function logToWorkerSheet(spreadsheetId, workerName, data) {
         const sheetName = workerName || "Общий";
         const ss = await sheets.spreadsheets.get({ spreadsheetId });
         const sheetExists = ss.data.sheets.some(s => s.properties.title === sheetName);
+        
         if (!sheetExists) {
             await sheets.spreadsheets.batchUpdate({
                 spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetName } } }] }
@@ -78,25 +81,34 @@ async function logToWorkerSheet(spreadsheetId, workerName, data) {
             });
         }
 
-        // GPS Ссылка для таблицы
-        let gpsValue = data.coords || "Нет GPS";
+        let gpsValue = "Нет GPS";
         if (data.latitude && data.longitude) {
-            const mapUrl = `https://www.google.com/maps?q=${data.latitude},${data.longitude}`;
+            const mapUrl = `http://maps.google.com/maps?q=${data.latitude},${data.longitude}`;
             gpsValue = `=HYPERLINK("${mapUrl}"; "${data.latitude}, ${data.longitude}")`;
         }
 
-        const row = [new Date().toLocaleString('ru-RU'), data.city, data.address, data.client, data.workType, data.price, gpsValue];
+        const row = [
+            new Date().toLocaleString('ru-RU'), 
+            data.city || '', 
+            data.address || '', 
+            data.client || '', 
+            data.workType || '', 
+            data.price || 0, 
+            gpsValue
+        ];
 
         await sheets.spreadsheets.values.append({
             spreadsheetId, range: `${sheetName}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [row] }
         });
-    } catch (err) { console.error("Ошибка таблицы:", err.message); }
+    } catch (err) { console.error("Ошибка записи в таблицу:", err.message); }
 }
+// --- API ДЛЯ АДМИНКИ И ПРИЛОЖЕНИЯ ---
 
-// --- API МАРШРУТЫ ---
 app.post('/api/add_key', async (req, res) => {
     try {
         const { name, days, limit } = req.body;
+        console.log(`[PROCESS] Создаю полный пакет для ${name}`);
+
         const folderId = await getOrCreateFolder(name);
         await sleep(1000);
 
@@ -104,13 +116,18 @@ app.post('/api/add_key', async (req, res) => {
         const sheetId = ss.data.spreadsheetId;
         
         await drive.files.update({
-            fileId: sheetId, addParents: folderId, removeParents: (await drive.files.get({fileId: sheetId, fields: 'parents'})).data.parents.join(',')
+            fileId: sheetId, 
+            addParents: folderId, 
+            removeParents: (await drive.files.get({fileId: sheetId, fields: 'parents'})).data.parents.join(','),
+            fields: 'id, parents'
         });
 
         const key = { 
             key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(), 
-            name, expiry: new Date(Date.now() + (parseInt(days) || 30) * 86400000).toISOString(), 
-            limit: parseInt(limit) || 1, workers: [], folderId, sheetId 
+            name, 
+            expiry: new Date(Date.now() + (parseInt(days) || 30) * 86400000).toISOString(), 
+            limit: parseInt(limit) || 1, 
+            workers: [], folderId, sheetId 
         };
 
         DB.keys.push(key);
@@ -119,16 +136,36 @@ app.post('/api/add_key', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+app.post('/check-license', (req, res) => {
+    const { licenseKey, workerName } = req.body;
+    
+    if (licenseKey === MASTER_KEY || licenseKey === "DEV-MASTER-999") {
+        return res.json({ status: "active", expiry: Date.now() + 315360000000 });
+    }
+
+    const k = DB.keys.find(x => x.key === licenseKey);
+    if (!k) return res.json({ status: "error", message: "Ключ не найден" });
+    if (new Date(k.expiry) < new Date()) return res.json({ status: "error", message: "Срок истек" });
+    
+    if (workerName && !k.workers.includes(workerName)) {
+        if (k.workers.length >= k.limit) return res.json({ status: "error", message: "Лимит воркеров" });
+        k.workers.push(workerName); saveDB();
+    }
+    res.json({ status: "active", expiry: new Date(k.expiry).getTime() });
+});
+
 app.post('/upload', async (req, res) => {
     try {
         const { worker, city, address, house, entrance, client, image, workType, price, licenseKey } = req.body;
-        const keyData = DB.keys.find(k => k.key === licenseKey);
+        
+        let keyData = DB.keys.find(k => k.key === licenseKey);
+        if (licenseKey === MASTER_KEY) keyData = { name: "Евгений_БОСС", sheetId: null };
         if (!keyData) throw new Error("Ключ не найден");
 
         const f1 = await getOrCreateFolder(keyData.name); 
         const f2 = await getOrCreateFolder(worker || "Воркер", f1);
-        const f3 = await getOrCreateFolder(client || "Объект", f2);
-        const f4 = await getOrCreateFolder(city || "Город", f3);
+        const f3 = await getOrCreateFolder(city || "Город", f2);
+        const f4 = await getOrCreateFolder(client || "Объект", f3);
         const f5 = await getOrCreateFolder(new Date().toLocaleDateString('ru-RU'), f4);
 
         if (image) {
@@ -141,38 +178,41 @@ app.post('/upload', async (req, res) => {
 
         if (keyData.sheetId) await logToWorkerSheet(keyData.sheetId, worker, req.body);
         
-        // Уведомление в Telegram
-        bot.sendMessage(MY_ID, `✅ **НОВЫЙ ОТЧЕТ**\n👤 Воркер: ${worker}\n🏢 Объект: ${client}\n📍 Адрес: ${address} ${house || ''}\n🛠 Работа: ${workType}\n💰 Сумма: ${price}₽`);
-
+        bot.sendMessage(MY_ID, `✅ **НОВЫЙ ОТЧЕТ**\n👷: ${worker}\n📍: ${address} ${house || ''}\n🛠: ${workType}\n💰: ${price}₽`);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// Команды бота
+app.get('/api/list_keys', (req, res) => res.json({ keys: DB.keys }));
+
+app.post('/api/update_key', (req, res) => {
+    const { key, addDays, addLimit } = req.body;
+    const k = DB.keys.find(x => x.key === key);
+    if (k) {
+        let exp = new Date(k.expiry);
+        if (exp < new Date()) exp = new Date();
+        exp.setDate(exp.getDate() + parseInt(addDays || 0));
+        k.expiry = exp.toISOString();
+        k.limit += parseInt(addLimit || 0);
+        saveDB(); res.json({ success: true });
+    } else res.status(404).json({ success: false });
+});
+
+app.post('/api/delete_key', (req, res) => {
+    DB.keys = DB.keys.filter(k => k.key !== req.body.key);
+    saveDB(); res.json({ success: true });
+});
+
 bot.onText(/\/start/, (msg) => {
     if (msg.chat.id.toString() === MY_ID) {
-        bot.sendMessage(MY_ID, "Система LOGIST_X на связи. Панель управления:", {
+        bot.sendMessage(MY_ID, "LOGIST_X HQ ONLINE", {
             reply_markup: { inline_keyboard: [[{ text: "📊 АДМИНКА", web_app: { url: `${APP_URL}/admin-panel` } }]] }
         });
     }
 });
 
-app.get('/api/list_keys', (req, res) => res.json({ keys: DB.keys }));
-app.post('/api/delete_key', (req, res) => { DB.keys = DB.keys.filter(k => k.key !== req.body.key); saveDB(); res.json({ success: true }); });
-app.post('/check-license', (req, res) => {
-    const { licenseKey, workerName } = req.body;
-    const k = DB.keys.find(x => x.key === licenseKey);
-    if (!k) return res.json({ status: "error", message: "Ключ не найден" });
-    if (new Date(k.expiry) < new Date()) return res.json({ status: "error", message: "Срок истек" });
-    if (!k.workers.includes(workerName)) {
-        if (k.workers.length >= k.limit) return res.json({ status: "error", message: "Лимит воркеров исчерпан" });
-        k.workers.push(workerName); saveDB();
-    }
-    res.json({ status: "active", expiry: new Date(k.expiry).getTime() });
-});
-
 app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
-app.get('/', (req, res) => res.send("LOGIST_X SERVER ONLINE"));
+app.get('/', (req, res) => res.send("LOGIST_X ELITE SERVER ONLINE"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`СЕРВЕР ЗАПУЩЕН НА ПОРТУ ${PORT}`));
+app.listen(PORT, () => console.log(`[HQ] СЕРВЕР ЗАПУЩЕН НА ПОРТУ ${PORT}`));
