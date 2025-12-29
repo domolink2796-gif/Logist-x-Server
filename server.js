@@ -11,42 +11,45 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// --- НАСТРОЙКИ ---
-const TOKEN = '7908672389:AAF63DoOmlrCXTRoIlmFVg71I1SgC55kHUc';
-const MY_TELEGRAM_ID = '6846149935';
+// --- НАСТРОЙКИ (ТВОЙ НОВЫЙ ТОКЕН ТУТ) ---
+const TOKEN = '7908672389:AAFv_T2qZU7hO9NlaUvD2WslVHxdPvVdjIc';
+const MY_TELEGRAM_ID = '6846149935'; 
 const MASTER_KEY_VAL = 'LX-BOSS-777'; 
 const APP_URL = 'https://logist-x-server.onrender.com';
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
-// Создаем файл базы, если его нет
 if (!fs.existsSync(KEYS_FILE)) fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }));
 
-// --- ЗАПУСК БОТА (БЕЗОПАСНЫЙ) ---
+// --- СТАРТ ПОРТА (ДЛЯ RENDER) ---
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`>>> СЕРВЕР ЗАПУЩЕН НА ПОРТУ ${PORT}`);
+});
+
+// --- БЕЗОПАСНЫЙ ЗАПУСК БОТА ---
 const bot = new TelegramBot(TOKEN, { polling: false });
 
-// Функция очистки и старта бота через 15 сек
-const startBot = async () => {
-    try {
-        console.log(">>> Очистка очереди Телеграм...");
-        await bot.deleteWebhook({ drop_pending_updates: true });
-        setTimeout(() => {
-            bot.startPolling().catch(() => {});
-            console.log(">>> БОТ ПОДКЛЮЧЕН И ГОТОВ");
-        }, 5000);
-    } catch (e) {
-        console.log(">>> Бот пропустил очистку, пробуем запуск...");
-        bot.startPolling().catch(() => {});
-    }
-};
-startBot();
+async function activateBot() {
+    console.log(">>> Ждем завершения старых сессий (20 сек)...");
+    setTimeout(async () => {
+        try {
+            await bot.deleteWebhook({ drop_pending_updates: true });
+            bot.startPolling({ restart: true });
+            console.log(">>> БОТ УСПЕШНО ЗАПУЩЕН С НОВЫМ ТОКЕНОМ");
+        } catch (e) {
+            console.log(">>> Ошибка старта бота (не критично):", e.message);
+        }
+    }, 20000);
+}
+activateBot();
 
-// Команда /start для Евгения
+// Обработка /start
 bot.onText(/\/start/, (msg) => {
     if (msg.chat.id.toString() !== MY_TELEGRAM_ID) return;
-    bot.sendMessage(msg.chat.id, "Система LOGIST_X активна!", {
+    bot.sendMessage(msg.chat.id, "Евгений, система Logist_X обновлена и готова!", {
         reply_markup: {
             inline_keyboard: [
-                [{ text: "📊 АДМИН-ПАНЕЛЬ", web_app: { url: `${APP_URL}/admin-panel` } }],
+                [{ text: "📊 ОТКРЫТЬ АДМИНКУ", web_app: { url: `${APP_URL}/admin-panel` } }],
                 [{ text: "📂 МОЙ GOOGLE ДИСК", url: "https://drive.google.com/drive/my-drive" }]
             ]
         }
@@ -63,7 +66,7 @@ oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
-// --- ПРОВЕРКА КЛЮЧА (ДЛЯ ПРИЛОЖЕНИЯ) ---
+// --- API ДЛЯ ПРИЛОЖЕНИЯ ---
 app.post('/check-license', (req, res) => {
     const { licenseKey } = req.body;
     if (licenseKey === "DEV-MASTER-999" || licenseKey === MASTER_KEY_VAL) {
@@ -79,7 +82,7 @@ app.post('/check-license', (req, res) => {
     res.json({ status: "error", message: "Ключ не найден" });
 });
 
-// --- ЗАГРУЗКА ---
+// Логика папок и загрузки (под твое приложение)
 async function getOrCreateFolder(name, parentId = null) {
     try {
         let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
@@ -104,7 +107,7 @@ async function getOrCreateSheet(name, parentId) {
         await drive.files.update({ fileId, addParents: parentId, removeParents: 'root' });
         await sheets.spreadsheets.values.append({
             spreadsheetId: fileId, range: 'Sheet1!A1', valueInputOption: 'RAW',
-            resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'Работа', 'Цена', 'GPS', 'Фото']] }
+            resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'Тип', 'Цена', 'GPS', 'Ссылка']] }
         });
         return fileId;
     } catch (e) { return null; }
@@ -132,14 +135,14 @@ app.post('/upload', async (req, res) => {
         });
 
         if (sheetId) {
-            const gpsLink = coords && coords.includes(',') ? `https://www.google.com/maps?q=${coords.replace(/\s+/g, '')}` : coords;
+            const gps = coords && coords.includes(',') ? `https://www.google.com/maps?q=${coords.replace(/\s/g, '')}` : coords;
             await sheets.spreadsheets.values.append({
                 spreadsheetId: sheetId, range: 'Sheet1!A2', valueInputOption: 'USER_ENTERED',
-                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, п.${pod}`, client, workType, price, gpsLink, file.data.webViewLink]] }
+                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, п.${pod}`, client, workType, price, gps, file.data.webViewLink]] }
             });
         }
         res.json({ success: true });
-        bot.sendMessage(MY_TELEGRAM_ID, `✅ Принято от ${worker}\n📍 ${address}\n💰 ${price}₽`);
+        bot.sendMessage(MY_TELEGRAM_ID, `✅ Отчет принят: ${worker}\n📍 ${address}\n💰 ${price}₽`);
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
@@ -155,5 +158,3 @@ app.post('/api/add_key', (req, res) => {
 });
 
 app.get('/', (req, res) => res.send("SERVER LIVE"));
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`>>> СЕРВЕР ЖИВОЙ НА ПОРТУ ${PORT}`));
