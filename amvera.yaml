@@ -4,7 +4,7 @@ meta:
     name: npm
     version: 20
 build:
-  install: npm install
+  command: npm install
 run:
   script: node server.js
   persistence:
