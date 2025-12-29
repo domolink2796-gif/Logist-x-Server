@@ -8,7 +8,9 @@ const { Readable } = require('stream');
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
-app.use(cors());
+
+// 1. ПУСКАЕМ ПРИЛОЖЕНИЕ (CORS)
+app.use(cors({ origin: '*' }));
 app.use(bodyParser.json({ limit: '50mb' }));
 
 const TOKEN = '7908672389:AAF63DoOmlrCXTRoIlmFVg71I1SgC55kHUc';
@@ -16,54 +18,51 @@ const MY_TELEGRAM_ID = '6846149935';
 const MASTER_KEY_VAL = 'LX-BOSS-777';
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
-// --- Инициализация ключей ---
+// 2. ПОДГОТОВКА ФАЙЛА КЛЮЧЕЙ
 if (!fs.existsSync(KEYS_FILE)) {
-    fs.writeFileSync(KEYS_FILE, JSON.stringify({
-        keys: [{ key: MASTER_KEY_VAL, name: "Евгений_БОСС", expiry: "2030-01-01T00:00:00.000Z", limit: 999, workers: [] }]
-    }, null, 2));
+    fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }, null, 2));
 }
 
-function readKeys() {
-    try { return JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8')); }
-    catch (e) { return { keys: [] }; }
-}
-
-// --- БОТ С ЗАЩИТОЙ ОТ 409 ---
+// 3. БОТ (С ЗАЩИТОЙ ОТ 409)
 const bot = new TelegramBot(TOKEN, { polling: false });
 
-async function initBot() {
+async function restartBot() {
     try {
-        console.log("Убиваем старые сессии...");
+        console.log(">>> [BOT] Сброс старых обновлений...");
         await bot.deleteWebhook({ drop_pending_updates: true });
-        // Даем Render 20 секунд, чтобы он окончательно прибил старый процесс
         setTimeout(() => {
-            bot.startPolling({ polling: { interval: 2000, params: { timeout: 10 } } });
-            console.log(">>> БОТ ЧИСТО ЗАПУЩЕН");
-        }, 20000); 
-    } catch (e) { console.log("Ошибка инициализации: " + e.message); }
+            bot.startPolling();
+            console.log(">>> [BOT] БОТ АКТИВЕН");
+        }, 15000); // 15 секунд паузы для Render
+    } catch (e) {
+        console.log(">>> [BOT] Ошибка старта (повтор через 5 сек):", e.message);
+        setTimeout(restartBot, 5000);
+    }
 }
+restartBot();
 
-initBot();
-
-// Глушим саму ошибку 409 в логах, чтобы она не пугала
+// Игнорируем 409 в логах, чтобы не засорять
 bot.on('polling_error', (err) => {
-    if (err.message.includes('409 Conflict')) {
-        // Просто игнорим, бот сам переподключится через пару секунд
-    } else { console.error("Polling Error:", err.message); }
+    if (!err.message.includes('409 Conflict')) console.log("Bot Error:", err.message);
 });
 
-// --- API ДЛЯ ПРИЛОЖЕНИЯ (ПРОВЕРКА КЛЮЧА) ---
+// 4. API ДЛЯ ПРИЛОЖЕНИЯ (ПРОВЕРКА ЛИЦЕНЗИИ)
 app.post('/api/check_key', (req, res) => {
     const { licenseKey } = req.body;
-    console.log("Проверка ключа:", licenseKey);
+    console.log(`>>> [APP] Попытка входа с ключом: ${licenseKey}`);
+
     if (licenseKey === MASTER_KEY_VAL) return res.json({ success: true });
-    const data = readKeys();
-    const found = data.keys.find(k => k.key === licenseKey);
-    if (found) return res.json({ success: true });
+
+    try {
+        const data = JSON.parse(fs.readFileSync(KEYS_FILE));
+        const found = data.keys.find(k => k.key === licenseKey);
+        if (found) return res.json({ success: true });
+    } catch (e) { console.log("Ошибка БД"); }
+
     res.status(403).json({ success: false });
 });
 
-// --- ТВОЯ ИЕРАРХИЯ ПАПОК ---
+// 5. GOOGLE И ТВОЯ ИЕРАРХИЯ
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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',
@@ -84,7 +83,7 @@ async function getOrCreateFolder(name, parentId = null) {
             fields: 'id'
         });
         return folder.data.id;
-    } catch (err) { return null; }
+    } catch (e) { return null; }
 }
 
 async function getOrCreateSheet(name, parentId) {
@@ -97,24 +96,28 @@ async function getOrCreateSheet(name, parentId) {
         await drive.files.update({ fileId, addParents: parentId, removeParents: 'root' });
         await sheets.spreadsheets.values.append({
             spreadsheetId: fileId, range: 'Sheet1!A1', valueInputOption: 'RAW',
-            resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'Карта GPS', 'Ссылка на фото']] }
+            resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'GPS', 'Фото']] }
         });
         return fileId;
-    } catch (err) { return null; }
+    } catch (e) { return null; }
 }
 
+// ЗАГРУЗКА
 app.post('/upload', async (req, res) => {
     try {
         const { worker, city, address, house, entrance, client, image, licenseKey, latitude, longitude } = req.body;
         let clientName = "Евгений_БОСС";
-        const data = readKeys();
-        const found = data.keys.find(k => k.key === licenseKey);
-        if (found) clientName = found.name;
+        
+        try {
+            const data = JSON.parse(fs.readFileSync(KEYS_FILE));
+            const found = data.keys.find(k => k.key === licenseKey);
+            if (found) clientName = found.name;
+        } catch (e) {}
 
-        // ИЕРАРХИЯ: Клиент -> Воркер -> Таблица (в f2) -> Город -> Объект
+        // ИЕРАРХИЯ: Клиент -> Воркер -> ТАБЛИЦА (в воркере) -> Город -> Объект
         const f1 = await getOrCreateFolder(clientName);
         const f2 = await getOrCreateFolder(worker || "Воркер", f1);
-        const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2); 
+        const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2);
         const f3 = await getOrCreateFolder(city || "Город", f2);
         const f4 = await getOrCreateFolder(client || "Объект", f3);
 
@@ -135,15 +138,15 @@ app.post('/upload', async (req, res) => {
         }
         res.json({ success: true });
         bot.sendMessage(MY_TELEGRAM_ID, `✅ Принято для: ${clientName}`);
-    } catch (e) { res.status(500).json({ success: false }); }
+    } catch (e) {
+        console.log("Ошибка загрузки:", e.message);
+        res.status(500).json({ success: false });
+    }
 });
 
-// Админка
-app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
-app.get('/api/list_keys', (req, res) => res.json(readKeys()));
-
+// КНОПКИ
 bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id, "Система готова:", {
+    bot.sendMessage(msg.chat.id, "Logist-X активен!", {
         reply_markup: {
             inline_keyboard: [
                 [{ text: "📊 АДМИНКА", web_app: { url: "https://logist-x-server.onrender.com/admin-panel" } }],
@@ -153,5 +156,8 @@ bot.onText(/\/start/, (msg) => {
     });
 });
 
+app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
+app.get('/api/list_keys', (req, res) => res.json(JSON.parse(fs.readFileSync(KEYS_FILE))));
 app.get('/', (req, res) => res.send("SERVER LIVE"));
-app.listen(process.env.PORT || 3000);
+
+app.listen(process.env.PORT || 3000, () => console.log("SERVER READY"));
