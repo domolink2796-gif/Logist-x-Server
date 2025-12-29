@@ -11,6 +11,7 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
+// --- НАСТРОЙКИ ---
 const TOKEN = '7908672389:AAFqJsmCmlJHSckewNPue_XVa_WTxKY7-Aw';
 const CLIENT_ID = '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com';
 const CLIENT_SECRET = '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';
@@ -19,19 +20,25 @@ const MY_TELEGRAM_ID = '6846149935';
 const MASTER_KEY_VAL = 'LX-BOSS-777';
 
 const bot = new TelegramBot(TOKEN, { polling: true });
+
+// Обработка ошибок бота (чтобы не падал при 401/409)
+bot.on('polling_error', (error) => {
+    console.log(`[Telegram Error] ${error.code}: ${error.message}`);
+    if (error.code === 'ETELEGRAM' && error.message.includes('401')) {
+        console.log("Ошибка авторизации. Проверьте токен или подождите 5 минут.");
+    }
+});
+
 const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, 'https://developers.google.com/oauthplayground');
 oauth2Client.setCredentials({ refresh_token: REFRESH_TOKEN });
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
-// --- ФУНКЦИЯ ДЛЯ ПОСТОЯННЫХ КНОПОК ---
 const mainMenu = {
     reply_markup: {
-        keyboard: [
-            [{ text: "📊 Админ-панель" }, { text: "📂 Google Drive" }]
-        ],
-        resize_keyboard: true, // Делает кнопки компактными
-        one_time_keyboard: false // Кнопки НЕ будут исчезать
+        keyboard: [[{ text: "📊 Админ-панель" }, { text: "📂 Google Drive" }]],
+        resize_keyboard: true,
+        one_time_keyboard: false
     }
 };
 
@@ -79,6 +86,7 @@ app.post('/upload', async (req, res) => {
         const { worker, city, address, house, entrance, client, image, licenseKey, latitude, longitude } = req.body;
         if (licenseKey !== MASTER_KEY_VAL) return res.status(403).json({ success: false });
 
+        // Исправленная ссылка на карту
         const gpsLink = (latitude && longitude) ? `https://www.google.com/maps?q=${latitude},${longitude}` : "Нет GPS";
         const photoName = `${address || 'Улица'}_${house || 'Дом'}_${entrance || 'Подъезд'}.jpg`.replace(/\s+/g, '_');
 
@@ -103,11 +111,10 @@ app.post('/upload', async (req, res) => {
         }
 
         res.json({ success: true });
-        bot.sendMessage(MY_TELEGRAM_ID, `✅ Фото принято!\n🏠 Файл: ${photoName}\n👷 Воркер: ${worker}\n📍 Адрес: ${city}, ${address}, д.${house}, под.${entrance}\n🏢 Клиент: ${client}\n🗺 Карта: ${gpsLink}`, mainMenu);
+        bot.sendMessage(MY_TELEGRAM_ID, `✅ Фото принято!\n🏠 Файл: ${photoName}\n👷 Воркер: ${worker}\n📍 ${address}, д.${house}, под.${entrance}\n🏢 Клиент: ${client}\n🗺 Карта: ${gpsLink}`, mainMenu);
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// --- ЛОГИКА КНОПОК ---
 bot.onText(/\/start/, (msg) => {
     bot.sendMessage(msg.chat.id, "Привет, Евгений! Твои кнопки управления всегда внизу:", mainMenu);
 });
