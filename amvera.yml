@@ -1,9 +1,12 @@
 meta:
   environment: node
   toolchain:
-    name: npm
+    name: node
     version: 18
 build:
   install: npm install
 run:
-  script: node server.js
+  command: node server.js
+  persistence:
+    - mountPoint: /data
+      name: data
