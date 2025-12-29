@@ -12,67 +12,93 @@ app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
 // --- НАСТРОЙКИ ---
-const TOKEN = '7908672389:AAFqJsmCmlJHSckewNPue_XVa_w';
+const TOKEN = '7908672389:AAFqJsmCmlJHSckewNPue_XVa_WTxKY7-Aw';
 const CLIENT_ID = '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com';
 const CLIENT_SECRET = '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';
 const REFRESH_TOKEN = '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0';
 const MY_TELEGRAM_ID = '6846149935';
 
-// ТВOЙ ВЕЧНЫЙ КЛЮЧ
 const MASTER_KEY_VAL = 'LX-BOSS-777';
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, 'https://developers.google.com/oauthplayground');
 oauth2Client.setCredentials({ refresh_token: REFRESH_TOKEN });
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
+const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
-const DB_FILE = 'db.json';
-let DB = { keys: [] };
-if (fs.existsSync(DB_FILE)) {
-    try { DB = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch (e) { }
+async function getOrCreateFolder(name, parentId = null) {
+    try {
+        let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        if (parentId) q += ` and '${parentId}' in parents`;
+        const res = await drive.files.list({ q, fields: 'files(id)' });
+        if (res.data.files.length > 0) return res.data.files[0].id;
+        const folder = await drive.files.create({
+            resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: parentId ? [parentId] : [] },
+            fields: 'id'
+        });
+        return folder.data.id;
+    } catch (err) { return null; }
 }
 
-// --- НОВОЕ: ПРОВЕРКА КЛЮЧА ДЛЯ ВХОДА В ПРИЛОЖЕНИЕ ---
+async function getOrCreateSheet(name, parentId) {
+    try {
+        let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false and '${parentId}' in parents`;
+        const res = await drive.files.list({ q, fields: 'files(id)' });
+        if (res.data.files.length > 0) return res.data.files[0].id;
+        const ss = await sheets.spreadsheets.create({
+            resource: { properties: { title: name } },
+            fields: 'spreadsheetId'
+        });
+        const fileId = ss.data.spreadsheetId;
+        await drive.files.update({ fileId, addParents: parentId, removeParents: 'root' });
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: fileId, range: 'Sheet1!A1', valueInputOption: 'RAW',
+            resource: { values: [['Дата', 'Город', 'Адрес', 'Клиент', 'Карта GPS', 'Ссылка на фото']] }
+        });
+        return fileId;
+    } catch (err) { return null; }
+}
+
 app.post('/api/check_key', (req, res) => {
     const { licenseKey } = req.body;
-    console.log(`[AUTH] Проверка ключа: ${licenseKey}`);
-    
-    if (licenseKey === MASTER_KEY_VAL || DB.keys.find(k => k.key === licenseKey)) {
-        return res.json({ success: true, message: "Доступ разрешен" });
-    }
-    res.status(403).json({ success: false, error: "Ключ не найден" });
+    if (licenseKey === MASTER_KEY_VAL) return res.json({ success: true });
+    res.status(403).json({ success: false });
 });
 
-// --- ПРИЕМ ФОТО ---
 app.post('/upload', async (req, res) => {
     try {
-        const { worker, city, client, image, fileName, licenseKey } = req.body;
+        const { worker, city, address, house, entrance, client, image, licenseKey, latitude, longitude } = req.body;
+        if (licenseKey !== MASTER_KEY_VAL) return res.status(403).json({ success: false });
+
+        const gpsLink = (latitude && longitude) ? `https://www.google.com/maps?q=${latitude},${longitude}` : "Нет GPS";
         
-        let keyData = (licenseKey === MASTER_KEY_VAL) 
-            ? { name: 'Евгений_Admin' } 
-            : DB.keys.find(k => k.key === licenseKey);
-        
-        if (!keyData) return res.status(403).json({ success: false });
+        // --- НАЗВАНИЕ ФОТО: УЛИЦА_ДОМ_ПОДЪЕЗД ---
+        const photoName = `${address || 'Улица'}_${house || 'Дом'}_${entrance || 'Подъезд'}.jpg`.replace(/\s+/g, '_');
+
+        const f1 = await getOrCreateFolder("Евгений_Admin"); 
+        const f2 = await getOrCreateFolder(worker || "Воркер", f1);
+        const f3 = await getOrCreateFolder(city || "Город", f2);
+        const f4 = await getOrCreateFolder(client || "Клиент", f3);
 
         const buffer = Buffer.from(image, 'base64');
-        // (Тут логика папок как была в прошлом сообщении...)
-        // Для краткости просто грузим в корень или по ID
-        await drive.files.create({
-            resource: { name: `${fileName}.jpg` },
-            media: { mimeType: 'image/jpeg', body: Readable.from(buffer) }
+        const file = await drive.files.create({
+            resource: { name: photoName, parents: [f4] },
+            media: { mimeType: 'image/jpeg', body: Readable.from(buffer) },
+            fields: 'id, webViewLink'
         });
 
+        const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2);
+        if (sheetId) {
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: sheetId, range: 'Sheet1!A2', valueInputOption: 'RAW',
+                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, д.${house}, под.${entrance}`, client, gpsLink, file.data.webViewLink]] }
+            });
+        }
+
         res.json({ success: true });
-        bot.sendMessage(MY_TELEGRAM_ID, `📸 Фото от ${worker} принято!`);
-    } catch (e) {
-        res.status(500).json({ success: false });
-    }
+        bot.sendMessage(MY_TELEGRAM_ID, `✅ Фото принято!\n🏠 Файл: ${photoName}\n👷 Воркер: ${worker}\n📍 Адрес: ${city}, ${address}, д.${house}, под.${entrance}\n🏢 Клиент: ${client}\n🗺 Карта: ${gpsLink}`);
+    } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// Остальные пути
-app.get('/api/list_keys', (req, res) => res.json({ keys: DB.keys }));
-app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
 app.get('/', (req, res) => res.send("LOGIST_X ONLINE"));
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("SERVER START"));
+app.listen(process.env.PORT || 3000, () => console.log("SERVER START"));
