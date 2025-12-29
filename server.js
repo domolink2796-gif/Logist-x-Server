@@ -17,8 +17,8 @@ const MY_TELEGRAM_ID = '6846149935';
 const MASTER_KEY_VAL = 'LX-BOSS-777';
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
-// --- ЖЕСТКАЯ ЗАПИСЬ МАСТЕР-КЛЮЧА ПРИ СТАРТЕ ---
-function initKeysFile() {
+// --- ИНИЦИАЛИЗАЦИЯ МАСТЕР-КЛЮЧА ---
+function initKeys() {
     const defaultData = {
         keys: [{
             key: MASTER_KEY_VAL,
@@ -28,23 +28,19 @@ function initKeysFile() {
             workers: []
         }]
     };
-    // Если файла нет или он пустой — записываем мастер-ключ
     if (!fs.existsSync(KEYS_FILE) || fs.readFileSync(KEYS_FILE, 'utf8').length < 10) {
         fs.writeFileSync(KEYS_FILE, JSON.stringify(defaultData, null, 2));
-        console.log(">>> Файл keys.json создан с Мастер-ключом");
     }
 }
-initKeysFile();
+initKeys();
 
 function readKeys() {
-    try {
-        const content = fs.readFileSync(KEYS_FILE, 'utf8');
-        return JSON.parse(content);
-    } catch (e) { return { keys: [] }; }
+    try { return JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8')); }
+    catch (e) { return { keys: [] }; }
 }
 
 const bot = new TelegramBot(TOKEN, { polling: false });
-setTimeout(() => { bot.startPolling(); console.log(">>> БОТ ВКЛЮЧЕН"); }, 15000);
+setTimeout(() => { bot.startPolling(); console.log("БОТ ВКЛЮЧЕН"); }, 15000);
 
 // Google Auth
 const oauth2Client = new google.auth.OAuth2(
@@ -56,7 +52,21 @@ oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
-// --- API ---
+// --- API ДЛЯ ПРИЛОЖЕНИЯ И АДМИНКИ ---
+
+// Проверка лицензии (ТО ЧТО ТЫ ИСКАЛ)
+app.post('/api/check_key', (req, res) => {
+    const { licenseKey } = req.body;
+    if (licenseKey === MASTER_KEY_VAL) return res.json({ success: true });
+    
+    const data = readKeys();
+    const found = data.keys.find(k => k.key === licenseKey);
+    if (found && new Date(found.expiry) > new Date()) {
+        return res.json({ success: true });
+    }
+    res.status(403).json({ success: false });
+});
+
 app.get('/api/list_keys', (req, res) => res.json(readKeys()));
 
 app.post('/api/add_key', (req, res) => {
@@ -77,6 +87,7 @@ app.post('/api/add_key', (req, res) => {
 });
 
 // --- ЗАГРУЗКА И ТВОЯ ИЕРАРХИЯ ---
+
 async function getOrCreateFolder(name, parentId = null) {
     try {
         let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
@@ -111,12 +122,11 @@ app.post('/upload', async (req, res) => {
     try {
         const { worker, city, address, house, entrance, client, image, licenseKey, latitude, longitude } = req.body;
         let clientName = "Евгений_БОСС";
-        
         const data = readKeys();
         const found = data.keys.find(k => k.key === licenseKey);
         if (found) clientName = found.name;
 
-        // ИЕРАРХИЯ: Клиент -> Воркер -> Таблица (в воркере) -> Город -> Объект
+        // Иерархия: Клиент -> Воркер -> Таблица (в f2) -> Город -> Объект
         const f1 = await getOrCreateFolder(clientName);
         const f2 = await getOrCreateFolder(worker || "Воркер", f1);
         const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2); 
