@@ -44,7 +44,7 @@ bot.onText(/\/start|\/admin/, (msg) => {
 Твой ID: ${msg.from.id} подтвержден.`, {
         reply_markup: {
             inline_keyboard: [[{ 
-                text: "Открыть Master HQ v86.0", 
+                text: "Открыть Master HQ v87.0", 
                 web_app: { url: `https://${process.env.RENDER_EXTERNAL_HOSTNAME}/admin-panel` } 
             }]]
         }
@@ -98,17 +98,28 @@ async function logToSheet(data) {
 
 app.post('/upload', async (req, res) => {
     try {
-        const { worker, city, address, client, image, fileName } = req.body;
+        const { worker, city, address, client, image, fileName, licenseKey } = req.body;
         const dateStr = new Date().toLocaleDateString('ru-RU');
         
-        const f1 = await getOrCreateFolder(client || "ОБЩИЙ");
-        const f2 = await getOrCreateFolder(worker || "Воркер", f1);
-        const f3 = await getOrCreateFolder(city || "Город", f2);
-        const f4 = await getOrCreateFolder(dateStr, f3);
+        // Находим владельца ключа (например, "ТАНДЕР")
+        const keyData = DB.keys.find(k => k.key === licenseKey);
+        const ownerName = keyData ? keyData.name : "ОБЩИЙ";
+
+        // Создаем иерархию папок по твоему запросу:
+        // 1. Владелец из пульта
+        const f1 = await getOrCreateFolder(ownerName); 
+        // 2. Кто делает (Монтажник)
+        const f2 = await getOrCreateFolder(worker || "Без_имени", f1);
+        // 3. Объект/Заказчик (например, Магнит)
+        const f3 = await getOrCreateFolder(client || "Объект", f2);
+        // 4. Город
+        const f4 = await getOrCreateFolder(city || "Город", f3);
+        // 5. Дата
+        const f5 = await getOrCreateFolder(dateStr, f4);
 
         const buffer = Buffer.from(image, 'base64');
         await drive.files.create({
-            resource: { name: `${fileName}.jpg`, parents: [f4] },
+            resource: { name: `${fileName}.jpg`, parents: [f5] },
             media: { mimeType: 'image/jpeg', body: require('stream').Readable.from(buffer) }
         });
 
@@ -134,19 +145,26 @@ app.post('/check-license', (req, res) => {
 
 app.get('/api/list_keys', (req, res) => res.json({ keys: DB.keys }));
 
-app.post('/api/add_key', (req, res) => {
-    const { name, days, limit } = req.body;
-    const key = { 
-        key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(), 
-        name, 
-        expiry: new Date(Date.now() + days * 86400000).toISOString(), 
-        limit: parseInt(limit), 
-        workers: [] 
-    };
-    DB.keys.push(key); saveDB(); res.json({ success: true });
+app.post('/api/add_key', async (req, res) => {
+    try {
+        const { name, days, limit } = req.body;
+        await getOrCreateFolder(name); // Сразу создаем корневую папку владельца
+
+        const key = { 
+            key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(), 
+            name, 
+            expiry: new Date(Date.now() + days * 86400000).toISOString(), 
+            limit: parseInt(limit), 
+            workers: [] 
+        };
+        DB.keys.push(key); 
+        saveDB(); 
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
 });
 
-// НОВЫЙ МЕТОД: ПРОДЛЕНИЕ ЛИЦЕНЗИИ
 app.post('/api/update_key', (req, res) => {
     const { key, addDays, addLimit } = req.body;
     const keyData = DB.keys.find(k => k.key === key);
