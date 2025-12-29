@@ -11,46 +11,45 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// --- НАСТРОЙКИ ---
+// --- НАСТРОЙКИ (ВШИТЫ НАМЕРТВО) ---
 const TOKEN = '7908672389:AAF63DoOmlrCXTRoIlmFVg71I1SgC55kHUc';
 const MY_TELEGRAM_ID = '6846149935';
-const MASTER_KEY_VAL = 'LX-BOSS-777'; // Твой основной ключ
 const APP_URL = 'https://logist-x-server.onrender.com';
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
+// Глобальная защита от падений сервера
+process.on('uncaughtException', (err) => { if (!err.message.includes('409')) console.log('Ошибка:', err.message); });
+
 if (!fs.existsSync(KEYS_FILE)) fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }));
 
-// --- ТЕЛЕГРАМ БОТ С КНОПКАМИ ---
-const bot = new TelegramBot(TOKEN, { polling: false });
+// --- 1. ЗАПУСК ПОРТА (МГНОВЕННО ДЛЯ RENDER) ---
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`>>> СЕРВЕР ЖИВОЙ. ПОРТ: ${PORT}`);
+});
 
-// Тихий запуск бота
+// --- 2. ТЕЛЕГРАМ БОТ (ЗАПУСК В ФОНЕ ЧЕРЕЗ 20 СЕК) ---
+const bot = new TelegramBot(TOKEN, { polling: false });
 setTimeout(() => {
     bot.deleteWebhook({ drop_pending_updates: true }).then(() => {
         bot.startPolling().catch(() => {});
-        console.log(">>> БОТ АКТИВИРОВАН");
+        console.log(">>> БОТ ПОДКЛЮЧЕН");
     });
-}, 15000);
+}, 20000);
 
-// Команда /start с двумя кнопками
 bot.onText(/\/start/, (msg) => {
     if (msg.chat.id.toString() !== MY_TELEGRAM_ID) return;
-
-    const opts = {
+    bot.sendMessage(msg.chat.id, "Евгений, привет! Всё настроено:", {
         reply_markup: {
             inline_keyboard: [
-                [
-                    { text: "📊 ОТКРЫТЬ АДМИНКУ", web_app: { url: `${APP_URL}/admin-panel` } }
-                ],
-                [
-                    { text: "📂 ПЕРЕЙТИ НА ДИСК", url: "https://drive.google.com/drive/my-drive" }
-                ]
+                [{ text: "📊 ОТКРЫТЬ АДМИНКУ", web_app: { url: `${APP_URL}/admin-panel` } }],
+                [{ text: "📂 МОЙ GOOGLE ДИСК", url: "https://drive.google.com/drive/my-drive" }]
             ]
         }
-    };
-    bot.sendMessage(msg.chat.id, "Привет, Евгений! Система LOGIST_X на связи.\n\nВыбери нужное действие:", opts);
+    });
 });
 
-// Google Auth
+// --- 3. GOOGLE АВТОРИЗАЦИЯ ---
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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',
@@ -60,15 +59,13 @@ oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
-// --- ПРОВЕРКА ЛИЦЕНЗИИ (ПОД ТВОЁ ПРИЛОЖЕНИЕ) ---
+// --- 4. ПРОВЕРКА КЛЮЧА (ПОД ТВОЕ ПРИЛОЖЕНИЕ) ---
 app.post('/check-license', (req, res) => {
-    const { licenseKey, workerName } = req.body;
-    console.log(`>>> [APP] Вход: ${workerName} (${licenseKey})`);
-
-    if (licenseKey === "DEV-MASTER-999" || licenseKey === MASTER_KEY_VAL) {
+    const { licenseKey } = req.body;
+    // Мастер-ключи
+    if (licenseKey === "DEV-MASTER-999" || licenseKey === "LX-BOSS-777") {
         return res.json({ status: "active", expiry: Date.now() + 315360000000 });
     }
-
     try {
         const data = JSON.parse(fs.readFileSync(KEYS_FILE));
         const found = data.keys.find(k => k.key === licenseKey);
@@ -76,11 +73,10 @@ app.post('/check-license', (req, res) => {
             return res.json({ status: "active", expiry: new Date(found.expiry).getTime() });
         }
     } catch (e) {}
-
     res.json({ status: "error", message: "Ключ не найден" });
 });
 
-// --- GOOGLE DRIVE ЛОГИКА ---
+// --- 5. ЗАГРУЗКА ФОТО И ТАБЛИЦЫ ---
 async function getOrCreateFolder(name, parentId = null) {
     try {
         let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
@@ -105,7 +101,7 @@ async function getOrCreateSheet(name, parentId) {
         await drive.files.update({ fileId, addParents: parentId, removeParents: 'root' });
         await sheets.spreadsheets.values.append({
             spreadsheetId: fileId, range: 'Sheet1!A1', valueInputOption: 'RAW',
-            resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'Тип работ', 'Цена', 'GPS', 'Ссылка']] }
+            resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'Работа', 'Цена', 'GPS', 'Ссылка']] }
         });
         return fileId;
     } catch (e) { return null; }
@@ -114,13 +110,12 @@ async function getOrCreateSheet(name, parentId) {
 app.post('/upload', async (req, res) => {
     try {
         const { worker, city, address, pod, client, image, licenseKey, coords, workType, price, fileName } = req.body;
-        
         let clientName = "Евгений_БОСС";
         const data = JSON.parse(fs.readFileSync(KEYS_FILE));
         const keyData = data.keys.find(k => k.key === licenseKey);
         if (keyData) clientName = keyData.name;
 
-        // ИЕРАРХИЯ
+        // ИЕРАРХИЯ: Клиент -> Воркер -> Таблица -> Город -> Объект
         const f1 = await getOrCreateFolder(clientName);
         const f2 = await getOrCreateFolder(worker || "Воркер", f1);
         const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2);
@@ -135,19 +130,17 @@ app.post('/upload', async (req, res) => {
         });
 
         if (sheetId) {
-            const gpsLink = coords && coords.includes(',') ? `https://www.google.com/maps?q=${coords.replace(/\s/g, '')}` : coords;
+            const gps = coords && coords.includes(',') ? `https://www.google.com/maps?q=${coords.replace(/\s/g, '')}` : coords;
             await sheets.spreadsheets.values.append({
                 spreadsheetId: sheetId, range: 'Sheet1!A2', valueInputOption: 'USER_ENTERED',
-                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, п.${pod}`, client, workType, price, gpsLink, file.data.webViewLink]] }
+                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, п.${pod}`, client, workType, price, gps, file.data.webViewLink]] }
             });
         }
-        
         res.json({ success: true });
-        bot.sendMessage(MY_TELEGRAM_ID, `✅ Принято от ${worker}\n📍 ${address} (п.${pod})\n💰 ${price}₽`);
+        bot.sendMessage(MY_TELEGRAM_ID, `✅ Принято от: ${worker}\n📍 ${address}\n💰 Сумма: ${price}₽`);
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// Админка
 app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
 app.get('/api/list_keys', (req, res) => res.json(JSON.parse(fs.readFileSync(KEYS_FILE))));
 app.post('/api/add_key', (req, res) => {
@@ -160,4 +153,3 @@ app.post('/api/add_key', (req, res) => {
 });
 
 app.get('/', (req, res) => res.send("SERVER LIVE"));
-app.listen(process.env.PORT || 3000);
