@@ -68,11 +68,11 @@ async function logToWorkerSheet(spreadsheetId, workerName, data) {
             });
         }
 
-        // --- ЛОГИКА ССЫЛКИ НА КАРТУ ---
+        // --- ЛОГИКА ССЫЛКИ НА КАРТУ (ИСПРАВЛЕНО) ---
         let gpsValue = data.coords || "Нет GPS";
         if (data.coords && data.coords.includes(',')) {
-            const cleanCoords = data.coords.replace(/\s+/g, ''); // Чистим пробелы
-            const mapUrl = `https://www.google.com/maps/search/?api=1&query=${cleanCoords}`;
+            const cleanCoords = data.coords.replace(/\s+/g, ''); 
+            const mapUrl = `https://www.google.com/maps?q=${cleanCoords}`;
             gpsValue = `=HYPERLINK("${mapUrl}"; "${data.coords}")`;
         }
 
@@ -89,7 +89,7 @@ async function logToWorkerSheet(spreadsheetId, workerName, data) {
         await sheets.spreadsheets.values.append({
             spreadsheetId, 
             range: `${sheetName}!A1`, 
-            valueInputOption: 'USER_ENTERED', // Важно для работы формул!
+            valueInputOption: 'USER_ENTERED', 
             resource: { values: [row] }
         });
     } catch (err) { console.error("Ошибка записи в таблицу:", err.message); }
