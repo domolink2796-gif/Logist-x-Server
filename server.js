@@ -17,18 +17,34 @@ const MY_TELEGRAM_ID = '6846149935';
 const MASTER_KEY_VAL = 'LX-BOSS-777';
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
-// Инициализация файла ключей
-if (!fs.existsSync(KEYS_FILE)) fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }));
+// --- ЖЕСТКАЯ ЗАПИСЬ МАСТЕР-КЛЮЧА ПРИ СТАРТЕ ---
+function initKeysFile() {
+    const defaultData = {
+        keys: [{
+            key: MASTER_KEY_VAL,
+            name: "Евгений_БОСС",
+            expiry: "2030-01-01T00:00:00.000Z",
+            limit: 999,
+            workers: []
+        }]
+    };
+    // Если файла нет или он пустой — записываем мастер-ключ
+    if (!fs.existsSync(KEYS_FILE) || fs.readFileSync(KEYS_FILE, 'utf8').length < 10) {
+        fs.writeFileSync(KEYS_FILE, JSON.stringify(defaultData, null, 2));
+        console.log(">>> Файл keys.json создан с Мастер-ключом");
+    }
+}
+initKeysFile();
+
+function readKeys() {
+    try {
+        const content = fs.readFileSync(KEYS_FILE, 'utf8');
+        return JSON.parse(content);
+    } catch (e) { return { keys: [] }; }
+}
 
 const bot = new TelegramBot(TOKEN, { polling: false });
-
-// Защита от 409: запуск с паузой
-setTimeout(() => {
-    bot.startPolling();
-    console.log("БОТ АКТИВИРОВАН");
-}, 15000);
-
-bot.on('polling_error', (e) => { if(!e.message.includes('409')) console.log(e.message); });
+setTimeout(() => { bot.startPolling(); console.log(">>> БОТ ВКЛЮЧЕН"); }, 15000);
 
 // Google Auth
 const oauth2Client = new google.auth.OAuth2(
@@ -40,21 +56,17 @@ oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
-// --- API ДЛЯ АДМИНКИ (ЧТОБЫ КЛЮЧИ СОЗДАВАЛИСЬ) ---
-
-app.get('/api/list_keys', (req, res) => {
-    const data = JSON.parse(fs.readFileSync(KEYS_FILE));
-    res.json(data);
-});
+// --- API ---
+app.get('/api/list_keys', (req, res) => res.json(readKeys()));
 
 app.post('/api/add_key', (req, res) => {
     try {
         const { name, days, limit } = req.body;
-        const data = JSON.parse(fs.readFileSync(KEYS_FILE));
+        let data = readKeys();
         const newKey = {
             key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(),
-            name: name,
-            expiry: new Date(Date.now() + days * 86400000).toISOString(),
+            name: name || "Клиент",
+            expiry: new Date(Date.now() + (parseInt(days) || 30) * 86400000).toISOString(),
             limit: parseInt(limit) || 1,
             workers: []
         };
@@ -64,25 +76,7 @@ app.post('/api/add_key', (req, res) => {
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
-app.post('/api/delete_key', (req, res) => {
-    const { key } = req.body;
-    let data = JSON.parse(fs.readFileSync(KEYS_FILE));
-    data.keys = data.keys.filter(k => k.key !== key);
-    fs.writeFileSync(KEYS_FILE, JSON.stringify(data, null, 2));
-    res.json({ success: true });
-});
-
-app.post('/api/check_key', (req, res) => {
-    const { licenseKey } = req.body;
-    if (licenseKey === MASTER_KEY_VAL) return res.json({ success: true });
-    const data = JSON.parse(fs.readFileSync(KEYS_FILE));
-    const found = data.keys.find(k => k.key === licenseKey);
-    if (found && new Date(found.expiry) > new Date()) return res.json({ success: true });
-    res.status(403).json({ success: false });
-});
-
-// --- ЛОГИКА ПАПОК И ЗАГРУЗКИ ---
-
+// --- ЗАГРУЗКА И ТВОЯ ИЕРАРХИЯ ---
 async function getOrCreateFolder(name, parentId = null) {
     try {
         let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
@@ -116,14 +110,16 @@ async function getOrCreateSheet(name, parentId) {
 app.post('/upload', async (req, res) => {
     try {
         const { worker, city, address, house, entrance, client, image, licenseKey, latitude, longitude } = req.body;
-        let clientFolderName = "Евгений_БОСС";
-        const data = JSON.parse(fs.readFileSync(KEYS_FILE));
-        const keyData = data.keys.find(k => k.key === licenseKey);
-        if (keyData) clientFolderName = keyData.name;
+        let clientName = "Евгений_БОСС";
+        
+        const data = readKeys();
+        const found = data.keys.find(k => k.key === licenseKey);
+        if (found) clientName = found.name;
 
-        // Иерархия: Клиент -> Воркер -> Город -> Объект
-        const f1 = await getOrCreateFolder(clientFolderName);
+        // ИЕРАРХИЯ: Клиент -> Воркер -> Таблица (в воркере) -> Город -> Объект
+        const f1 = await getOrCreateFolder(clientName);
         const f2 = await getOrCreateFolder(worker || "Воркер", f1);
+        const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2); 
         const f3 = await getOrCreateFolder(city || "Город", f2);
         const f4 = await getOrCreateFolder(client || "Объект", f3);
 
@@ -135,32 +131,27 @@ app.post('/upload', async (req, res) => {
             fields: 'id, webViewLink'
         });
 
-        const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2);
         if (sheetId) {
             const gps = (latitude && longitude) ? `https://www.google.com/maps?q=${latitude},${longitude}` : "Нет GPS";
             await sheets.spreadsheets.values.append({
                 spreadsheetId: sheetId, range: 'Sheet1!A2', valueInputOption: 'RAW',
-                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, д.${house}`, client, gps, file.data.webViewLink]] }
+                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, ${house}`, client, gps, file.data.webViewLink]] }
             });
         }
         res.json({ success: true });
-        bot.sendMessage(MY_TELEGRAM_ID, `✅ Фото для ${clientFolderName} принято!`, {
-            reply_markup: { inline_keyboard: [[{ text: "📂 ОТКРЫТЬ ДИСК", url: "https://drive.google.com/drive/my-drive" }]] }
-        });
+        bot.sendMessage(MY_TELEGRAM_ID, `✅ Фото для ${clientName} принято!`);
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// Обработка /start и кнопок
 bot.onText(/\/start/, (msg) => {
-    const opts = {
+    bot.sendMessage(msg.chat.id, "Logist-X готов!", {
         reply_markup: {
             inline_keyboard: [
-                [{ text: "📊 ОТКРЫТЬ АДМИНКУ", web_app: { url: "https://logist-x-server.onrender.com/admin-panel" } }],
-                [{ text: "📂 ПЕРЕЙТИ НА ДИСК", url: "https://drive.google.com/drive/my-drive" }]
+                [{ text: "📊 АДМИНКА", web_app: { url: "https://logist-x-server.onrender.com/admin-panel" } }],
+                [{ text: "📂 ДИСК", url: "https://drive.google.com/drive/my-drive" }]
             ]
         }
-    };
-    bot.sendMessage(msg.chat.id, "Евгений, система Logist-X готова:", opts);
+    });
 });
 
 app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
