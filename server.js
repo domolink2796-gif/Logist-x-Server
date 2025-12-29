@@ -11,45 +11,49 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// --- НАСТРОЙКИ (ВШИТЫ НАМЕРТВО) ---
+// --- НАСТРОЙКИ ---
 const TOKEN = '7908672389:AAF63DoOmlrCXTRoIlmFVg71I1SgC55kHUc';
 const MY_TELEGRAM_ID = '6846149935';
+const MASTER_KEY_VAL = 'LX-BOSS-777'; 
 const APP_URL = 'https://logist-x-server.onrender.com';
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
-// Глобальная защита от падений сервера
-process.on('uncaughtException', (err) => { if (!err.message.includes('409')) console.log('Ошибка:', err.message); });
-
+// Создаем файл базы, если его нет
 if (!fs.existsSync(KEYS_FILE)) fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }));
 
-// --- 1. ЗАПУСК ПОРТА (МГНОВЕННО ДЛЯ RENDER) ---
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`>>> СЕРВЕР ЖИВОЙ. ПОРТ: ${PORT}`);
-});
-
-// --- 2. ТЕЛЕГРАМ БОТ (ЗАПУСК В ФОНЕ ЧЕРЕЗ 20 СЕК) ---
+// --- ЗАПУСК БОТА (БЕЗОПАСНЫЙ) ---
 const bot = new TelegramBot(TOKEN, { polling: false });
-setTimeout(() => {
-    bot.deleteWebhook({ drop_pending_updates: true }).then(() => {
-        bot.startPolling().catch(() => {});
-        console.log(">>> БОТ ПОДКЛЮЧЕН");
-    });
-}, 20000);
 
+// Функция очистки и старта бота через 15 сек
+const startBot = async () => {
+    try {
+        console.log(">>> Очистка очереди Телеграм...");
+        await bot.deleteWebhook({ drop_pending_updates: true });
+        setTimeout(() => {
+            bot.startPolling().catch(() => {});
+            console.log(">>> БОТ ПОДКЛЮЧЕН И ГОТОВ");
+        }, 5000);
+    } catch (e) {
+        console.log(">>> Бот пропустил очистку, пробуем запуск...");
+        bot.startPolling().catch(() => {});
+    }
+};
+startBot();
+
+// Команда /start для Евгения
 bot.onText(/\/start/, (msg) => {
     if (msg.chat.id.toString() !== MY_TELEGRAM_ID) return;
-    bot.sendMessage(msg.chat.id, "Евгений, привет! Всё настроено:", {
+    bot.sendMessage(msg.chat.id, "Система LOGIST_X активна!", {
         reply_markup: {
             inline_keyboard: [
-                [{ text: "📊 ОТКРЫТЬ АДМИНКУ", web_app: { url: `${APP_URL}/admin-panel` } }],
+                [{ text: "📊 АДМИН-ПАНЕЛЬ", web_app: { url: `${APP_URL}/admin-panel` } }],
                 [{ text: "📂 МОЙ GOOGLE ДИСК", url: "https://drive.google.com/drive/my-drive" }]
             ]
         }
     });
 });
 
-// --- 3. GOOGLE АВТОРИЗАЦИЯ ---
+// Google Auth
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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',
@@ -59,11 +63,10 @@ oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
-// --- 4. ПРОВЕРКА КЛЮЧА (ПОД ТВОЕ ПРИЛОЖЕНИЕ) ---
+// --- ПРОВЕРКА КЛЮЧА (ДЛЯ ПРИЛОЖЕНИЯ) ---
 app.post('/check-license', (req, res) => {
     const { licenseKey } = req.body;
-    // Мастер-ключи
-    if (licenseKey === "DEV-MASTER-999" || licenseKey === "LX-BOSS-777") {
+    if (licenseKey === "DEV-MASTER-999" || licenseKey === MASTER_KEY_VAL) {
         return res.json({ status: "active", expiry: Date.now() + 315360000000 });
     }
     try {
@@ -76,7 +79,7 @@ app.post('/check-license', (req, res) => {
     res.json({ status: "error", message: "Ключ не найден" });
 });
 
-// --- 5. ЗАГРУЗКА ФОТО И ТАБЛИЦЫ ---
+// --- ЗАГРУЗКА ---
 async function getOrCreateFolder(name, parentId = null) {
     try {
         let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
@@ -101,7 +104,7 @@ async function getOrCreateSheet(name, parentId) {
         await drive.files.update({ fileId, addParents: parentId, removeParents: 'root' });
         await sheets.spreadsheets.values.append({
             spreadsheetId: fileId, range: 'Sheet1!A1', valueInputOption: 'RAW',
-            resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'Работа', 'Цена', 'GPS', 'Ссылка']] }
+            resource: { values: [['Дата', 'Город', 'Адрес', 'Объект', 'Работа', 'Цена', 'GPS', 'Фото']] }
         });
         return fileId;
     } catch (e) { return null; }
@@ -115,7 +118,6 @@ app.post('/upload', async (req, res) => {
         const keyData = data.keys.find(k => k.key === licenseKey);
         if (keyData) clientName = keyData.name;
 
-        // ИЕРАРХИЯ: Клиент -> Воркер -> Таблица -> Город -> Объект
         const f1 = await getOrCreateFolder(clientName);
         const f2 = await getOrCreateFolder(worker || "Воркер", f1);
         const sheetId = await getOrCreateSheet(`Отчет_${worker}`, f2);
@@ -130,14 +132,14 @@ app.post('/upload', async (req, res) => {
         });
 
         if (sheetId) {
-            const gps = coords && coords.includes(',') ? `https://www.google.com/maps?q=${coords.replace(/\s/g, '')}` : coords;
+            const gpsLink = coords && coords.includes(',') ? `https://www.google.com/maps?q=${coords.replace(/\s+/g, '')}` : coords;
             await sheets.spreadsheets.values.append({
                 spreadsheetId: sheetId, range: 'Sheet1!A2', valueInputOption: 'USER_ENTERED',
-                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, п.${pod}`, client, workType, price, gps, file.data.webViewLink]] }
+                resource: { values: [[new Date().toLocaleString('ru-RU'), city, `${address}, п.${pod}`, client, workType, price, gpsLink, file.data.webViewLink]] }
             });
         }
         res.json({ success: true });
-        bot.sendMessage(MY_TELEGRAM_ID, `✅ Принято от: ${worker}\n📍 ${address}\n💰 Сумма: ${price}₽`);
+        bot.sendMessage(MY_TELEGRAM_ID, `✅ Принято от ${worker}\n📍 ${address}\n💰 ${price}₽`);
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
@@ -153,3 +155,5 @@ app.post('/api/add_key', (req, res) => {
 });
 
 app.get('/', (req, res) => res.send("SERVER LIVE"));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => console.log(`>>> СЕРВЕР ЖИВОЙ НА ПОРТУ ${PORT}`));
