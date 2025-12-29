@@ -7,6 +7,3 @@ build:
   command: npm install
 run:
   script: node server.js
-  persistence:
-    - mountPoint: /data
-      name: storage
