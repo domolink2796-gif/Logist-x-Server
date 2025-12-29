@@ -17,10 +17,22 @@ const CLIENT_ID = '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleuser
 const CLIENT_SECRET = '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';
 const REFRESH_TOKEN = '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0';
 
+// Чтение базы (защита старых ключей)
 const DB_FILE = 'db.json';
 let DB = { keys: [] };
-try { if (fs.existsSync(DB_FILE)) DB = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch (e) { console.error(e); }
-const saveDB = () => fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
+if (fs.existsSync(DB_FILE)) {
+    try {
+        const fileContent = fs.readFileSync(DB_FILE, 'utf8');
+        DB = JSON.parse(fileContent);
+        console.log(`База загружена. Ключей найдено: ${DB.keys.length}`);
+    } catch (e) { console.error("Ошибка чтения базы данных:", e); }
+}
+
+const saveDB = () => {
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
+    } catch (e) { console.error("Ошибка сохранения базы:", e); }
+};
 
 const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, 'https://developers.google.com/oauthplayground');
 oauth2Client.setCredentials({ refresh_token: REFRESH_TOKEN });
@@ -46,17 +58,14 @@ async function getOrCreateFolder(folderName, parentId = null) {
 async function logToWorkerSheet(spreadsheetId, workerName, data) {
     try {
         const sheetName = workerName || "Общий";
-        // Проверяем наличие листа
         const ss = await sheets.spreadsheets.get({ spreadsheetId });
         const sheetExists = ss.data.sheets.some(s => s.properties.title === sheetName);
 
         if (!sheetExists) {
-            // Создаем новый лист с именем воркера
             await sheets.spreadsheets.batchUpdate({
                 spreadsheetId,
                 resource: { requests: [{ addSheet: { properties: { title: sheetName } } }] }
             });
-            // Добавляем шапку в новый лист
             await sheets.spreadsheets.values.update({
                 spreadsheetId, range: `${sheetName}!A1`, valueInputOption: 'RAW',
                 resource: { values: [["Дата", "Город", "Адрес", "Объект", "Работа", "Цена", "GPS"]] }
@@ -113,7 +122,6 @@ app.post('/api/add_key', async (req, res) => {
         });
         const sheetId = ss.data.spreadsheetId;
 
-        // Перемещаем в папку
         const file = await drive.files.get({ fileId: sheetId, fields: 'parents' });
         await drive.files.update({
             fileId: sheetId, addParents: folderId, removeParents: file.data.parents.join(','), fields: 'id, parents'
@@ -121,14 +129,19 @@ app.post('/api/add_key', async (req, res) => {
 
         const key = { 
             key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(), 
-            name, expiry: new Date(Date.now() + days * 86400000).toISOString(), 
-            limit: parseInt(limit), workers: [], folderId, sheetId 
+            name, 
+            expiry: new Date(Date.now() + (parseInt(days) || 30) * 86400000).toISOString(), 
+            limit: parseInt(limit) || 1, 
+            workers: [], 
+            folderId, 
+            sheetId 
         };
-        DB.keys.push(key); saveDB(); res.json({ success: true });
+        DB.keys.push(key); 
+        saveDB(); 
+        res.json({ success: true, key });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// Стандартные методы (продление, удаление, список)
 app.post('/api/update_key', (req, res) => {
     const { key, addDays, addLimit } = req.body;
     const keyData = DB.keys.find(k => k.key === key);
@@ -138,13 +151,19 @@ app.post('/api/update_key', (req, res) => {
         currentExpiry.setDate(currentExpiry.getDate() + parseInt(addDays || 0));
         keyData.expiry = currentExpiry.toISOString();
         keyData.limit += parseInt(addLimit || 0);
-        saveDB(); res.json({ success: true });
+        saveDB();
+        res.json({ success: true });
     } else { res.status(404).json({ success: false }); }
 });
+
 app.get('/api/list_keys', (req, res) => res.json({ keys: DB.keys }));
+
 app.post('/api/delete_key', (req, res) => {
-    DB.keys = DB.keys.filter(k => k.key !== req.body.key); saveDB(); res.json({ success: true });
+    DB.keys = DB.keys.filter(k => k.key !== req.body.key); 
+    saveDB(); 
+    res.json({ success: true });
 });
+
 app.post('/check-license', (req, res) => {
     const { licenseKey, workerName } = req.body;
     const keyData = DB.keys.find(k => k.key === licenseKey);
@@ -152,11 +171,16 @@ app.post('/check-license', (req, res) => {
     if (new Date(keyData.expiry) < new Date()) return res.json({ status: "error", message: "Срок истек" });
     if (!keyData.workers.includes(workerName)) {
         if (keyData.workers.length >= keyData.limit) return res.json({ status: "error", message: "Лимит воркеров исчерпан" });
-        keyData.workers.push(workerName); saveDB();
+        keyData.workers.push(workerName); 
+        saveDB();
     }
     res.json({ status: "active", expiry: new Date(keyData.expiry).getTime() });
 });
+
+// --- РОУТИНГ СТРАНИЦ ---
 app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
+app.get('/game', (req, res) => res.sendFile(path.join(__dirname, 'tamagotchi.html')));
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`LOGIST_X MASTER SERVER RUNNING`));
+app.listen(PORT, () => console.log(`LOGIST_X MASTER SERVER RUNNING ON PORT ${PORT}`));
