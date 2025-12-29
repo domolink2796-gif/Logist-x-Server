@@ -3,17 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Logist Master HQ | v86.0</title>
+    <title>Logist Master HQ | v86.5</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { background: #010409; color: #e6edf3; font-family: 'Inter', sans-serif; margin: 0; }
-        .glass { background: rgba(13, 17, 23, 0.9); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); border-radius: 2.5rem; }
+        body { background: #010409; color: #e6edf3; font-family: 'Inter', sans-serif; margin: 0; -webkit-tap-highlight-color: transparent; }
+        .glass { background: rgba(13, 17, 23, 0.9); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); border-radius: 2rem; }
         .btn-gold { background: linear-gradient(135deg, #f59e0b, #b45309); color: #000; font-weight: 900; }
+        .btn-dark { background: #21262d; border: 1px solid #30363d; color: #8b949e; }
         input { background: #000 !important; border: 1px solid #30363d !important; color: #fff !important; border-radius: 12px !important; padding: 14px !important; width: 100%; outline: none; }
+        input:focus { border-color: #f59e0b !important; }
+        .card-active { border-left: 4px solid #f59e0b; }
     </style>
 </head>
 <body>
@@ -27,7 +30,7 @@
             const [keys, setKeys] = useState([]);
             const [loading, setLoading] = useState(false);
 
-            const login = () => pass.toLowerCase() === 'евгений никитин' ? (setIsAuth(true), refresh()) : alert("Доступ закрыт");
+            const login = () => pass.toLowerCase() === 'евгений никитин' ? (setIsAuth(true), refresh()) : alert("Отказ");
             
             const refresh = async () => {
                 setLoading(true);
@@ -35,7 +38,7 @@
                     const res = await fetch('/api/list_keys');
                     const data = await res.json();
                     setKeys(data.keys || []);
-                } catch(e) { alert("Ошибка загрузки"); }
+                } catch(e) { console.error(e); }
                 setLoading(false);
             };
 
@@ -52,8 +55,18 @@
                 e.target.reset();
             };
 
+            const updateKey = async (key, days, limit) => {
+                setLoading(true);
+                await fetch('/api/update_key', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ key, addDays: days, addLimit: limit })
+                });
+                refresh();
+            };
+
             const deleteKey = async (key) => {
-                if(!confirm('Удалить?')) return;
+                if(!confirm('Удалить лицензию полностью?')) return;
                 await fetch('/api/delete_key', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -62,47 +75,87 @@
                 refresh();
             };
 
+            const getDaysLeft = (expiry) => {
+                const diff = new Date(expiry) - new Date();
+                return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+            };
+
             if (!isAuth) return (
                 <div className="h-screen flex items-center justify-center p-6 bg-[#010409]">
-                    <div className="glass p-12 w-full max-w-sm text-center">
-                        <h1 className="text-3xl font-black mb-8 text-amber-500 italic uppercase">Logist HQ</h1>
-                        <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Мастер Пароль" className="mb-4 text-center font-bold" onKeyDown={e=>e.key==='Enter'&&login()} />
-                        <button onClick={login} className="btn-gold w-full py-5 rounded-2xl uppercase font-black text-[11px]">Войти</button>
+                    <div className="glass p-10 w-full max-w-sm text-center border-amber-500/20 shadow-2xl">
+                        <h1 className="text-4xl font-black mb-10 text-amber-500 italic">LOGIST HQ</h1>
+                        <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="ПАРОЛЬ МАСТЕРА" className="mb-6 text-center tracking-widest font-bold" onKeyDown={e=>e.key==='Enter'&&login()} />
+                        <button onClick={login} className="btn-gold w-full py-5 rounded-2xl uppercase font-black tracking-widest active:scale-95 transition-all">ВОЙТИ</button>
                     </div>
                 </div>
             );
 
             return (
-                <div className="p-4 md:p-10 max-w-7xl mx-auto min-h-screen">
-                    <header className="flex justify-between items-center mb-10 glass p-6">
-                        <h1 className="text-xl font-black italic text-amber-500 uppercase">Master Control</h1>
-                        <button onClick={refresh} className="bg-amber-500 text-black px-5 py-2 rounded-xl text-[10px] font-black uppercase">{loading ? "..." : "Обновить"}</button>
+                <div className="p-4 md:p-8 max-w-6xl mx-auto min-h-screen">
+                    <header className="flex justify-between items-center mb-8 glass p-6 shadow-2xl border-amber-500/10">
+                        <div>
+                            <h1 className="text-xl font-black italic text-amber-500 tracking-tighter uppercase">Master Control</h1>
+                            <p className="text-[10px] opacity-30 font-bold uppercase tracking-widest">v86.5 Admin Panel</p>
+                        </div>
+                        <button onClick={refresh} className="bg-amber-500 text-black px-6 py-2 rounded-xl text-[10px] font-black uppercase active:scale-90 transition-all">{loading ? "..." : "Обновить"}</button>
                     </header>
+
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                         <div className="lg:col-span-2 space-y-4">
-                            {keys.map(k => (
-                                <div key={k.key} className="glass p-6">
-                                    <div className="flex justify-between mb-4">
-                                        <span className="font-mono text-amber-500 font-black text-xs">{k.key}</span>
-                                        <button onClick={() => deleteKey(k.key)} className="text-red-500 text-[10px] uppercase font-black">Удалить</button>
+                            {keys.length === 0 && <div className="text-center py-20 opacity-20 font-black uppercase italic">Ключей пока нет</div>}
+                            {keys.map(k => {
+                                const days = getDaysLeft(k.expiry);
+                                return (
+                                    <div key={k.key} className={`glass p-6 hover:border-amber-500/20 transition-all ${days > 0 ? 'card-active' : 'border-red-500/50'}`}>
+                                        <div className="flex justify-between items-start mb-6">
+                                            <div className="bg-amber-500/10 px-4 py-1.5 rounded-full border border-amber-500/20">
+                                                <span className="font-mono text-amber-500 font-black text-xs">{k.key}</span>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className={`text-[10px] font-black uppercase ${days < 5 ? 'text-red-500 animate-pulse' : 'text-emerald-500'}`}>
+                                                    {days > 0 ? `Осталось: ${days} дн.` : 'Истек'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="text-2xl font-black uppercase mb-2 tracking-tight">{k.name}</div>
+                                        <div className="text-[10px] opacity-30 mb-6 font-bold uppercase tracking-widest italic">
+                                            Лимит воркеров: {k.workers.length} / {k.limit}
+                                        </div>
+
+                                        <div className="flex flex-wrap gap-2 mb-8">
+                                            {k.workers.length > 0 ? k.workers.map(w => (
+                                                <span key={w} className="bg-white/5 px-3 py-1.5 rounded-xl text-[10px] font-bold border border-white/5">{w}</span>
+                                            )) : <span className="text-[10px] opacity-20 italic">Нет подключенных устройств</span>}
+                                        </div>
+
+                                        <div className="grid grid-cols-3 gap-2 border-t border-white/5 pt-6">
+                                            <button onClick={() => updateKey(k.key, 7, 0)} className="btn-dark py-3 rounded-xl text-[9px] font-black uppercase">+7 Дней</button>
+                                            <button onClick={() => updateKey(k.key, 0, 1)} className="btn-dark py-3 rounded-xl text-[9px] font-black uppercase">+1 Воркер</button>
+                                            <button onClick={() => deleteKey(k.key)} className="bg-red-500/10 text-red-500 border border-red-500/20 py-3 rounded-xl text-[9px] font-black uppercase">Удалить</button>
+                                        </div>
                                     </div>
-                                    <div className="text-2xl font-black uppercase">{k.name}</div>
-                                    <div className="text-[10px] opacity-30 mb-6 uppercase italic">Лимит: {k.workers.length} / {k.limit}</div>
-                                    <div className="flex flex-wrap gap-2">
-                                        {k.workers.map(w => <span key={w} className="bg-white/5 px-3 py-1 rounded-lg text-[10px] font-bold border border-white/5">{w}</span>)}
-                                    </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
-                        <div>
-                            <form onSubmit={addKey} className="glass p-8 sticky top-10">
-                                <h2 className="text-center font-black uppercase text-[11px] text-amber-500 mb-8 tracking-widest italic">Новая Лицензия</h2>
-                                <input name="o" placeholder="Название компании" required className="mb-4 font-bold" />
-                                <div className="grid grid-cols-2 gap-4 mb-8">
-                                    <input name="d" type="number" defaultValue="30" placeholder="Дней" />
-                                    <input name="l" type="number" defaultValue="1" placeholder="Лимит" />
+
+                        <div className="space-y-6">
+                            <form onSubmit={addKey} className="glass p-8 sticky top-10 border-amber-500/10">
+                                <h2 className="text-center font-black uppercase text-[11px] text-amber-500 mb-8 tracking-[4px] italic">Новый Контракт</h2>
+                                <label className="text-[9px] uppercase font-black opacity-30 ml-1 mb-2 block">Компания / Заказчик</label>
+                                <input name="o" placeholder="Напр: ТАНДЕР" required className="mb-6 font-bold" />
+                                
+                                <div className="grid grid-cols-2 gap-4 mb-10">
+                                    <div>
+                                        <label className="text-[9px] uppercase font-black opacity-30 ml-1 mb-2 block">Срок (дней)</label>
+                                        <input name="d" type="number" defaultValue="30" className="font-bold text-center" />
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] uppercase font-black opacity-30 ml-1 mb-2 block">Места (чел)</label>
+                                        <input name="l" type="number" defaultValue="1" className="font-bold text-center" />
+                                    </div>
                                 </div>
-                                <button type="submit" className="btn-gold w-full py-5 rounded-2xl uppercase font-black text-[11px]">Выпустить ключ</button>
+                                <button type="submit" className="btn-gold w-full py-5 rounded-2xl uppercase font-black text-[11px] tracking-widest shadow-2xl active:scale-95 transition-all">Выпустить ключ</button>
                             </form>
                         </div>
                     </div>
