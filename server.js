@@ -4,160 +4,100 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const { Readable } = require('stream'); // ВЫНЕСЛИ СЮДА ДЛЯ СКОРОСТИ
+const { Readable } = require('stream');
+const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
 // --- НАСТРОЙКИ ---
+const TOKEN = '7908672389:AAFqJsmCmlJHSckewNPue_XVa_WTxKY7-Aw';
 const CLIENT_ID = '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com';
 const CLIENT_SECRET = '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';
 const REFRESH_TOKEN = '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0';
 
-// База данных
-const DB_FILE = 'db.json';
-let DB = { keys: [] };
-if (fs.existsSync(DB_FILE)) {
-    try {
-        DB = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-        console.log(`[DB] Найдено ключей в базе: ${DB.keys.length}`);
-    } catch (e) { console.error("[DB] Ошибка чтения базы:", e); }
-}
-
-const saveDB = () => {
-    try {
-        fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
-    } catch (e) { console.error("[DB] Ошибка записи базы:", e); }
-};
-
+const bot = new TelegramBot(TOKEN, { polling: true });
 const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, 'https://developers.google.com/oauthplayground');
 oauth2Client.setCredentials({ refresh_token: REFRESH_TOKEN });
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// База данных
+const DB_FILE = 'db.json';
+let DB = { keys: [] };
+if (fs.existsSync(DB_FILE)) {
+    try { DB = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch (e) { console.error("Ошибка БД:", e); }
+}
+const saveDB = () => fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
 
-// --- ФУНКЦИИ ГУГЛА ---
-async function getOrCreateFolder(folderName, parentId = null) {
-    try {
-        let q = `name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-        if (parentId) q += ` and '${parentId}' in parents`;
-        const res = await drive.files.list({ q, fields: 'files(id)' });
-        if (res.data.files.length > 0) return res.data.files[0].id;
-        const folder = await drive.files.create({
-            resource: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: parentId ? [parentId] : [] },
-            fields: 'id'
-        });
-        return folder.data.id;
-    } catch (err) { console.error("Ошибка папки:", err.message); return null; }
+// --- ФУНКЦИИ ---
+async function getOrCreateFolder(name, parentId = null) {
+    let q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    if (parentId) q += ` and '${parentId}' in parents`;
+    const res = await drive.files.list({ q, fields: 'files(id)' });
+    if (res.data.files.length > 0) return res.data.files[0].id;
+    const folder = await drive.files.create({
+        resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: parentId ? [parentId] : [] },
+        fields: 'id'
+    });
+    return folder.data.id;
 }
 
-async function logToWorkerSheet(spreadsheetId, workerName, data) {
-    if (!spreadsheetId) return;
-    try {
-        const sheetName = workerName || "Общий";
-        const ss = await sheets.spreadsheets.get({ spreadsheetId });
-        const sheetExists = ss.data.sheets.some(s => s.properties.title === sheetName);
-        if (!sheetExists) {
-            await sheets.spreadsheets.batchUpdate({
-                spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetName } } }] }
-            });
-            await sheets.spreadsheets.values.update({
-                spreadsheetId, range: `${sheetName}!A1`, valueInputOption: 'RAW',
-                resource: { values: [["Дата", "Город", "Адрес", "Объект", "Работа", "Цена", "GPS (Карта)"]] }
-            });
-        }
+// --- ТЕЛЕГРАМ БОТ ---
+bot.onText(/\/start/, (msg) => {
+    bot.sendMessage(msg.chat.id, "LOGIST_X приветствует тебя! 🚀\nСистема готова к приему отчетов.");
+});
 
-        // --- ЛОГИКА ССЫЛКИ НА КАРТУ (ИСПРАВЛЕНО $) ---
-        let gpsValue = data.coords || "Нет GPS";
-        if (data.coords && data.coords.includes(',')) {
-            const cleanCoords = data.coords.replace(/\s+/g, ''); 
-            const mapUrl = `https://www.google.com/maps?q=${cleanCoords}`;
-            gpsValue = `=HYPERLINK("${mapUrl}"; "${data.coords}")`;
-        }
-
-        const row = [new Date().toLocaleString('ru-RU'), data.city, data.address, data.client, data.workType, data.price, gpsValue];
-
-        await sheets.spreadsheets.values.append({
-            spreadsheetId, 
-            range: `${sheetName}!A1`, 
-            valueInputOption: 'USER_ENTERED', 
-            resource: { values: [row] }
-        });
-    } catch (err) { console.error("Ошибка записи в таблицу:", err.message); }
-}
-
-// --- API МАРШРУТЫ ---
+// --- ПРИЕМ ФОТО ---
 app.post('/upload', async (req, res) => {
     try {
-        const { worker, city, address, client, image, fileName, licenseKey } = req.body;
-        const keyData = DB.keys.find(k => k.key === licenseKey);
-        if (!keyData) throw new Error("Ключ не найден");
+        const { worker, city, address, client, image, fileName, licenseKey, coords } = req.body;
+        console.log(`[UPLOAD] Запрос от ${worker} (${city})`);
 
-        const f1 = await getOrCreateFolder(keyData.name); 
+        const keyData = DB.keys.find(k => k.key === licenseKey);
+        if (!keyData) return res.status(403).json({ success: false, error: "Ключ не найден" });
+
+        const f1 = await getOrCreateFolder(keyData.name);
         const f2 = await getOrCreateFolder(worker || "Воркер", f1);
         const f3 = await getOrCreateFolder(client || "Объект", f2);
         const f4 = await getOrCreateFolder(city || "Город", f3);
         const f5 = await getOrCreateFolder(new Date().toLocaleDateString('ru-RU'), f4);
 
         const buffer = Buffer.from(image, 'base64');
-        
-        // ИСПОЛЬЗУЕМ ВЫНЕСЕННЫЙ READABLE (ИСПРАВЛЕНО)
         await drive.files.create({
             resource: { name: `${fileName}.jpg`, parents: [f5] },
             media: { mimeType: 'image/jpeg', body: Readable.from(buffer) }
         });
 
-        if (keyData.sheetId) await logToWorkerSheet(keyData.sheetId, worker, req.body);
+        console.log(`[SUCCESS] Фото сохранено в Google Drive`);
         res.json({ success: true });
-    } catch (e) { 
-        console.error("Ошибка загрузки:", e.message);
-        res.status(500).json({ success: false, error: e.message }); 
+
+        // Уведомление в Телеграм (тебе)
+        bot.sendMessage('6846149935', `✅ Новый отчет!\nВоркер: ${worker}\nОбъект: ${client}\nГород: ${city}`);
+
+    } catch (e) {
+        console.error("[ERROR]", e.message);
+        res.status(500).json({ success: false, error: e.message });
     }
 });
 
-// Все остальные API (add_key, list_keys, delete_key, update_key, check-license) остаются без изменений...
-app.post('/api/add_key', async (req, res) => {
-    let folderId = null; let sheetId = null;
-    try {
-        const { name, days, limit } = req.body;
-        folderId = await getOrCreateFolder(name);
-        await sleep(1000);
-        const ss = await sheets.spreadsheets.create({ resource: { properties: { title: `ОТЧЕТЫ_${name}` } } });
-        sheetId = ss.data.spreadsheetId;
-        await sleep(1500);
-        const parentData = await drive.files.get({fileId: sheetId, fields: 'parents'});
-        await drive.files.update({ fileId: sheetId, addParents: folderId, removeParents: parentData.data.parents.join(','), fields: 'id, parents' });
-        const key = { key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(), name, expiry: new Date(Date.now() + (parseInt(days) || 30) * 86400000).toISOString(), limit: parseInt(limit) || 1, workers: [], folderId, sheetId };
-        DB.keys.push(key); saveDB(); res.json({ success: true, key });
-    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
-});
+// Админка и ключи
 app.get('/api/list_keys', (req, res) => res.json({ keys: DB.keys }));
-app.post('/api/delete_key', (req, res) => { DB.keys = DB.keys.filter(k => k.key !== req.body.key); saveDB(); res.json({ success: true }); });
-app.post('/api/update_key', (req, res) => {
-    const { key, addDays, addLimit } = req.body;
-    const k = DB.keys.find(x => x.key === key);
-    if (k) {
-        let exp = new Date(k.expiry); if (exp < new Date()) exp = new Date();
-        exp.setDate(exp.getDate() + parseInt(addDays || 0)); k.expiry = exp.toISOString();
-        k.limit += parseInt(addLimit || 0); saveDB(); res.json({ success: true });
-    } else res.status(404).json({ success: false });
-});
-app.post('/check-license', (req, res) => {
-    const { licenseKey, workerName } = req.body;
-    const k = DB.keys.find(x => x.key === licenseKey);
-    if (!k) return res.json({ status: "error", message: "Ключ не найден" });
-    if (new Date(k.expiry) < new Date()) return res.json({ status: "error", message: "Срок истек" });
-    if (!k.workers.includes(workerName)) { if (k.workers.length >= k.limit) return res.json({ status: "error", message: "Лимит воркеров исчерпан" }); k.workers.push(workerName); saveDB(); }
-    res.json({ status: "active", expiry: new Date(k.expiry).getTime() });
+app.post('/api/add_key', async (req, res) => {
+    const { name, days, limit } = req.body;
+    const key = { 
+        key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(), 
+        name, 
+        expiry: new Date(Date.now() + (parseInt(days) || 30) * 86400000).toISOString(), 
+        limit: parseInt(limit) || 1, 
+        workers: [] 
+    };
+    DB.keys.push(key); saveDB(); res.json({ success: true, key });
 });
 
-app.get('/admin-panel', (req, res) => {
-    const adminPath = path.join(__dirname, 'admin.html');
-    if (fs.existsSync(adminPath)) { res.sendFile(adminPath); } else { res.status(404).send("Файл админки не найден"); }
-});
-app.get('/', (req, res) => res.send("LOGIST_X API SERVER ONLINE."));
+app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
+app.get('/', (req, res) => res.send("LOGIST_X SERVER ONLINE"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`LOGIST_X SERVER ONLINE [PORT ${PORT}]`));
+app.listen(PORT, () => console.log(`SERVER RUNNING ON PORT ${PORT}`));
