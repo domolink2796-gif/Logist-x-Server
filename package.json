@@ -1,17 +1,15 @@
 {
-  "name": "logistx-server",
+  "name": "logist-x-server",
   "version": "1.0.0",
-  "description": "Google Drive Sync for LogistX",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
+    "googleapis": "^126.0.0",
+    "body-parser": "^1.20.2",
     "cors": "^2.8.5",
-    "googleapis": "^126.0.0"
-  },
-  "engines": {
-    "node": ">=14.0.0"
+    "node-telegram-bot-api": "^0.64.0"
   }
 }
