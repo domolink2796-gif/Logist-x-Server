@@ -20,8 +20,14 @@ const REFRESH_TOKEN = '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7
 // --- БАЗА КЛЮЧЕЙ ---
 const DB_FILE = 'db.json';
 let DB = { keys: [] };
-if (fs.existsSync(DB_FILE)) DB = JSON.parse(fs.readFileSync(DB_FILE));
-const saveDB = () => fs.writeFileSync(DB_FILE, JSON.stringify(DB));
+try {
+    if (fs.existsSync(DB_FILE)) {
+        const data = fs.readFileSync(DB_FILE, 'utf8');
+        DB = JSON.parse(data);
+    }
+} catch (e) { console.error("Ошибка базы данных:", e); }
+
+const saveDB = () => fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
 
 // --- GOOGLE API SETUP ---
 const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, 'https://developers.google.com/oauthplayground');
@@ -34,9 +40,13 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 bot.onText(/\/start|\/admin/, (msg) => {
     if (msg.from.id !== ADMIN_ID) return bot.sendMessage(msg.chat.id, "Доступ закрыт.");
-    bot.sendMessage(msg.chat.id, "Евгений, добро пожаловать в Logist Master HQ!", {
+    bot.sendMessage(msg.chat.id, `Привет, Евгений! 
+Твой ID: ${msg.from.id} подтвержден.`, {
         reply_markup: {
-            inline_keyboard: [[{ text: "Открыть Панель Управления", web_app: { url: `https://${process.env.RENDER_EXTERNAL_HOSTNAME}/admin-panel` } }]]
+            inline_keyboard: [[{ 
+                text: "Открыть Master HQ v86.0", 
+                web_app: { url: `https://${process.env.RENDER_EXTERNAL_HOSTNAME}/admin-panel` } 
+            }]]
         }
     });
 });
@@ -46,7 +56,7 @@ async function getOrCreateFolder(folderName, parentId = null) {
     let query = `name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
     if (parentId) query += ` and '${parentId}' in parents`;
     const res = await drive.files.list({ q: query, fields: 'files(id)' });
-    if (res.data.files.length > 0) return res.data.files[0].id;
+    if (res.data.files && res.data.files.length > 0) return res.data.files[0].id;
     const folder = await drive.files.create({
         resource: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: parentId ? [parentId] : [] },
         fields: 'id'
@@ -56,26 +66,41 @@ async function getOrCreateFolder(folderName, parentId = null) {
 
 // --- ЗАПИСЬ В ТАБЛИЦУ ---
 async function logToSheet(data) {
-    const spreadsheetName = "БАЗА_ОТЧЕТОВ_LOGIST";
-    let res = await drive.files.list({ q: `name = '${spreadsheetName}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false` });
-    let ssId = res.data.files.length > 0 ? res.data.files[0].id : (await sheets.spreadsheets.create({ resource: { properties: { title: spreadsheetName } } })).data.spreadsheetId;
-    
-    const row = [new Date().toLocaleString('ru-RU'), data.worker, data.city, data.address, data.client, data.workType, data.price, data.coords || "Нет GPS"];
-    await sheets.spreadsheets.values.append({
-        spreadsheetId: ssId, range: 'Sheet1!A1', valueInputOption: 'USER_ENTERED',
-        resource: { values: [row] }
-    });
+    try {
+        const spreadsheetName = "БАЗА_ОТЧЕТОВ_LOGIST";
+        let res = await drive.files.list({ q: `name = '${spreadsheetName}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false` });
+        
+        let ssId;
+        if (res.data.files.length > 0) {
+            ssId = res.data.files[0].id;
+        } else {
+            const ss = await sheets.spreadsheets.create({ resource: { properties: { title: spreadsheetName } } });
+            ssId = ss.data.spreadsheetId;
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: ssId, range: 'Sheet1!A1', valueInputOption: 'RAW',
+                resource: { values: [["Дата", "Монтажник", "Город", "Адрес", "Заказчик", "Вид работы", "Сумма", "Координаты"]] }
+            });
+        }
+        
+        const row = [
+            new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }), 
+            data.worker, data.city, data.address, data.client, data.workType, data.price, data.coords || "Нет GPS"
+        ];
+        
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: ssId, range: 'Sheet1!A1', valueInputOption: 'USER_ENTERED',
+            resource: { values: [row] }
+        });
+    } catch (err) { console.error("Ошибка записи в таблицу:", err); }
 }
 
 // --- API ЭНДПОИНТЫ ---
 
-// 1. Прием отчета из приложения
 app.post('/upload', async (req, res) => {
     try {
-        const { worker, city, address, client, image, fileName, workType, price, coords } = req.body;
-        
-        // Создаем дерево папок: Заказчик -> Исполнитель -> Клиент -> Город -> Дата
+        const { worker, city, address, client, image, fileName } = req.body;
         const dateStr = new Date().toLocaleDateString('ru-RU');
+        
         const f1 = await getOrCreateFolder(client || "ОБЩИЙ");
         const f2 = await getOrCreateFolder(worker || "Воркер", f1);
         const f3 = await getOrCreateFolder(city || "Город", f2);
@@ -90,12 +115,10 @@ app.post('/upload', async (req, res) => {
         await logToSheet(req.body);
         res.json({ success: true });
     } catch (e) {
-        console.error(e);
         res.status(500).json({ success: false, error: e.message });
     }
 });
 
-// 2. Проверка лицензии
 app.post('/check-license', (req, res) => {
     const { licenseKey, workerName } = req.body;
     const keyData = DB.keys.find(k => k.key === licenseKey);
@@ -109,19 +132,40 @@ app.post('/check-license', (req, res) => {
     res.json({ status: "active", expiry: new Date(keyData.expiry).getTime() });
 });
 
-// 3. Админка (API для Master HQ)
 app.get('/api/list_keys', (req, res) => res.json({ keys: DB.keys }));
+
 app.post('/api/add_key', (req, res) => {
     const { name, days, limit } = req.body;
-    const key = { key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(), name, expiry: new Date(Date.now() + days * 86400000).toISOString(), limit, workers: [] };
+    const key = { 
+        key: 'LX-' + Math.random().toString(36).substr(2, 9).toUpperCase(), 
+        name, 
+        expiry: new Date(Date.now() + days * 86400000).toISOString(), 
+        limit: parseInt(limit), 
+        workers: [] 
+    };
     DB.keys.push(key); saveDB(); res.json({ success: true });
 });
+
+// НОВЫЙ МЕТОД: ПРОДЛЕНИЕ ЛИЦЕНЗИИ
+app.post('/api/update_key', (req, res) => {
+    const { key, addDays, addLimit } = req.body;
+    const keyData = DB.keys.find(k => k.key === key);
+    if (keyData) {
+        let currentExpiry = new Date(keyData.expiry);
+        if (currentExpiry < new Date()) currentExpiry = new Date();
+        currentExpiry.setDate(currentExpiry.getDate() + parseInt(addDays || 0));
+        keyData.expiry = currentExpiry.toISOString();
+        keyData.limit += parseInt(addLimit || 0);
+        saveDB();
+        res.json({ success: true });
+    } else { res.status(404).json({ success: false }); }
+});
+
 app.post('/api/delete_key', (req, res) => {
     DB.keys = DB.keys.filter(k => k.key !== req.body.key); saveDB(); res.json({ success: true });
 });
 
-// Раздача панели
 app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`LOGIST_X MASTER SERVER RUNNING ON PORT ${PORT}`));
+app.listen(PORT, () => console.log(`LOGIST_X MASTER SERVER RUNNING`));
