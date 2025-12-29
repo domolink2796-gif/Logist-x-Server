@@ -1,74 +1,73 @@
 const express = require('express');
-const cors = require('cors');
 const { google } = require('googleapis');
-const { Readable } = require('stream');
+const bodyParser = require('body-parser');
+const cors = require('cors');
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+app.use(bodyParser.json({ limit: '50mb' }));
 
-const KEY = {
-  "client_email": "firebase-adminsdk-fbsvc@logistx-system.iam.gserviceaccount.com",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC0Ub6OldzhZhgV\n+47pxI9FTAVkuTF0h7IpL65to/V1b2WHEkbR2AxBkMGwWwL1F28Y864jTlNrlKeY\n/IyByZ4n6P0dPiJdtVccJ8b9He0Npr3L96H8fa/+2J2MoUbiUNaqcwtvoYSsaOxx\njolenopEJWCO6Dbgx/8yKBS3wxRy/82ermvXec4b3RlXYcePG9HW3oteW/Bw0jOn\nUeEeYcWQy1VdYlnaiX13UKuGeJRr1Wj0XEDjBaysBavdEyTjOzGJ78DrM2FARHhi\njueT/fik6bpxn8PewiySPmxpWT0InMmPfESyZ65QLJ8tmVTmfjs0VsxRPTKB6n78\nJ2EptGMdAgMBAAECggEAB3CX/CoSwvoDZGTMsLh7cNCCKHW7pKM0pp5hBAUPy5id\nB8WpRl8zokDmvPAEXzhoTQ9A0BQbPQUVJSrGYVSAQgVK7Dn0EQm6Xl8FxsvFTBrl\nGdVNya0l5c3qMjM1SYEsWjwE7MYtQy/REZ5f7Jd9/PHN2hearAuUa+1bbXmPDm+N\nwYoH+XAaKJf/aIdAh7zaMFZ8cU76+TFyShA9Pm2TA998SLIBTE+pqhb/x26sAr0P\nY/F7XStgQT5GgxV2OGfEthXPsRe2gECzcASByAbiVathPJteJlDgzbnRu+gTcN14\nSb6LHFw001jqCpXboqWZwRSDAeeqA3FdUtGi0j4mAQKBgQDW8ehvkyQmin3XXBsa\ne1M9iRrnHljnKNEadcX0dUgf8q8qTUyqcRHoPWvhjI/1AFI/SHyTSgRmvtxl3TUs\nG5f95wRnJ0n53OoxHs6ZhitEciShhXszGtQtPbrBfnjKfz9lna9r958WDmmupp0/\n9SpVAD/XEKS86N9fXj+4AzRspQKBgQDWwsIOHbM7Mbxq1MaTa+OpxuI+BV5GnSvw\nuB+uriKZXLy4rcj/2vxRpuVekwym3ENXBSn380EjZ/+jybc4mmJWrgqdRv9oJhQ/\nn2bDBW2/IM8MDEZjKYNJr+k1vIETxd7LyEEGp+nO1OkOfefM8TXxsHeEjNbzyfRU\PQ6C6dD7GQKBgAI/IwvPgOg6OFiA6POc6GDTRwm1Yn6ACbd6FaiZdTiIQ9ZwWmXJ\qsM/qRoBaxvHdhSdQFgVxPgB9LHH3x9n5m3L9VrSqU5IRdZfmQ83vMoJW2Koz4HY\nPPGAHKybEs4jCFmajVPWkb4cRnSB31Dk0h1zVDd+QAqNcJBBnu7gcbLVAoGBAJ7w\n/tuhoX9ivNa36Ms8Yv7IwbIzGOXb9qQuMMx/9f1YxBdODt9Eu87WXRUUcZ2gkHn7\nyWbHcmL42hrm9CIBKFyMbDCgVfBHll7L4yrcfq+gYXvCLem/1HmZplhtzX3LyKs6\n5t09Mm4v5tgh2Ic10b2w45OHBKLiyV/63B2JXHApAoGAKfmGKx8MsH8ULi682WAA\nWpiVZpkyWupk7srezMBoTSOxHG0MFhgLWueadW5Udrf7CCN6IPwFgiczi+TtwFJe\nWP/qJaGgGsBK8Z2fedX1oAtpoqzoYeh4m1MYePDyR0NdO/68vsBPGwMvD9mjoko3\nRgCzfWgr1AUixmoIVi7J1fU=\n-----END PRIVATE KEY-----\n"
-};
+// ТВОИ ЛИЧНЫЕ КЛЮЧИ GOOGLE (LogistX-System)
+const CLIENT_ID = '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com';
+const CLIENT_SECRET = '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';
+const REFRESH_TOKEN = '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0';
 
-const PARENT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A';
+const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, 'https://developers.google.com/oauthplayground');
+oauth2Client.setCredentials({ refresh_token: REFRESH_TOKEN });
 
-// Авторизация с использованием JWT
-const auth = new google.auth.JWT(KEY.client_email, null, KEY.private_key, ['https://www.googleapis.com/auth/drive']);
-const drive = google.drive({ version: 'v3', auth });
+const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
-async function getOrCreateFolder(name, parentId) {
-    const res = await drive.files.list({
-        q: `name='${name}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-        fields: 'files(id)',
-        supportsAllDrives: true,
-        includeItemsFromAllDrives: true
-    });
+// Функция для поиска или создания папки
+async function getOrCreateFolder(folderName, parentId = null) {
+    let query = `name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    if (parentId) query += ` and '${parentId}' in parents`;
+
+    const res = await drive.files.list({ q: query, fields: 'files(id)' });
     if (res.data.files.length > 0) return res.data.files[0].id;
-    const folder = await drive.files.create({
-        resource: { name, parentId, mimeType: 'application/vnd.google-apps.folder' },
-        fields: 'id',
-        supportsAllDrives: true
-    });
+
+    const folderMetadata = {
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: parentId ? [parentId] : []
+    };
+    const folder = await drive.files.create({ resource: folderMetadata, fields: 'id' });
     return folder.data.id;
 }
 
 app.post('/upload', async (req, res) => {
-    console.log("🚀 Начинаю загрузку...");
     try {
-        const { image, address, city, worker, client, pod } = req.body;
-        const dateStr = new Date().toLocaleDateString('ru-RU').replace(/\./g, '-');
-        
-        // Создаем иерархию папок
-        const workerFolder = await getOrCreateFolder(worker || "БезИмени", PARENT_ID);
-        const cityFolder = await getOrCreateFolder(city || "БезГорода", workerFolder);
-        const clientFolder = await getOrCreateFolder(client || "БезКлиента", cityFolder);
+        const { worker, city, address, pod, client, image, fileName } = req.body;
+        const dateStr = new Date().toLocaleDateString('ru-RU');
 
-        const fileName = `${dateStr}_${address}_п${pod || 0}_${Date.now()}.jpg`;
+        console.log(`Получен отчет от ${worker} для ${client} (${city})`);
+
+        // 1. Создаем/Находим цепочку папок: КЛИЕНТ -> ИСПОЛНИТЕЛЬ -> ГОРОД -> ДАТА
+        const clientFolderId = await getOrCreateFolder(client || "ОБЩИЙ");
+        const workerFolderId = await getOrCreateFolder(worker || "Без_имени", clientFolderId);
+        const cityFolderId = await getOrCreateFolder(city || "Неизвестный_город", workerFolderId);
+        const dateFolderId = await getOrCreateFolder(dateStr, cityFolderId);
+
+        // 2. Подготовка файла
         const buffer = Buffer.from(image, 'base64');
+        const fileMetadata = {
+            name: `${fileName}.jpg`, // Формат: Улица_Дом_п.Подъезд
+            parents: [dateFolderId]
+        };
+        const media = { mimeType: 'image/jpeg', body: require('stream').Readable.from(buffer) };
 
-        // ЗАГРУЗКА ФАЙЛА
+        // 3. Загрузка на Диск
         const file = await drive.files.create({
-            resource: { 
-                name: fileName, 
-                parents: [clientFolder]
-            },
-            media: { 
-                mimeType: 'image/jpeg', 
-                body: Readable.from(buffer) 
-            },
-            fields: 'id',
-            supportsAllDrives: true
+            resource: fileMetadata,
+            media: media,
+            fields: 'id'
         });
 
-        console.log(`✅ Успех! ID: ${file.data.id}`);
-        res.json({ success: true });
-    } catch (e) {
-        console.error("❌ ОШИБКА:", e.message);
-        // Если ошибка квоты, выводим подробности
-        res.status(500).send(e.message);
+        res.json({ success: true, fileId: file.data.id });
+    } catch (error) {
+        console.error('Ошибка загрузки:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-app.listen(process.env.PORT || 3000, () => console.log("Drive Server Online"));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Сервер LOGIST_X запущен на порту ${PORT}`));
