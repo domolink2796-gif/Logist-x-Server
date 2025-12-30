@@ -52,6 +52,7 @@ async function readDatabase() {
         if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e) { return []; } }
         
         let keys = data.keys || [];
+        // Проверка/Создание Мастер-Ключа
         if (!keys.find(k => k.key === 'DEV-MASTER-999')) {
             keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [] });
             await saveDatabase(keys);
@@ -210,7 +211,7 @@ app.get('/dashboard', (req, res) => {
     <!DOCTYPE html>
     <html lang="ru">
     <head>
-        <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
         <title>LOGIST X | COMMAND</title>
         <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;800;900&display=swap" rel="stylesheet">
         <style>
@@ -296,13 +297,15 @@ app.get('/dashboard', (req, res) => {
     res.send(html);
 });
 
-// --- TELEGRAM BOT LOGIC ---
+// --- TELEGRAM BOT ---
 bot.start((ctx) => {
-    const url = "https://" + ctx.worker.split(':')[0]; // Railway подхватит домен
-    ctx.reply('🔧 СИСТЕМА УПРАВЛЕНИЯ LOGIST X ЗАПУЩЕНА', {
+    ctx.reply('🔧 ПУЛЬТ УПРАВЛЕНИЯ LOGIST X', {
         reply_markup: {
             inline_keyboard: [
-                [{ text: "📱 ОТКРЫТЬ ПУЛЬТ УПРАВЛЕНИЯ", web_app: { url: `https://logist-x-server-production.up.railway.app/dashboard` } }]
+                [{ 
+                    text: "📱 ОТКРЫТЬ ПАНЕЛЬ", 
+                    web_app: { url: `https://logist-x-server-production.up.railway.app/dashboard` } 
+                }]
             ]
         }
     });
