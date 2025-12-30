@@ -66,24 +66,19 @@ async function saveDatabase(keys) {
 }
 
 // --- УМНЫЙ ОТЧЕТ (EXCEL) ---
-async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, gpsLink) {
+async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
-        const reportName = `Отчет ${workerName}`; // Имя файла таблицы
-        
-        // 1. Ищем файл таблицы у работника
+        const reportName = `Отчет ${workerName}`;
         const q = `name = '${reportName}' and '${workerId}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`;
         const res = await drive.files.list({ q });
         
         let spreadsheetId;
-
         if (res.data.files.length === 0) {
-            // Создаем файл, если нет
             const createRes = await sheets.spreadsheets.create({
                 resource: { properties: { title: reportName } },
                 fields: 'spreadsheetId'
             });
             spreadsheetId = createRes.data.spreadsheetId;
-            // Перемещаем в папку работника
             const fileId = spreadsheetId; 
             const getFile = await drive.files.get({ fileId, fields: 'parents' });
             const previousParents = getFile.data.parents.join(',');
@@ -92,20 +87,15 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
             spreadsheetId = res.data.files[0].id;
         }
 
-        // 2. Формируем имя Листа: "Москва_2025-12-30"
         const sheetTitle = `${city}_${dateStr}`;
-
-        // 3. Проверяем, есть ли такой лист
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         const existingSheet = meta.data.sheets.find(s => s.properties.title === sheetTitle);
 
         if (!existingSheet) {
-            // Если листа нет - создаем
             await sheets.spreadsheets.batchUpdate({
                 spreadsheetId,
                 resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] }
             });
-            // И пишем заголовки
             await sheets.spreadsheets.values.update({
                 spreadsheetId,
                 range: `${sheetTitle}!A1`,
@@ -114,14 +104,20 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
             });
         }
 
-        // 4. Пишем данные
+        // ФОРМИРУЕМ КЛИКАБЕЛЬНУЮ ССЫЛКУ
+        let gpsValue = "Нет GPS";
+        if (lat && lon) {
+            const link = `https://www.google.com/maps?q=${lat},${lon}`;
+            gpsValue = `=HYPERLINK("${link}"; "СМОТРЕТЬ НА КАРТЕ")`;
+        }
+
         const timeNow = new Date().toLocaleTimeString("ru-RU");
         await sheets.spreadsheets.values.append({
             spreadsheetId,
-            range: `${sheetTitle}!A1`, // Google сам найдет первую пустую строку
+            range: `${sheetTitle}!A1`,
             valueInputOption: 'USER_ENTERED',
             resource: { 
-                values: [[timeNow, address, entrance, client, workType, price, gpsLink, "ЗАГРУЖЕНО"]] 
+                values: [[timeNow, address, entrance, client, workType, price, gpsValue, "ЗАГРУЖЕНО"]] 
             }
         });
 
@@ -159,47 +155,43 @@ app.post('/upload', async (req, res) => {
             return res.json(result);
         }
 
-        // ПОЛУЧАЕМ НОВЫЕ ДАННЫЕ (workType, price)
         const { worker, city, address, entrance, client, image, lat, lon, workType, price } = body;
         
         const keys = await readDatabase();
         const keyData = keys.find(k => k.workers && k.workers.includes(worker));
         const ownerName = keyData ? keyData.name : "Неизвестный";
 
-        // ПАПКИ: Владелец -> Работник -> Город -> ДАТА -> Клиент
         const ownerId = await getOrCreateFolder(ownerName, MY_ROOT_ID);
         const workerId = await getOrCreateFolder(worker || "Работник", ownerId);
         const cityId = await getOrCreateFolder(city || "Город", workerId);
         
-        const todayStr = new Date().toISOString().split('T')[0]; // 2025-12-30
+        const todayStr = new Date().toISOString().split('T')[0]; 
         const dateFolderId = await getOrCreateFolder(todayStr, cityId);
         
         let finalFolderName = client && client.trim().length > 0 ? client.trim() : "Общий";
         const finalFolderId = await getOrCreateFolder(finalFolderName, dateFolderId);
 
-        // ФАЙЛ: Улица Дом Подъезд.jpg
         const safeAddress = address ? address.trim() : "Без адреса";
         const safeEntrance = entrance ? " " + entrance : ""; 
         const fileName = `${safeAddress}${safeEntrance}.jpg`.trim();
 
-        const buffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-        const bufferStream = new Readable(); bufferStream.push(buffer); bufferStream.push(null);
+        if (image) {
+            const buffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
+            const bufferStream = new Readable(); bufferStream.push(buffer); bufferStream.push(null);
+            await drive.files.create({
+                resource: { name: fileName, parents: [finalFolderId] },
+                media: { mimeType: 'image/jpeg', body: bufferStream }
+            });
+        }
 
-        await drive.files.create({
-            resource: { name: fileName, parents: [finalFolderId] },
-            media: { mimeType: 'image/jpeg', body: bufferStream }
-        });
-
-        // ОТЧЕТ: Передаем тип работы и цену
-        const gpsLink = (lat && lon) ? `http://googleusercontent.com/maps.google.com/4{lat},${lon}` : "Нет GPS";
-        await appendToReport(workerId, worker, city, todayStr, safeAddress, entrance || "-", finalFolderName, workType || "Не указан", price || 0, gpsLink);
+        // Передаем lat и lon отдельно в функцию отчета
+        await appendToReport(workerId, worker, city, todayStr, safeAddress, entrance || "-", finalFolderName, workType || "Не указан", price || 0, lat, lon);
         
         res.json({ success: true });
 
     } catch (e) { res.json({ status: 'error', message: e.message, success: false }); }
 });
 
-// АДМИНКА
 app.get('/api/keys', async (req, res) => { const keys = await readDatabase(); res.json(keys); });
 app.post('/api/keys/add', async (req, res) => {
     const { name, limit, days } = req.body;
@@ -218,7 +210,6 @@ app.post('/api/keys/del', async (req, res) => {
     res.json({ success: true });
 });
 
-// ДИЗАЙН АДМИНКИ (COMMAND CENTER)
 app.get('/dashboard', (req, res) => {
     const html = `
     <!DOCTYPE html>
