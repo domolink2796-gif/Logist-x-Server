@@ -1,34 +1,33 @@
 const express = require('express');
-const { google } = require('googleapis');
 const { Telegraf } = require('telegraf');
 const path = require('path');
 
 const app = express();
-// Твой токен бота
 const bot = new Telegraf('8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg');
 
-// ГЛАВНОЕ ИСПРАВЛЕНИЕ: ПРИНУДИТЕЛЬНЫЙ ВЫВОД КАРТИНКИ
-app.get('/admin-panel', (req, res) => {
+// ГЛАВНОЕ: УБИРАЕМ ЦИФРЫ ПРИНУДИТЕЛЬНО
+app.use('/admin-panel', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.sendFile(path.join(__dirname, 'admin.html'));
+    res.sendFile(path.resolve(__dirname, 'admin.html'));
 });
 
-// КНОПКА ДЛЯ БОТА (БЕЗ ОШИБОК 502)
+// Кнопка в боте
 bot.start((ctx) => {
-    const webAppUrl = "https://logist-x-server-production.up.railway.app/admin-panel";
-    ctx.reply('LOGIST HQ: ДОСТУП РАЗРЕШЕН 🦾', {
+    ctx.reply('LOGIST HQ: ДОСТУП ОТКРЫТ 🦾', {
         reply_markup: {
             inline_keyboard: [[
-                { text: "ОТКРЫТЬ ТЕЛЕВИЗОР", web_app: { url: webAppUrl } }
+                { text: "ОТКРЫТЬ ТЕЛЕВИЗОР", web_app: { url: "https://logist-x-server-production.up.railway.app/admin-panel" } }
             ]]
         }
     });
 });
 
-app.get('/', (req, res) => res.send("СИСТЕМА LOGIST-X АКТИВНА"));
+app.get('/', (req, res) => res.send("<h1>СИСТЕМА ЛОГИСТИКА X ВКЛЮЧЕНА</h1>"));
 
-bot.launch().then(() => console.log(">>> БОТ ВКЛЮЧЕН"));
-app.listen(process.env.PORT || 3000, () => console.log(">>> СЕРВЕР ЖИВОЙ"));
+// Запуск без падений
+bot.launch().catch(err => console.error("Ошибка бота:", err));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`>>> СЕРВЕР ПОДНЯЛСЯ НА ПОРТУ ${PORT}`));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
