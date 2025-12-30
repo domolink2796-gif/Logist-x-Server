@@ -29,7 +29,7 @@ const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (БЕЗ ИЗМЕНЕНИЙ) ---
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 async function getOrCreateFolder(rawName, parentId) {
     try {
         const name = String(rawName).trim(); 
@@ -169,9 +169,10 @@ app.get('/api/client-keys', async (req, res) => {
     try {
         const keys = await readDatabase();
         const chatId = req.query.chatId;
+        if (!chatId) return res.json([]);
         const clientKeys = keys.filter(k => String(k.ownerChatId) === String(chatId));
-        res.json(clientKeys);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+        res.json(clientKeys || []);
+    } catch (e) { res.json([]); }
 });
 
 app.post('/api/keys/add', async (req, res) => {
@@ -185,13 +186,6 @@ app.post('/api/keys/add', async (req, res) => {
     res.json({ success: true });
 });
 
-app.post('/api/keys/del', async (req, res) => {
-    if (req.body.key === 'DEV-MASTER-999') return res.json({ success: false });
-    let keys = await readDatabase(); keys = keys.filter(k => k.key !== req.body.key);
-    await saveDatabase(keys);
-    res.json({ success: true });
-});
-
 // === UI: ПАНЕЛИ ===
 app.get('/dashboard', (req, res) => {
     res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LOGIST X ADMIN</title>
@@ -200,25 +194,28 @@ app.get('/dashboard', (req, res) => {
     button { background: var(--accent); color: #000; font-weight: bold; cursor: pointer; border: none; } .key-item { background: #010409; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #238636; }</style></head>
     <body><div class="card"><h3>СОЗДАТЬ ЛИЦЕНЗИЮ</h3><input type="text" id="newName" placeholder="Имя"><input type="number" id="newLimit" value="5"><select id="newDays"><option value="30">30 Дней</option><option value="365">1 Год</option></select><button onclick="addKey()">СОЗДАТЬ</button></div><div id="keysList"></div>
     <script>const PASS = "${ADMIN_PASS}"; function auth() { let p = localStorage.getItem('admin_pass'); if(p===PASS){document.body.style.display='block';load();}else{p=prompt('PASS:');if(p===PASS){localStorage.setItem('admin_pass',PASS);location.reload();}else{alert('NO');}}}
-    async function load(){ const res = await fetch('/api/keys'); const keys = await res.json(); document.getElementById('keysList').innerHTML = keys.map(k => \`<div class="key-item" style="border-left-color: \${k.ownerChatId ? '#238636' : '#d29922'}"><b>\${k.key}</b><br>\${k.name} (\${k.workers?k.workers.length:0}/\${k.limit})<br><small style="color:\${k.ownerChatId?'#238636':'#d29922'}">\${k.ownerChatId?'✓ Активен':'○ Ожидает'}</small></div>\`).join(''); }
+    async function load(){ const res = await fetch('/api/keys'); const keys = await res.json(); document.getElementById('keysList').innerHTML = keys.map(k => \`<div class="key-item" style="border-left-color: \${k.ownerChatId ? '#238636' : '#d29922'}"><b>\${k.key}</b><br>\${k.name} (\${(k.workers || []).length}/\${k.limit})<br><small style="color:\${k.ownerChatId?'#238636':'#d29922'}">\${k.ownerChatId?'✓ Активен':'○ Ожидает'}</small></div>\`).join(''); }
     async function addKey(){ await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('newName').value,limit:document.getElementById('newLimit').value,days:document.getElementById('newDays').value})}); load(); } auth();</script></body></html>`);
 });
 
 app.get('/client-dashboard', (req, res) => {
     res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>MY LOGIST_X</title>
-    <style>body { background: #0d1117; color: #c9d1d9; font-family: sans-serif; padding: 20px; } .card { background: #161b22; border-radius: 12px; padding: 15px; border: 1px solid #30363d; margin-bottom: 10px; } .accent { color: #d29922; } .error-box { color: #da3633; font-size: 0.8rem; margin-top: 10px; }</style></head>
+    <style>body { background: #0d1117; color: #c9d1d9; font-family: sans-serif; padding: 20px; } .card { background: #161b22; border-radius: 12px; padding: 15px; border: 1px solid #30363d; margin-bottom: 10px; } .accent { color: #d29922; } .info { color: #8b949e; font-size: 0.9rem; }</style></head>
     <body><h2 class="accent">МОЙ LOGIST_X</h2><div id="content">Загрузка...</div>
     <script>async function load(){ 
         const content = document.getElementById('content');
         try { 
             const cid = new URLSearchParams(window.location.search).get('chatId'); 
-            if(!cid) { content.innerHTML = 'Ошибка: Нет ID чата.'; return; }
+            if(!cid) { content.innerHTML = 'Ошибка: Нет ID.'; return; }
             const res = await fetch(window.location.origin + '/api/client-keys?chatId=' + cid); 
-            if(!res.ok) throw new Error('Ошибка сервера: ' + res.status);
             const keys = await res.json();
-            content.innerHTML = keys.length ? keys.map(k => \`<div class="card"><b>\${k.key}</b><br>Объект: \${k.name}<br>Мест: \${k.workers.length}/\${k.limit}<br><small>До: \${new Date(k.expiry).toLocaleDateString()}</small></div>\`).join('') : 'Лицензий не привязано к ID: ' + cid; 
+            if(!keys || keys.length === 0) { content.innerHTML = '<div class="info">Лицензий не найдено для ID: ' + cid + '</div>'; return; }
+            content.innerHTML = keys.map(k => {
+                const count = (k.workers && Array.isArray(k.workers)) ? k.workers.length : 0;
+                return \`<div class="card"><b>\${k.key}</b><br>Объект: \${k.name}<br>Мест: \${count}/\${k.limit}<br><small>До: \${new Date(k.expiry).toLocaleDateString()}</small></div>\`;
+            }).join('');
         } catch(e) { 
-            content.innerHTML = '<div class="error-box">ОШИБКА СВЯЗИ: ' + e.message + '</div>'; 
+            content.innerHTML = 'Ошибка: ' + e.message; 
         }
     } load();</script></body></html>`);
 });
