@@ -3,17 +3,18 @@ const { Telegraf } = require('telegraf');
 const path = require('path');
 
 const app = express();
+// Твой токен бота, где сидит Дядя Гена
 const bot = new Telegraf('8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg');
 
-// ГЛАВНОЕ: УБИРАЕМ ЦИФРЫ ПРИНУДИТЕЛЬНО
-app.use('/admin-panel', (req, res) => {
+// Чтобы Чебурашка не показывал цифры, а показывал ПАНЕЛЬ
+app.get('/admin-panel', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.sendFile(path.resolve(__dirname, 'admin.html'));
 });
 
-// Кнопка в боте
+// Когда Дядя Гена пишет /start
 bot.start((ctx) => {
-    ctx.reply('LOGIST HQ: ДОСТУП ОТКРЫТ 🦾', {
+    ctx.reply('LOGIST-X: ПРИВЕТ ОТ ЧЕБУРАШКИ! 🦾', {
         reply_markup: {
             inline_keyboard: [[
                 { text: "ОТКРЫТЬ ТЕЛЕВИЗОР", web_app: { url: "https://logist-x-server-production.up.railway.app/admin-panel" } }
@@ -22,12 +23,10 @@ bot.start((ctx) => {
     });
 });
 
-app.get('/', (req, res) => res.send("<h1>СИСТЕМА ЛОГИСТИКА X ВКЛЮЧЕНА</h1>"));
+app.get('/', (req, res) => res.send("СИСТЕМА ГЕНЫ И ЧЕБУРАШКИ В СТРОЮ"));
 
-// Запуск без падений
-bot.launch().catch(err => console.error("Ошибка бота:", err));
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`>>> СЕРВЕР ПОДНЯЛСЯ НА ПОРТУ ${PORT}`));
+bot.launch().catch(err => console.error("Бот упал:", err));
+app.listen(process.env.PORT || 3000, () => console.log("СЕРВЕР ПОДНЯЛСЯ"));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
