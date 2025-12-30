@@ -17,6 +17,7 @@ const DB_FILE_NAME = 'keys_database.json';
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
+const MY_TELEGRAM_USER = 'https://t.me/G_E_S_S_E_N'; // Ссылка на твой ТГ для кнопки продления
 
 // Auth
 const oauth2Client = new google.auth.OAuth2(
@@ -29,7 +30,7 @@ const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (БЕЗ ИЗМЕНЕНИЙ ЛОГИКИ) ---
 async function getOrCreateFolder(rawName, parentId) {
     try {
         const name = String(rawName).trim(); 
@@ -168,10 +169,8 @@ app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
 app.get('/api/client-keys', async (req, res) => {
     try {
         const keys = await readDatabase();
-        const chatId = req.query.chatId;
-        if (!chatId) return res.json([]);
-        const clientKeys = keys.filter(k => String(k.ownerChatId) === String(chatId));
-        res.json(clientKeys || []);
+        const cid = req.query.chatId;
+        res.json(keys.filter(k => String(k.ownerChatId) === String(cid)));
     } catch (e) { res.json([]); }
 });
 
@@ -186,52 +185,70 @@ app.post('/api/keys/add', async (req, res) => {
     res.json({ success: true });
 });
 
-// === UI: ПАНЕЛИ ===
+// Дополнительное API для быстрой работы из админки
+app.post('/api/keys/extend', async (req, res) => {
+    let keys = await readDatabase();
+    const idx = keys.findIndex(k => k.key === req.body.key);
+    if (idx !== -1) {
+        let d = new Date(keys[idx].expiry);
+        d.setDate(d.getDate() + 30);
+        keys[idx].expiry = d.toISOString();
+        await saveDatabase(keys);
+        res.json({ success: true });
+    } else res.json({ success: false });
+});
+
+// === UI: АДМИН ПАНЕЛЬ ===
 app.get('/dashboard', (req, res) => {
     res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LOGIST X ADMIN</title>
     <style>:root { --bg: #0d1117; --card: #161b22; --accent: #d29922; --text: #c9d1d9; } body { background: var(--bg); color: var(--text); font-family: sans-serif; padding: 15px; display:none; }
     .card { background: var(--card); border: 1px solid #30363d; border-radius: 12px; padding: 20px; margin-bottom: 20px; } input, select, button { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #30363d; background: #010409; color: #fff; }
-    button { background: var(--accent); color: #000; font-weight: bold; cursor: pointer; border: none; } .key-item { background: #010409; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #238636; }</style></head>
-    <body><div class="card"><h3>СОЗДАТЬ ЛИЦЕНЗИЮ</h3><input type="text" id="newName" placeholder="Имя"><input type="number" id="newLimit" value="5"><select id="newDays"><option value="30">30 Дней</option><option value="365">1 Год</option></select><button onclick="addKey()">СОЗДАТЬ</button></div><div id="keysList"></div>
+    button { background: var(--accent); color: #000; font-weight: bold; cursor: pointer; border: none; } .key-item { background: #010409; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #d29922; }
+    .btn-small { width: auto; padding: 5px 10px; font-size: 0.8rem; margin: 5px 5px 0 0; background: #238636; color: white; }</style></head>
+    <body><div class="card"><h3>СОЗДАТЬ ЛИЦЕНЗИЮ</h3><input type="text" id="newName" placeholder="Название объекта"><input type="number" id="newLimit" value="5" placeholder="Лимит мест"><select id="newDays"><option value="30">30 Дней</option><option value="365">1 Год</option></select><button onclick="addKey()">СОЗДАТЬ</button></div><div id="keysList"></div>
     <script>const PASS = "${ADMIN_PASS}"; function auth() { let p = localStorage.getItem('admin_pass'); if(p===PASS){document.body.style.display='block';load();}else{p=prompt('PASS:');if(p===PASS){localStorage.setItem('admin_pass',PASS);location.reload();}else{alert('NO');}}}
-    async function load(){ const res = await fetch('/api/keys'); const keys = await res.json(); document.getElementById('keysList').innerHTML = keys.map(k => \`<div class="key-item" style="border-left-color: \${k.ownerChatId ? '#238636' : '#d29922'}"><b>\${k.key}</b><br>\${k.name} (\${(k.workers || []).length}/\${k.limit})<br><small style="color:\${k.ownerChatId?'#238636':'#d29922'}">\${k.ownerChatId?'✓ Активен':'○ Ожидает'}</small></div>\`).join(''); }
-    async function addKey(){ await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('newName').value,limit:document.getElementById('newLimit').value,days:document.getElementById('newDays').value})}); load(); } auth();</script></body></html>`);
+    async function load(){ const res = await fetch('/api/keys'); const keys = await res.json(); 
+    document.getElementById('keysList').innerHTML = keys.map(k => \`<div class="key-item"><b>\${k.key}</b><br>\${k.name} (\${k.workers?k.workers.length:0}/\${k.limit})<br><small>До: \${new Date(k.expiry).toLocaleDateString()}</small><br>
+    <button class="btn-small" onclick="extendKey('\${k.key}')">+30 ДНЕЙ</button></div>\`).join(''); }
+    async function addKey(){ await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('newName').value,limit:document.getElementById('newLimit').value,days:document.getElementById('newDays').value})}); load(); }
+    async function extendKey(key){ if(confirm('Продлить на 30 дней?')){ await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})}); load(); } }
+    auth();</script></body></html>`);
 });
 
+// === UI: КАБИНЕТ КЛИЕНТА ===
 app.get('/client-dashboard', (req, res) => {
     res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>MY LOGIST_X</title>
-    <style>body { background: #0d1117; color: #c9d1d9; font-family: sans-serif; padding: 20px; } .card { background: #161b22; border-radius: 12px; padding: 15px; border: 1px solid #30363d; margin-bottom: 10px; } .accent { color: #d29922; } .info { color: #8b949e; font-size: 0.9rem; }</style></head>
-    <body><h2 class="accent">МОЙ LOGIST_X</h2><div id="content">Загрузка...</div>
-    <script>async function load(){ 
-        const content = document.getElementById('content');
-        try { 
-            const cid = new URLSearchParams(window.location.search).get('chatId'); 
-            if(!cid) { content.innerHTML = 'Ошибка: Нет ID.'; return; }
-            const res = await fetch(window.location.origin + '/api/client-keys?chatId=' + cid); 
-            const keys = await res.json();
-            if(!keys || keys.length === 0) { content.innerHTML = '<div class="info">Лицензий не найдено для ID: ' + cid + '</div>'; return; }
-            content.innerHTML = keys.map(k => {
-                const count = (k.workers && Array.isArray(k.workers)) ? k.workers.length : 0;
-                return \`<div class="card"><b>\${k.key}</b><br>Объект: \${k.name}<br>Мест: \${count}/\${k.limit}<br><small>До: \${new Date(k.expiry).toLocaleDateString()}</small></div>\`;
-            }).join('');
-        } catch(e) { 
-            content.innerHTML = 'Ошибка: ' + e.message; 
-        }
-    } load();</script></body></html>`);
+    <style>body { background: #0d1117; color: #c9d1d9; font-family: sans-serif; padding: 20px; } .card { background: #161b22; border-radius: 12px; padding: 15px; border: 1px solid #30363d; margin-bottom: 15px; } 
+    .accent { color: #d29922; } .btn-pay { background: #d29922; color: #000; border: none; padding: 10px; border-radius: 8px; width: 100%; font-weight: bold; cursor: pointer; text-decoration: none; display: block; text-align: center; margin-top: 10px; }
+    .worker-list { font-size: 0.8rem; color: #8b949e; margin-top: 10px; border-top: 1px solid #30363d; padding-top: 5px; }</style></head>
+    <body><h2 class="accent">МОЙ LOGIST_X</h2><div id="content">Загрузка данных...</div>
+    <script>async function load(){ try { 
+        const cid = new URLSearchParams(window.location.search).get('chatId'); 
+        const res = await fetch(window.location.origin + '/api/client-keys?chatId=' + cid); 
+        const keys = await res.json();
+        if(!keys.length) { document.getElementById('content').innerHTML = 'Лицензий не привязано.'; return; }
+        document.getElementById('content').innerHTML = keys.map(k => {
+            const workers = k.workers && k.workers.length ? k.workers.join(', ') : 'Нет активных';
+            const payUrl = "${MY_TELEGRAM_USER}?start=pay_" + k.key;
+            return \`<div class="card"><b>\${k.key}</b><br>Объект: \${k.name}<br>Мест: \${k.workers?k.workers.length:0}/\${k.limit}<br>Срок до: \${new Date(k.expiry).toLocaleDateString()}
+            <div class="worker-list"><b>Рабочие:</b> \${workers}</div>
+            <a href="https://t.me/share/url?url=Запрос%20на%20продление&text=Привет!%20Хочу%20продлить%20лицензию%20\${k.name}%20(ключ:%20\${k.key})" class="btn-pay">ПРОДЛИТЬ ЛИЦЕНЗИЮ</a></div>\`;
+        }).join('');
+    } catch(e) { document.getElementById('content').innerHTML = 'Ошибка загрузки.'; } } load();</script></body></html>`);
 });
 
 // --- БОТ ---
 bot.start(async (ctx) => {
     const chatId = ctx.chat.id;
     if (chatId === MY_TELEGRAM_ID) {
-        return ctx.reply('👑 АДМИН-ПУЛЬТ', { reply_markup: { inline_keyboard: [[{ text: "📱 УПРАВЛЕНИЕ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
+        return ctx.reply('👑 АДМИН-ПУЛЬТ', { reply_markup: { inline_keyboard: [[{ text: "📱 УПРАВЛЕНИЕ КЛЮЧАМИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
     }
     const keys = await readDatabase();
     const clientKey = keys.find(k => String(k.ownerChatId) === String(chatId));
     if (clientKey) {
-        return ctx.reply('🏢 ЛИЧНЫЙ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + chatId } }]] } });
+        return ctx.reply('🏢 ЛИЧНЫЙ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ОБЪЕКТЫ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + chatId } }]] } });
     }
-    ctx.reply('Привет! Введи лицензионный КЛЮЧ для активации:');
+    ctx.reply('Привет! Введи лицензионный КЛЮЧ для активации кабинета:');
 });
 
 bot.on('text', async (ctx) => {
@@ -240,11 +257,11 @@ bot.on('text', async (ctx) => {
     const keys = await readDatabase();
     const idx = keys.findIndex(k => k.key === key);
     if (idx !== -1) {
-        if (keys[idx].ownerChatId) return ctx.reply('Ключ уже занят!');
+        if (keys[idx].ownerChatId) return ctx.reply('Ключ уже занят другим пользователем!');
         keys[idx].ownerChatId = ctx.chat.id;
         await saveDatabase(keys);
-        ctx.reply('✅ ДОСТУП ОТКРЫТ!', { reply_markup: { inline_keyboard: [[{ text: "📊 МОЙ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
-    } else { ctx.reply('Ключ не найден.'); }
+        ctx.reply('✅ ДОСТУП ОТКРЫТ! Теперь вы можете управлять объектом через кабинет.', { reply_markup: { inline_keyboard: [[{ text: "📊 МОЙ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
+    } else { ctx.reply('Ключ не найден. Проверьте правильность ввода.'); }
 });
 
 bot.launch().then(() => console.log("LOGIST_X ONLINE"));
