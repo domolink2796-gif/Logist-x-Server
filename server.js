@@ -14,7 +14,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A'; 
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
-const ADMIN_PASS = 'Logist_X_ADMIN'; // Твой новый пароль
+const ADMIN_PASS = 'Logist_X_ADMIN'; 
 
 // Auth
 const oauth2Client = new google.auth.OAuth2(
@@ -50,9 +50,7 @@ async function readDatabase() {
         const content = await drive.files.get({ fileId, alt: 'media' });
         let data = content.data;
         if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e) { return []; } }
-        
         let keys = data.keys || [];
-        // Проверка/Создание Мастер-Ключа
         if (!keys.find(k => k.key === 'DEV-MASTER-999')) {
             keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [] });
             await saveDatabase(keys);
@@ -78,7 +76,6 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
         const reportName = `Отчет ${workerName}`;
         const q = `name = '${reportName}' and '${workerId}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`;
         const res = await drive.files.list({ q });
-        
         let spreadsheetId;
         if (res.data.files.length === 0) {
             const createRes = await sheets.spreadsheets.create({
@@ -111,9 +108,12 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
             });
         }
 
+        // --- ИСПРАВЛЕННЫЙ БЛОК GPS ---
         let gpsValue = "Нет GPS";
         if (lat && lon) {
+            // Формируем прямую ссылку на Google Maps
             const link = `https://www.google.com/maps?q=${lat},${lon}`;
+            // Используем формулу гиперссылки для Excel/Sheets
             gpsValue = `=HYPERLINK("${link}"; "СМОТРЕТЬ НА КАРТЕ")`;
         }
 
