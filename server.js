@@ -104,17 +104,20 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
                 spreadsheetId,
                 range: `${sheetTitle}!A1`,
                 valueInputOption: 'USER_ENTERED',
-                resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS', 'ФОТО']] }
+                resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GOOGLE GPS', 'YANDEX GPS', 'ФОТО']] }
             });
         }
 
-        // --- ИСПРАВЛЕННЫЙ БЛОК GPS ---
-        let gpsValue = "Нет GPS";
+        // --- БЛОК GPS ССЫЛОК ---
+        let googleGps = "Нет GPS";
+        let yandexGps = "Нет GPS";
+
         if (lat && lon) {
-            // Формируем прямую ссылку на Google Maps
-            const link = `https://www.google.com/maps?q=${lat},${lon}`;
-            // Используем формулу гиперссылки для Excel/Sheets
-            gpsValue = `=HYPERLINK("${link}"; "СМОТРЕТЬ НА КАРТЕ")`;
+            const gLink = `https://www.google.com/maps?q=${lat},${lon}`;
+            const yLink = `https://yandex.ru/maps/?pt=${lon},${lat}&z=16&l=map`;
+            
+            googleGps = `=HYPERLINK("${gLink}"; "GOOGLE MAPS")`;
+            yandexGps = `=HYPERLINK("${yLink}"; "ЯНДЕКС КАРТЫ")`;
         }
 
         const timeNow = new Date().toLocaleTimeString("ru-RU");
@@ -123,7 +126,7 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
             range: `${sheetTitle}!A1`,
             valueInputOption: 'USER_ENTERED',
             resource: { 
-                values: [[timeNow, address, entrance, client, workType, price, gpsValue, "ЗАГРУЖЕНО"]] 
+                values: [[timeNow, address, entrance, client, workType, price, googleGps, yandexGps, "ЗАГРУЖЕНО"]] 
             }
         });
     } catch (e) { console.error("Report Error:", e); }
