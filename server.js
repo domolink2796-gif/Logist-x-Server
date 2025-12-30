@@ -301,12 +301,40 @@ bot.start(async (ctx) => {
     if (clientKey) {
         return ctx.reply('🏢 ВАШ КАБИНЕТ ОБЪЕКТОВ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + chatId } }]] } });
     }
-    ctx.reply('Привет! Введи лицензионный КЛЮЧ для активации кабинета:');
+    // Логика для нового клиента
+    ctx.reply('👋 Привет! У вас пока нет активной лицензии Logist X.\n\nНажмите кнопку ниже, чтобы оставить заявку на подключение:', {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: "💳 ОФОРМИТЬ ЛИЦЕНЗИЮ", callback_data: "buy_license" }],
+                [{ text: "🔑 У МЕНЯ ЕСТЬ КЛЮЧ", callback_data: "have_key" }]
+            ]
+        }
+    });
+});
+
+bot.action('buy_license', async (ctx) => {
+    const from = ctx.from;
+    const userLabel = from.username ? `@${from.username}` : `${from.first_name} (ID: ${from.id})`;
+    const profileLink = from.username ? `https://t.me/${from.username}` : `tg://user?id=${from.id}`;
+    
+    // Уведомление тебе
+    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔥 **НОВЫЙ КЛИЕНТ ХОЧЕТ КУПИТЬ!**\n\nКлиент: ${userLabel}\nЛичка: [ПЕРЕЙТИ К КЛИЕНТУ](${profileLink})`, { parse_mode: 'Markdown' });
+    
+    await ctx.answerCbQuery();
+    await ctx.reply('✅ Запрос отправлен! Администратор свяжется с вами в ближайшее время для оформления лицензии.', {
+        reply_markup: { inline_keyboard: [[{ text: "💬 НАПИСАТЬ АДМИНУ", url: "https://t.me/G_E_S_S_E_N" }]] }
+    });
+});
+
+bot.action('have_key', async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.reply('Введите ваш лицензионный КЛЮЧ для активации:');
 });
 
 bot.on('text', async (ctx) => {
     if (ctx.chat.id === MY_TELEGRAM_ID) return;
     const key = ctx.message.text.trim();
+    if (key.length < 5) return; // Пропускаем обычные сообщения
     const keys = await readDatabase();
     const idx = keys.findIndex(k => k.key === key);
     if (idx !== -1) {
