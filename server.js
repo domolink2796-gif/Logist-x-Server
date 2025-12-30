@@ -10,12 +10,12 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// --- ТВОИ НАСТРОЙКИ ---
-const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A'; // Твоя папка
-const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg'; // Твой бот
+// --- НАСТРОЙКИ ---
+const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A';
+const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_NAME = 'DATABASE_KEYS_LOGIST_X';
 
-// Авторизация Google
+// Google Auth
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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'
@@ -26,7 +26,7 @@ const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 const bot = new Telegraf(BOT_TOKEN);
 
-// Функция создания/поиска папки (без дублей)
+// Функция папок (которая у тебя уже работает)
 async function getOrCreateFolder(rawName, parentId) {
     try {
         const name = String(rawName).trim(); 
@@ -37,46 +37,41 @@ async function getOrCreateFolder(rawName, parentId) {
         const fileMetadata = { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] };
         const file = await drive.files.create({ resource: fileMetadata, fields: 'id' });
         return file.data.id;
-    } catch (e) { 
-        console.error('Ошибка папки:', e); 
-        return parentId; 
-    }
+    } catch (e) { return parentId; }
 }
 
-// --- АДМИНКА (ССЫЛКА /tv ОТ ЦИФР) ---
+// --- ГЛАВНОЕ: АДМИНКА БЕЗ ОШИБОК ---
+
+// 1. Основной вход (чтобы не было цифр)
 app.get('/tv', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
-// Перенаправление старых ссылок
+// 2. Ловушка для старых ссылок (лечит "Cannot GET")
 app.get('/admin-panel', (req, res) => res.redirect('/tv'));
+app.get('/master-panel', (req, res) => res.redirect('/tv'));
+app.get('/hq-panel', (req, res) => res.redirect('/tv'));
 
-// --- ЗАГРУЗКА ФОТО (НОВАЯ ЛОГИКА) ---
+// --- ЗАГРУЗКА ФОТО ---
 app.post('/upload', async (req, res) => {
     try {
         const { worker, city, address, client, image } = req.body;
-        console.log(`Фото от ${worker} для ${client || 'Общий'}`);
+        console.log(`Фото: ${worker} -> ${client || 'Общий'}`);
 
-        // 1. Папка Работника
         const workerId = await getOrCreateFolder(worker || "Неизвестный", MY_ROOT_ID);
-
-        // 2. Папка Города
         const cityId = await getOrCreateFolder(city || "Город", workerId);
-
-        // 3. Папка КЛИЕНТА или ОБЩИЙ
-        let finalFolderName = "Общий"; // По умолчанию
-        if (client && client.trim().length > 0) {
-            finalFolderName = client.trim(); // Если клиент есть, называем его именем
-        }
+        
+        // Логика клиента (как ты просил)
+        let finalFolderName = "Общий";
+        if (client && client.trim().length > 0) finalFolderName = client.trim();
         const finalFolderId = await getOrCreateFolder(finalFolderName, cityId);
 
-        // 4. Имя файла: АДРЕС + ДАТА
+        // Имя файла: АДРЕС + ДАТА
         const safeAddress = address && address.trim().length > 0 ? address.trim() : "Без адреса";
         const timeStr = new Date().toLocaleString("ru-RU").replace(/, /g, '_').replace(/:/g, '-');
         const fileName = `${safeAddress} ${timeStr}.jpg`;
 
-        // Создаем файл
         const buffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
         const bufferStream = new Readable();
         bufferStream.push(buffer);
@@ -86,15 +81,11 @@ app.post('/upload', async (req, res) => {
             resource: { name: fileName, parents: [finalFolderId] },
             media: { mimeType: 'image/jpeg', body: bufferStream }
         });
-
         res.json({ success: true });
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ success: false, error: e.message });
-    }
+    } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// --- API КЛЮЧЕЙ ---
+// API ключей
 app.get('/api/list_keys', async (req, res) => {
     try {
         const resFile = await drive.files.list({ q: `name = '${DB_NAME}' and trashed = false` });
@@ -107,16 +98,18 @@ app.get('/api/list_keys', async (req, res) => {
 
 // --- БОТ ---
 bot.start((ctx) => {
-    // Ссылка ведет на /tv, чтобы убрать цифры
-    const appUrl = `https://${process.env.RAILWAY_STATIC_URL || "logist-x-server-production.up.railway.app"}/tv`;
-    ctx.reply('LOGIST HQ: СИСТЕМА ГОТОВА 🦾', {
+    // Генерируем ссылку, которая ТОЧНО работает
+    const domain = process.env.RAILWAY_STATIC_URL || "logist-x-server-production.up.railway.app";
+    const appUrl = `https://${domain}/tv`;
+    
+    ctx.reply('LOGIST HQ: СВЯЗЬ УСТАНОВЛЕНА 📡', {
         reply_markup: {
-            inline_keyboard: [[ { text: "ОТКРЫТЬ ТЕЛЕВИЗОР", web_app: { url: appUrl } } ]]
+            inline_keyboard: [[ { text: "📺 ОТКРЫТЬ ПАНЕЛЬ", web_app: { url: appUrl } } ]]
         }
     });
 });
 
-app.get('/', (req, res) => res.send("СЕРВЕР АКТИВЕН"));
+app.get('/', (req, res) => res.send("СЕРВЕР ГОТОВ К РАБОТЕ"));
 
 bot.launch().catch(e => console.log("Бот:", e));
 app.listen(process.env.PORT || 3000, () => console.log("СЕРВЕР ЗАПУЩЕН"));
