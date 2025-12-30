@@ -14,6 +14,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A'; 
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
+const ADMIN_PASS = 'Logist_X_ADMIN'; // Твой новый пароль
 
 // Auth
 const oauth2Client = new google.auth.OAuth2(
@@ -49,7 +50,14 @@ async function readDatabase() {
         const content = await drive.files.get({ fileId, alt: 'media' });
         let data = content.data;
         if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e) { return []; } }
-        return data.keys || [];
+        
+        let keys = data.keys || [];
+        // Проверка наличия Мастер-Ключа
+        if (!keys.find(k => k.key === 'DEV-MASTER-999')) {
+            keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [] });
+            await saveDatabase(keys);
+        }
+        return keys;
     } catch (e) { return []; }
 }
 
@@ -104,7 +112,6 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
             });
         }
 
-        // ФОРМИРУЕМ КЛИКАБЕЛЬНУЮ ССЫЛКУ
         let gpsValue = "Нет GPS";
         if (lat && lon) {
             const link = `https://www.google.com/maps?q=${lat},${lon}`;
@@ -158,7 +165,7 @@ app.post('/upload', async (req, res) => {
         const { worker, city, address, entrance, client, image, lat, lon, workType, price } = body;
         
         const keys = await readDatabase();
-        const keyData = keys.find(k => k.workers && k.workers.includes(worker));
+        const keyData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const ownerName = keyData ? keyData.name : "Неизвестный";
 
         const ownerId = await getOrCreateFolder(ownerName, MY_ROOT_ID);
@@ -184,7 +191,6 @@ app.post('/upload', async (req, res) => {
             });
         }
 
-        // Передаем lat и lon отдельно в функцию отчета
         await appendToReport(workerId, worker, city, todayStr, safeAddress, entrance || "-", finalFolderName, workType || "Не указан", price || 0, lat, lon);
         
         res.json({ success: true });
@@ -193,6 +199,7 @@ app.post('/upload', async (req, res) => {
 });
 
 app.get('/api/keys', async (req, res) => { const keys = await readDatabase(); res.json(keys); });
+
 app.post('/api/keys/add', async (req, res) => {
     const { name, limit, days } = req.body;
     let keys = await readDatabase();
@@ -203,8 +210,10 @@ app.post('/api/keys/add', async (req, res) => {
     await saveDatabase(keys);
     res.json({ success: true });
 });
+
 app.post('/api/keys/del', async (req, res) => {
     const { key } = req.body;
+    if (key === 'DEV-MASTER-999') return res.json({ success: false, message: 'Нельзя удалить системный ключ' });
     let keys = await readDatabase(); keys = keys.filter(k => k.key !== key);
     await saveDatabase(keys);
     res.json({ success: true });
@@ -220,18 +229,22 @@ app.get('/dashboard', (req, res) => {
         <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;800;900&display=swap" rel="stylesheet">
         <style>
             :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --accent: #d29922; --text: #c9d1d9; --green: #238636; --red: #da3633; }
-            body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; margin: 0; padding: 20px; }
+            body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; margin: 0; padding: 20px; display:none; }
             .container { max-width: 800px; margin: 0 auto; }
             .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 25px; margin-bottom: 20px; }
-            input, select, button { width: 100%; padding: 14px; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--border); background: #010409; color: #fff; font-family: 'JetBrains Mono'; }
+            input, select, button { width: 100%; padding: 14px; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--border); background: #010409; color: #fff; font-family: 'JetBrains Mono'; box-sizing: border-box; }
             button { background: var(--accent); color: #000; font-weight: 900; cursor: pointer; border: none; text-transform: uppercase; }
             .key-item { background: #010409; padding: 15px; border: 1px solid var(--border); margin-bottom: 10px; border-radius: 8px; border-left: 4px solid var(--green); }
             .k-code { font-size: 1.2rem; font-weight: bold; color: #fff; }
+            .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
         </style>
     </head>
     <body>
     <div class="container">
-        <h1 style="color:var(--accent)">LOGIST X // ADMIN</h1>
+        <div class="header">
+            <h1 style="color:var(--accent); margin:0;">LOGIST X // ADMIN</h1>
+            <button onclick="localStorage.removeItem('admin_pass'); location.reload();" style="width:auto; padding:8px 15px; font-size:10px;">ВЫХОД</button>
+        </div>
         <div class="card">
             <h3>СОЗДАТЬ ЛИЦЕНЗИЮ</h3>
             <input type="text" id="newName" placeholder="Имя Владельца">
@@ -242,23 +255,51 @@ app.get('/dashboard', (req, res) => {
         <div id="keysList"></div>
     </div>
     <script>
+        const PASS = "${ADMIN_PASS}";
+        function auth() {
+            let userPass = localStorage.getItem('admin_pass');
+            if (!userPass) {
+                userPass = prompt('ВВЕДИТЕ ПАРОЛЬ АДМИНИСТРАТОРА:');
+                if (userPass === PASS) {
+                    localStorage.setItem('admin_pass', PASS);
+                    document.body.style.display = 'block';
+                    load();
+                } else {
+                    alert('ОТКАЗАНО В ДОСТУПЕ');
+                    location.reload();
+                }
+            } else if (userPass === PASS) {
+                document.body.style.display = 'block';
+                load();
+            } else {
+                localStorage.removeItem('admin_pass');
+                location.reload();
+            }
+        }
+
         async function load() {
             const res = await fetch('/api/keys'); const keys = await res.json();
             document.getElementById('keysList').innerHTML = keys.map(k => 
-                \`<div class="key-item">
+                \`<div class="key-item" style="border-left-color: \${k.key === 'DEV-MASTER-999' ? 'var(--accent)' : 'var(--green)'}">
                     <div class="k-code">\${k.key}</div>
-                    <div>📂 \${k.name} | 👤 \${k.workers?k.workers.length:0}/\${k.limit}</div>
-                    <button onclick="delKey('\${k.key}')" style="background:none; color:var(--red); text-align:left; padding:0; margin-top:10px; width:auto;">УДАЛИТЬ</button>
+                    <div style="margin-top:5px; opacity:0.8;">📂 \${k.name} | 👤 \${k.workers?k.workers.length:0}/\${k.limit}</div>
+                    <div style="font-size:0.8rem; color:gray;">До: \${new Date(k.expiry).toLocaleDateString()}</div>
+                    \${k.key !== 'DEV-MASTER-999' ? \`<button onclick="delKey('\${k.key}')" style="background:none; color:var(--red); text-align:left; padding:0; margin-top:10px; width:auto; border:none; font-size:12px;">УДАЛИТЬ КЛЮЧ</button>\` : ''}
                 </div>\`
             ).join('');
         }
         async function addKey() {
+            const n = document.getElementById('newName').value;
+            if(!n) return alert('Введите имя');
             await fetch('/api/keys/add', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
-                name:document.getElementById('newName').value, limit:document.getElementById('newLimit').value, days:document.getElementById('newDays').value
-            })}); load();
+                name:n, limit:document.getElementById('newLimit').value, days:document.getElementById('newDays').value
+            })}); 
+            document.getElementById('newName').value = '';
+            load();
         }
-        async function delKey(key) { if(confirm('Удалить?')) await fetch('/api/keys/del', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key}) }); load(); }
-        load();
+        async function delKey(key) { if(confirm('Удалить лицензию?')) { await fetch('/api/keys/del', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key}) }); load(); } }
+        
+        auth();
     </script>
     </body>
     </html>
