@@ -3,14 +3,13 @@ const { google } = require('googleapis');
 const { Telegraf } = require('telegraf');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-const path = require('path');
 const { Readable } = require('stream');
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// --- НАСТРОЙКИ ---
+// --- ТВОИ НАСТРОЙКИ ---
 const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A';
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_NAME = 'DATABASE_KEYS_LOGIST_X';
@@ -38,16 +37,59 @@ async function getOrCreateFolder(rawName, parentId) {
     } catch (e) { return parentId; }
 }
 
-// --- ЛЕЧЕНИЕ "ТЕКСТОВОГО ФОРМАТА" ---
+// --- ВШИТАЯ АДМИНКА (Чтобы не было текста!) ---
+const ADMIN_HTML = `
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LOGIST-X HQ</title>
+    <style>
+        body { background-color: #000; color: #0f0; font-family: 'Courier New', monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        h1 { text-shadow: 0 0 10px #0f0; margin-bottom: 20px; }
+        .container { border: 1px solid #0f0; padding: 20px; box-shadow: 0 0 20px #0f0; text-align: center; max-width: 90%; }
+        input { background: #111; border: 1px solid #0f0; color: #0f0; padding: 10px; margin-bottom: 10px; width: 80%; font-family: inherit; }
+        button { background: #0f0; color: #000; border: none; padding: 10px 20px; font-weight: bold; cursor: pointer; font-family: inherit; }
+        button:hover { background: #fff; }
+        #status { margin-top: 10px; color: #fff; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container" id="loginBlock">
+        <h1>LOGIST-X HQ</h1>
+        <input type="password" id="pass" placeholder="ВВЕДИТЕ КОД ДОСТУПА">
+        <br>
+        <button onclick="checkPass()">ВОЙТИ</button>
+    </div>
 
-// 1. Создаем НОВЫЙ адрес /dashboard
-app.get('/dashboard', (req, res) => {
-    // Эта команда ЗАСТАВЛЯЕТ браузер рисовать страницу
-    res.type('html'); 
-    res.sendFile(path.join(__dirname, 'admin.html'));
-});
+    <div class="container hidden" id="mainBlock">
+        <h1>ПАНЕЛЬ УПРАВЛЕНИЯ</h1>
+        <div id="status">Загрузка ключей...</div>
+        <br>
+        <button onclick="location.reload()">ОБНОВИТЬ</button>
+    </div>
 
-// 2. Все старые адреса перекидываем на новый
+    <script>
+        function checkPass() {
+            const p = document.getElementById('pass').value;
+            if(p === '777') { // Простой пароль для теста
+                document.getElementById('loginBlock').classList.add('hidden');
+                document.getElementById('mainBlock').classList.remove('hidden');
+                document.getElementById('status').innerText = "СИСТЕМА АКТИВНА. ОЖИДАНИЕ ДАННЫХ...";
+                // Тут можно добавить загрузку ключей
+            } else {
+                alert('ОШИБКА ДОСТУПА');
+            }
+        }
+    </script>
+</body>
+</html>
+`;
+
+// --- АДРЕСА ---
+app.get('/dashboard', (req, res) => res.send(ADMIN_HTML)); // Отдаем код напрямую!
 app.get('/tv', (req, res) => res.redirect('/dashboard'));
 app.get('/admin-panel', (req, res) => res.redirect('/dashboard'));
 
@@ -55,7 +97,6 @@ app.get('/admin-panel', (req, res) => res.redirect('/dashboard'));
 app.post('/upload', async (req, res) => {
     try {
         const { worker, city, address, client, image } = req.body;
-        console.log(`Фото: ${worker} -> ${client || 'Общий'}`);
         
         const workerId = await getOrCreateFolder(worker || "Неизвестный", MY_ROOT_ID);
         const cityId = await getOrCreateFolder(city || "Город", workerId);
@@ -94,12 +135,10 @@ app.get('/api/list_keys', async (req, res) => {
 // --- БОТ ---
 bot.start((ctx) => {
     const domain = process.env.RAILWAY_STATIC_URL || "logist-x-server-production.up.railway.app";
-    // ВЕДЕМ НА НОВЫЙ АДРЕС
     const appUrl = `https://${domain}/dashboard`;
-    
-    ctx.reply('LOGIST HQ: ПАНЕЛЬ ОБНОВЛЕНА 🚀', {
+    ctx.reply('LOGIST HQ: ДОСТУП РАЗРЕШЕН 🟢', {
         reply_markup: {
-            inline_keyboard: [[ { text: "ОТКРЫТЬ DASHBOARD", web_app: { url: appUrl } } ]]
+            inline_keyboard: [[ { text: "ОТКРЫТЬ ПУЛЬТ", web_app: { url: appUrl } } ]]
         }
     });
 });
