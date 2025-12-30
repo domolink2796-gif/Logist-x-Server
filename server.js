@@ -52,7 +52,6 @@ async function readDatabase() {
         if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e) { return []; } }
         
         let keys = data.keys || [];
-        // Проверка наличия Мастер-Ключа
         if (!keys.find(k => k.key === 'DEV-MASTER-999')) {
             keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [] });
             await saveDatabase(keys);
@@ -73,7 +72,6 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- УМНЫЙ ОТЧЕТ (EXCEL) ---
 async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
         const reportName = `Отчет ${workerName}`;
@@ -127,11 +125,9 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
                 values: [[timeNow, address, entrance, client, workType, price, gpsValue, "ЗАГРУЖЕНО"]] 
             }
         });
-
     } catch (e) { console.error("Report Error:", e); }
 }
 
-// --- ЛОГИКА ---
 async function handleLicenseCheck(body) {
     const { licenseKey, workerName } = body;
     const keys = await readDatabase();
@@ -161,27 +157,20 @@ app.post('/upload', async (req, res) => {
             const result = await handleLicenseCheck(body);
             return res.json(result);
         }
-
         const { worker, city, address, entrance, client, image, lat, lon, workType, price } = body;
-        
         const keys = await readDatabase();
         const keyData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const ownerName = keyData ? keyData.name : "Неизвестный";
-
         const ownerId = await getOrCreateFolder(ownerName, MY_ROOT_ID);
         const workerId = await getOrCreateFolder(worker || "Работник", ownerId);
         const cityId = await getOrCreateFolder(city || "Город", workerId);
-        
         const todayStr = new Date().toISOString().split('T')[0]; 
         const dateFolderId = await getOrCreateFolder(todayStr, cityId);
-        
         let finalFolderName = client && client.trim().length > 0 ? client.trim() : "Общий";
         const finalFolderId = await getOrCreateFolder(finalFolderName, dateFolderId);
-
         const safeAddress = address ? address.trim() : "Без адреса";
         const safeEntrance = entrance ? " " + entrance : ""; 
         const fileName = `${safeAddress}${safeEntrance}.jpg`.trim();
-
         if (image) {
             const buffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
             const bufferStream = new Readable(); bufferStream.push(buffer); bufferStream.push(null);
@@ -190,11 +179,8 @@ app.post('/upload', async (req, res) => {
                 media: { mimeType: 'image/jpeg', body: bufferStream }
             });
         }
-
         await appendToReport(workerId, worker, city, todayStr, safeAddress, entrance || "-", finalFolderName, workType || "Не указан", price || 0, lat, lon);
-        
         res.json({ success: true });
-
     } catch (e) { res.json({ status: 'error', message: e.message, success: false }); }
 });
 
@@ -229,24 +215,24 @@ app.get('/dashboard', (req, res) => {
         <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;800;900&display=swap" rel="stylesheet">
         <style>
             :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --accent: #d29922; --text: #c9d1d9; --green: #238636; --red: #da3633; }
-            body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; margin: 0; padding: 20px; display:none; }
+            body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; margin: 0; padding: 15px; display:none; }
             .container { max-width: 800px; margin: 0 auto; }
-            .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 25px; margin-bottom: 20px; }
+            .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
             input, select, button { width: 100%; padding: 14px; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--border); background: #010409; color: #fff; font-family: 'JetBrains Mono'; box-sizing: border-box; }
             button { background: var(--accent); color: #000; font-weight: 900; cursor: pointer; border: none; text-transform: uppercase; }
             .key-item { background: #010409; padding: 15px; border: 1px solid var(--border); margin-bottom: 10px; border-radius: 8px; border-left: 4px solid var(--green); }
-            .k-code { font-size: 1.2rem; font-weight: bold; color: #fff; }
-            .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+            .k-code { font-size: 1.1rem; font-weight: bold; color: #fff; }
+            .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         </style>
     </head>
     <body>
     <div class="container">
         <div class="header">
-            <h1 style="color:var(--accent); margin:0;">LOGIST X // ADMIN</h1>
-            <button onclick="localStorage.removeItem('admin_pass'); location.reload();" style="width:auto; padding:8px 15px; font-size:10px;">ВЫХОД</button>
+            <h2 style="color:var(--accent); margin:0; font-size:1.2rem;">LOGIST X // ADMIN</h2>
+            <button onclick="localStorage.removeItem('admin_pass'); location.reload();" style="width:auto; padding:5px 10px; font-size:10px;">ВЫХОД</button>
         </div>
         <div class="card">
-            <h3>СОЗДАТЬ ЛИЦЕНЗИЮ</h3>
+            <h3 style="margin-top:0; font-size:1rem;">СОЗДАТЬ ЛИЦЕНЗИЮ</h3>
             <input type="text" id="newName" placeholder="Имя Владельца">
             <input type="number" id="newLimit" value="5" placeholder="Лимит">
             <select id="newDays"><option value="30">30 Дней</option><option value="365">1 Год</option></select>
@@ -254,8 +240,12 @@ app.get('/dashboard', (req, res) => {
         </div>
         <div id="keysList"></div>
     </div>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
         const PASS = "${ADMIN_PASS}";
+        const tg = window.Telegram.WebApp;
+        tg.expand(); 
+
         function auth() {
             let userPass = localStorage.getItem('admin_pass');
             if (!userPass) {
@@ -282,9 +272,9 @@ app.get('/dashboard', (req, res) => {
             document.getElementById('keysList').innerHTML = keys.map(k => 
                 \`<div class="key-item" style="border-left-color: \${k.key === 'DEV-MASTER-999' ? 'var(--accent)' : 'var(--green)'}">
                     <div class="k-code">\${k.key}</div>
-                    <div style="margin-top:5px; opacity:0.8;">📂 \${k.name} | 👤 \${k.workers?k.workers.length:0}/\${k.limit}</div>
-                    <div style="font-size:0.8rem; color:gray;">До: \${new Date(k.expiry).toLocaleDateString()}</div>
-                    \${k.key !== 'DEV-MASTER-999' ? \`<button onclick="delKey('\${k.key}')" style="background:none; color:var(--red); text-align:left; padding:0; margin-top:10px; width:auto; border:none; font-size:12px;">УДАЛИТЬ КЛЮЧ</button>\` : ''}
+                    <div style="margin-top:5px; opacity:0.8; font-size:0.9rem;">📂 \${k.name} | 👤 \${k.workers?k.workers.length:0}/\${k.limit}</div>
+                    <div style="font-size:0.7rem; color:gray;">До: \${new Date(k.expiry).toLocaleDateString()}</div>
+                    \${k.key !== 'DEV-MASTER-999' ? \`<button onclick="delKey('\${k.key}')" style="background:none; color:var(--red); text-align:left; padding:0; margin-top:10px; width:auto; border:none; font-size:11px;">УДАЛИТЬ ЛИЦЕНЗИЮ</button>\` : ''}
                 </div>\`
             ).join('');
         }
@@ -298,7 +288,6 @@ app.get('/dashboard', (req, res) => {
             load();
         }
         async function delKey(key) { if(confirm('Удалить лицензию?')) { await fetch('/api/keys/del', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key}) }); load(); } }
-        
         auth();
     </script>
     </body>
@@ -307,5 +296,24 @@ app.get('/dashboard', (req, res) => {
     res.send(html);
 });
 
+// --- TELEGRAM BOT LOGIC ---
+bot.start((ctx) => {
+    const url = "https://" + ctx.worker.split(':')[0]; // Railway подхватит домен
+    ctx.reply('🔧 СИСТЕМА УПРАВЛЕНИЯ LOGIST X ЗАПУЩЕНА', {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: "📱 ОТКРЫТЬ ПУЛЬТ УПРАВЛЕНИЯ", web_app: { url: `https://logist-x-server-production.up.railway.app/dashboard` } }]
+            ]
+        }
+    });
+});
+
+bot.launch().then(() => console.log("BOT ONLINE"));
+
 app.get('/', (req, res) => res.redirect('/dashboard'));
-app.listen(process.env.PORT || 3000, () => console.log("SERVER ONLINE"));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`SERVER ONLINE ON PORT ${PORT}`));
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
