@@ -1,6 +1,6 @@
 const express = require('express');
 const { google } = require('googleapis');
-const { Telegraf } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const { Readable } = require('stream');
@@ -8,12 +8,12 @@ const { Readable } = require('stream');
 const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '100mb' }));
-app.use(bodyParser.urlencoded({ extended: true }));
 
-// --- ТВОИ ДАННЫЕ (НЕ МЕНЯТЬ) ---
+// --- НАСТРОЙКИ ---
 const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A'; 
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
+const ADMIN_ID = 6846149935;
 
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
@@ -24,7 +24,34 @@ oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- ЛОГИКА ПАПОК ---
+// --- ЛОГИКА БОТА ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ ---
+bot.start(async (ctx) => {
+    const userId = ctx.from.id;
+    if (userId === ADMIN_ID) {
+        return ctx.reply('👋 Привет, Админ! Твоя панель управления доступна по кнопке ниже.', 
+            Markup.inlineKeyboard([[Markup.button.webApp('🖥 АДМИН-ПАНЕЛЬ', 'https://logist-x-server-production.up.railway.app/dashboard')]]));
+    }
+
+    // Здесь будет логика проверки chatId в keys_database.json
+    // Если пользователя нет в базе - предлагаем купить:
+    ctx.reply(`Добро пожаловать в Logist-X! 📦\n\nУ вас пока нет активной лицензии. Выберите действие:`, 
+        Markup.inlineKeyboard([
+            [Markup.button.callback('💳 Купить лицензию', 'buy_license')],
+            [Markup.button.callback('🔑 У меня есть ключ', 'have_key')]
+        ])
+    );
+});
+
+bot.action('buy_license', (ctx) => {
+    ctx.reply('Отлично! Наш менеджер свяжется с вами для оформления.');
+    bot.telegram.sendMessage(ADMIN_ID, `🔔 Заявка на покупку! Пользователь: @${ctx.from.username || 'скрыто'} (ID: ${ctx.from.id})`);
+});
+
+bot.action('have_key', (ctx) => {
+    ctx.reply('Пожалуйста, введите ваш 8-значный лицензионный ключ:');
+});
+
+// --- РАБОТА С ФАЙЛАМИ (ПАПКИ И ФОТО) ---
 async function getOrCreateFolder(name, parentId) {
     const q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
     const res = await drive.files.list({ q, fields: 'files(id)' });
@@ -33,50 +60,30 @@ async function getOrCreateFolder(name, parentId) {
     return file.data.id;
 }
 
-// --- ОТПРАВКА ФОТО (ДЛЯ ПРИЛОЖЕНИЯ) ---
 app.post('/upload', async (req, res) => {
     try {
         const { worker, city, address, entrance, client, image } = req.body;
-        console.log(`📸 Получено фото: ${address}, ${entrance}`);
-
         const rootDir = await getOrCreateFolder("Logist-X_Objects", MY_ROOT_ID);
-        const workerDir = await getOrCreateFolder(worker || "Unknown", rootDir);
-        const cityDir = await getOrCreateFolder(city || "NoCity", workerDir);
-        const dateDir = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityDir);
-        const clientDir = await getOrCreateFolder(client || "General", dateDir);
+        const workerDir = await getOrCreateFolder(worker, rootDir);
+        const cityDir = await getOrCreateFolder(city, workerDir);
+        const dateDir = await getOrCreateFolder(new Date().toLocaleDateString('ru-RU'), cityDir);
+        const clientDir = await getOrCreateFolder(client || "Общий", dateDir);
 
-        const fileName = `${address || 'NoAddr'} ${entrance || ''}`.trim() + ".jpg";
-        const buffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
+        const fileName = `${address} ${entrance}`.trim() + ".jpg";
+        const buffer = Buffer.from(image.split(',')[1], 'base64');
         const bs = new Readable(); bs.push(buffer); bs.push(null);
 
         await drive.files.create({
             resource: { name: fileName, parents: [clientDir] },
             media: { mimeType: 'image/jpeg', body: bs }
         });
-
         res.json({ success: true });
-    } catch (e) {
-        console.error("Ошибка загрузки:", e.message);
-        res.status(500).json({ success: false });
-    }
-});
-
-// --- ПРОВЕРКА ЛИЦЕНЗИИ ---
-app.get('/api/keys', async (req, res) => {
-    try {
-        const q = `name = '${DB_FILE_NAME}' and '${MY_ROOT_ID}' in parents and trashed = false`;
-        const list = await drive.files.list({ q });
-        if (list.data.files.length === 0) return res.json([]);
-        const content = await drive.files.get({ fileId: list.data.files[0].id, alt: 'media' });
-        res.json(content.data.keys || []);
-    } catch (e) { res.status(500).send(e.message); }
+    } catch (e) { res.status(500).json({ success: false }); }
 });
 
 // --- СТАРТ ---
-const PORT = process.env.PORT || 3000; // Railway сам подставит нужный порт
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ СЕРВЕР LOGIST-X ЗАПУЩЕН НА ПОРТУ ${PORT}`);
-    bot.telegram.deleteWebhook({ drop_pending_updates: true }).then(() => {
-        bot.launch().catch(err => console.log("Бот спит, но сервер работает"));
-    });
+    console.log(`✅ СЕРВЕР И БОТ LOGIST-X ЗАПУЩЕНЫ`);
+    bot.telegram.deleteWebhook({ drop_pending_updates: true }).then(() => bot.launch());
 });
