@@ -34,7 +34,7 @@ async function getOrCreateFolder(rawName, parentId) {
     try {
         const name = String(rawName).trim(); 
         const q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
-        const res = await drive.files.list({ q });
+        const res = await drive.files.list({ q, fields: 'files(id, trashed)' });
         if (res.data.files.length > 0) return res.data.files[0].id;
         const fileMetadata = { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] };
         const file = await drive.files.create({ resource: fileMetadata, fields: 'id' });
