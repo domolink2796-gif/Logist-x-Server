@@ -199,10 +199,7 @@ app.post('/merch-upload', async (req, res) => {
         }
         await appendMerchToReport(workerId, worker, net, address, stock, shelf, priceMy, priceComp, expDate, pdfUrl);
         res.json({ success: true, url: pdfUrl });
-    } catch (e) { 
-        console.error("MERCH ERROR:", e);
-        res.status(500).json({ success: false, error: e.message }); 
-    }
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
@@ -262,13 +259,14 @@ app.get('/dashboard', (req, res) => {
         function auth() { if(localStorage.getItem('admin_pass')===PASS){document.body.style.display='block';load();}else{let p=prompt('PASS:');if(p===PASS){localStorage.setItem('admin_pass',PASS);location.reload();}else{alert('STOP');}}}
         async function load(){ 
             const res = await fetch('/api/keys'); const keys = await res.json(); 
-            document.getElementById('keysList').innerHTML = keys.map(k => \`
-                <div class="key-item">
-                    <div class="key-title">\${k.key}</div>
-                    <div class="key-info">🏢 \${k.name} | 👥 \${k.workers?k.workers.length:0}/\${k.limit}</div>
-                    <div class="key-info">📅 До: \${new Date(k.expiry).toLocaleDateString()}</div>
-                    <button class="btn-ext" onclick="extendKey('\${k.key}')">ПРОДЛИТЬ +30 ДН.</button>
-                </div>\`).join(''); 
+            document.getElementById('keysList').innerHTML = keys.map(k => {
+                return '<div class="key-item">' +
+                    '<div class="key-title">' + k.key + '</div>' +
+                    '<div class="key-info">🏢 ' + k.name + ' | 👥 ' + (k.workers ? k.workers.length : 0) + '/' + k.limit + '</div>' +
+                    '<div class="key-info">📅 До: ' + new Date(k.expiry).toLocaleDateString() + '</div>' +
+                    '<button class="btn-ext" onclick="extendKey(\\'' + k.key + '\\')">ПРОДЛИТЬ +30 ДН.</button>' +
+                '</div>';
+            }).join(''); 
         }
         async function addKey(){ await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('newName').value,limit:document.getElementById('newLimit').value,days:document.getElementById('newDays').value})}); load(); }
         async function extendKey(key){ if(confirm('Продлить?')){ await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})}); load(); } }
@@ -298,16 +296,17 @@ app.get('/client-dashboard', (req, res) => {
             const res = await fetch(window.location.origin + '/api/client-keys?chatId=' + cid); 
             const keys = await res.json();
             if(!keys.length) { document.getElementById('content').innerHTML = '<div style="text-align:center; padding: 40px; color:#555;">Нет активных лицензий</div>'; return; }
-            document.getElementById('content').innerHTML = keys.map(k => \`
-                <div class="card">
-                    <small style="color:#58a6ff">ОБЪЕКТ:</small>
-                    <div style="font-size:1.3rem; font-weight:bold; margin-bottom:5px;">\${k.name}</div>
-                    <span class="key-code">\${k.key}</span>
-                    <div class="stat">👥 Мест занято: <b>\${k.workers?k.workers.length:0} / \${k.limit}</b></div>
-                    <div class="stat">⏳ Срок до: <b>\${new Date(k.expiry).toLocaleDateString()}</b></div>
-                    <div class="worker-box"><b>Сотрудники:</b><br>\${k.workers && k.workers.length ? k.workers.join(', ') : 'Места свободны'}</div>
-                    <button onclick="requestExtend('\${k.key}', '\${k.name}')" class="btn-pay">ПРОДЛИТЬ СРОК</button>
-                </div>\`).join('');
+            document.getElementById('content').innerHTML = keys.map(k => {
+                return '<div class="card">' +
+                    '<small style="color:#58a6ff">ОБЪЕКТ:</small>' +
+                    '<div style="font-size:1.3rem; font-weight:bold; margin-bottom:5px;">' + k.name + '</div>' +
+                    '<span class="key-code">' + k.key + '</span>' +
+                    '<div class="stat">👥 Мест занято: <b>' + (k.workers ? k.workers.length : 0) + ' / ' + k.limit + '</b></div>' +
+                    '<div class="stat">⏳ Срок до: <b>' + new Date(k.expiry).toLocaleDateString() + '</b></div>' +
+                    '<div class="worker-box"><b>Сотрудники:</b><br>' + (k.workers && k.workers.length ? k.workers.join(', ') : 'Места свободны') + '</div>' +
+                    '<button onclick="requestExtend(\\'' + k.key + '\\', \\'' + k.name + '\\')" class="btn-pay">ПРОДЛИТЬ СРОК</button>' +
+                '</div>';
+            }).join('');
         } catch(e) { document.getElementById('content').innerHTML = 'Ошибка сети'; } }
         async function requestExtend(key, name) {
             if(confirm('Отправить запрос на продление администратору?')){
@@ -338,8 +337,8 @@ bot.start(async (ctx) => {
 
 bot.action('buy_license', async (ctx) => {
     const from = ctx.from;
-    const userLabel = from.username ? \`@\${from.username}\` : \`\${from.first_name} (ID: \${from.id})\`;
-    await bot.telegram.sendMessage(MY_TELEGRAM_ID, \`🔥 **НОВЫЙ КЛИЕНТ!**\n\nКлиент: \${userLabel}\`, { parse_mode: 'Markdown' });
+    const userLabel = from.username ? `@${from.username}` : `${from.first_name} (ID: ${from.id})`;
+    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔥 **НОВЫЙ КЛИЕНТ!**\n\nКлиент: ${userLabel}`, { parse_mode: 'Markdown' });
     await ctx.answerCbQuery();
     await ctx.reply('✅ Запрос отправлен!', { reply_markup: { inline_keyboard: [[{ text: "💬 НАПИСАТЬ АДМИНУ", url: "https://t.me/G_E_S_S_E_N" }]] } });
 });
@@ -358,5 +357,5 @@ bot.on('text', async (ctx) => {
     } else { ctx.reply('Ключ не найден.'); }
 });
 
-bot.launch().then(() => console.log("SERVER GS: READY"));
+bot.launch().then(() => console.log("GS SERVER READY"));
 app.listen(process.env.PORT || 3000);
