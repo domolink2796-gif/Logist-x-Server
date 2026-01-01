@@ -73,7 +73,7 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- ФУНКЦИИ ОТЧЕТОВ ЛОГИСТИКИ (БЕЗ ИЗМЕНЕНИЙ) ---
+// --- ФУНКЦИИ ОТЧЕТОВ ЛОГИСТИКИ ---
 async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
         const reportName = `Отчет ${workerName}`;
@@ -108,7 +108,7 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
     } catch (e) { console.error("Report Error:", e); }
 }
 
-// --- НОВАЯ ФУНКЦИЯ ДЛЯ МЕРЧАНДАЙЗИНГА (СОХРАНЯЕМ В МЕРЧ-ТАБЛИЦУ) ---
+// --- НОВАЯ ФУНКЦИЯ ДЛЯ МЕРЧАНДАЙЗИНГА ---
 async function appendMerchToReport(workerId, workerName, net, address, stock, shelf, pdfUrl) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
@@ -153,7 +153,7 @@ app.post('/check-license', async (req, res) => {
     catch (e) { res.status(500).json({ status: 'error', message: e.message }); }
 });
 
-// СТАРЫЙ API ЛОГИСТИКИ (БЕЗ ИЗМЕНЕНИЙ, ПАПКА MY_ROOT_ID)
+// СТАРЫЙ API ЛОГИСТИКИ (БЕЗ ИЗМЕНЕНИЙ)
 app.post('/upload', async (req, res) => {
     try {
         const body = req.body;
@@ -181,7 +181,7 @@ app.post('/upload', async (req, res) => {
     } catch (e) { res.json({ status: 'error', message: e.message, success: false }); }
 });
 
-// НОВЫЙ API МЕРЧАНДАЙЗИНГА (СТРОГО В ПАПКУ MERCH_ROOT_ID)
+// НОВЫЙ API МЕРЧАНДАЙЗИНГА (ИСПРАВЛЕННЫЙ)
 app.post('/merch-upload', async (req, res) => {
     try {
         const { worker, net, address, stock, shelf, pdf, city } = req.body;
@@ -189,7 +189,6 @@ app.post('/merch-upload', async (req, res) => {
         const keyData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const ownerName = keyData ? keyData.name : "Мерч_Клиенты";
         
-        // Создаем структуру в отдельной папке MERCH_ROOT_ID
         const ownerId = await getOrCreateFolder(ownerName, MERCH_ROOT_ID);
         const workerId = await getOrCreateFolder(worker || "Мерчандайзер", ownerId);
         const cityId = await getOrCreateFolder(city || "Орёл", workerId);
@@ -201,8 +200,12 @@ app.post('/merch-upload', async (req, res) => {
 
         let pdfUrl = "Нет файла";
         if (pdf) {
-            const buffer = Buffer.from(pdf.replace(/^data:application\/pdf;base64,/, ""), 'base64');
-            const bufferStream = new Readable(); bufferStream.push(buffer); bufferStream.push(null);
+            // ИСПРАВЛЕНИЕ: Надежная очистка Base64 для PDF
+            const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
+            const buffer = Buffer.from(base64Data, 'base64');
+            const bufferStream = new Readable(); 
+            bufferStream.push(buffer); 
+            bufferStream.push(null);
             
             const cleanAddress = address.replace(/[/\\?%*:|"<>]/g, '-').trim();
             const fileName = `ОТЧЕТ_${cleanAddress}.pdf`;
@@ -210,8 +213,15 @@ app.post('/merch-upload', async (req, res) => {
             const file = await drive.files.create({ 
                 resource: { name: fileName, parents: [netFolderId] }, 
                 media: { mimeType: 'application/pdf', body: bufferStream }, 
-                fields: 'webViewLink' 
+                fields: 'id, webViewLink' 
             });
+
+            // Даем права на чтение всем, чтобы файл открывался по ссылке
+            await drive.permissions.create({
+                fileId: file.data.id,
+                resource: { role: 'reader', type: 'anyone' }
+            });
+
             pdfUrl = file.data.webViewLink;
         }
 
