@@ -12,6 +12,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // --- НАСТРОЙКИ ---
 const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A'; 
+const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; // ТВОЯ НОВАЯ ПАПКА МЕРЧА
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
@@ -107,7 +108,7 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
     } catch (e) { console.error("Report Error:", e); }
 }
 
-// --- НОВАЯ ФУНКЦИЯ ДЛЯ МЕРЧАНДАЙЗИНГА ---
+// --- НОВАЯ ФУНКЦИЯ ДЛЯ МЕРЧАНДАЙЗИНГА (СОХРАНЯЕМ В МЕРЧ-ТАБЛИЦУ) ---
 async function appendMerchToReport(workerId, workerName, net, address, stock, shelf, pdfUrl) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
@@ -180,29 +181,42 @@ app.post('/upload', async (req, res) => {
     } catch (e) { res.json({ status: 'error', message: e.message, success: false }); }
 });
 
-// НОВЫЙ API МЕРЧАНДАЙЗИНГА (ДЛЯ /merch)
+// НОВЫЙ API МЕРЧАНДАЙЗИНГА (НАСТРОЕН ПОД MERCH_ROOT_ID)
 app.post('/merch-upload', async (req, res) => {
     try {
-        const { worker, net, address, stock, shelf, pdf } = req.body;
+        const { worker, net, address, stock, shelf, pdf, city } = req.body;
         const keys = await readDatabase();
         const keyData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const ownerName = keyData ? keyData.name : "Мерч_Клиенты";
-        const ownerId = await getOrCreateFolder(ownerName, MY_ROOT_ID);
+        
+        // Создаем структуру в отдельной папке MERCH_ROOT_ID
+        const ownerId = await getOrCreateFolder(ownerName, MERCH_ROOT_ID);
         const workerId = await getOrCreateFolder(worker || "Мерчандайзер", ownerId);
-        const netFolderId = await getOrCreateFolder(net || "Общая сеть", workerId);
-        const shopFolderId = await getOrCreateFolder(address.split(',')[0], netFolderId); // Папка по названию улицы
+        const cityId = await getOrCreateFolder(city || "Орёл", workerId);
+        const todayStr = new Date().toISOString().split('T')[0]; 
+        const dateFolderId = await getOrCreateFolder(todayStr, cityId);
+        
+        const netFolderName = net && net.trim().length > 0 ? net.trim() : "Общая сеть";
+        const netFolderId = await getOrCreateFolder(netFolderName, dateFolderId);
 
         let pdfUrl = "Нет файла";
         if (pdf) {
             const buffer = Buffer.from(pdf.replace(/^data:application\/pdf;base64,/, ""), 'base64');
             const bufferStream = new Readable(); bufferStream.push(buffer); bufferStream.push(null);
-            const fileName = `ОТЧЕТ_${address}_${new Date().toISOString().split('T')[0]}.pdf`;
-            const file = await drive.files.create({ resource: { name: fileName, parents: [shopFolderId] }, media: { mimeType: 'application/pdf', body: bufferStream }, fields: 'webViewLink' });
+            
+            const cleanAddress = address.replace(/[/\\?%*:|"<>]/g, '-').trim();
+            const fileName = `ОТЧЕТ_${cleanAddress}.pdf`;
+            
+            const file = await drive.files.create({ 
+                resource: { name: fileName, parents: [netFolderId] }, 
+                media: { mimeType: 'application/pdf', body: bufferStream }, 
+                fields: 'webViewLink' 
+            });
             pdfUrl = file.data.webViewLink;
         }
 
         await appendMerchToReport(workerId, worker, net, address, stock, shelf, pdfUrl);
-        res.json({ success: true });
+        res.json({ success: true, url: pdfUrl });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
