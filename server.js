@@ -72,6 +72,7 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
+// --- ФУНКЦИИ ОТЧЕТОВ ЛОГИСТИКИ (БЕЗ ИЗМЕНЕНИЙ) ---
 async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
         const reportName = `Отчет ${workerName}`;
@@ -106,6 +107,30 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
     } catch (e) { console.error("Report Error:", e); }
 }
 
+// --- НОВАЯ ФУНКЦИЯ ДЛЯ МЕРЧАНДАЙЗИНГА ---
+async function appendMerchToReport(workerId, workerName, net, address, stock, shelf, pdfUrl) {
+    try {
+        const reportName = `Мерч_Аналитика_${workerName}`;
+        const q = `name = '${reportName}' and '${workerId}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`;
+        const res = await drive.files.list({ q });
+        let spreadsheetId;
+        if (res.data.files.length === 0) {
+            const createRes = await sheets.spreadsheets.create({ resource: { properties: { title: reportName } }, fields: 'spreadsheetId' });
+            spreadsheetId = createRes.data.spreadsheetId;
+            await drive.files.update({ fileId: spreadsheetId, addParents: workerId, removeParents: (await drive.files.get({ fileId: spreadsheetId, fields: 'parents' })).data.parents.join(',') });
+        } else { spreadsheetId = res.data.files[0].id; }
+
+        const timeNow = new Date().toLocaleString("ru-RU");
+        const sheetTitle = "ОТЧЕТЫ_МЕРЧ";
+        const meta = await sheets.spreadsheets.get({ spreadsheetId });
+        if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
+            await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА/ВРЕМЯ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'PDF ОТЧЕТ']] } });
+        }
+        await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[timeNow, net, address, stock, shelf, pdfUrl]] } });
+    } catch (e) { console.error("Merch Report Error:", e); }
+}
+
 async function handleLicenseCheck(body) {
     const { licenseKey, workerName } = body;
     const keys = await readDatabase();
@@ -127,6 +152,7 @@ app.post('/check-license', async (req, res) => {
     catch (e) { res.status(500).json({ status: 'error', message: e.message }); }
 });
 
+// СТАРЫЙ API ЛОГИСТИКИ (БЕЗ ИЗМЕНЕНИЙ)
 app.post('/upload', async (req, res) => {
     try {
         const body = req.body;
@@ -152,6 +178,32 @@ app.post('/upload', async (req, res) => {
         await appendToReport(workerId, worker, city, todayStr, safeAddress, entrance || "-", finalFolderName, workType || "Не указан", price || 0, lat, lon);
         res.json({ success: true });
     } catch (e) { res.json({ status: 'error', message: e.message, success: false }); }
+});
+
+// НОВЫЙ API МЕРЧАНДАЙЗИНГА (ДЛЯ /merch)
+app.post('/merch-upload', async (req, res) => {
+    try {
+        const { worker, net, address, stock, shelf, pdf } = req.body;
+        const keys = await readDatabase();
+        const keyData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
+        const ownerName = keyData ? keyData.name : "Мерч_Клиенты";
+        const ownerId = await getOrCreateFolder(ownerName, MY_ROOT_ID);
+        const workerId = await getOrCreateFolder(worker || "Мерчандайзер", ownerId);
+        const netFolderId = await getOrCreateFolder(net || "Общая сеть", workerId);
+        const shopFolderId = await getOrCreateFolder(address.split(',')[0], netFolderId); // Папка по названию улицы
+
+        let pdfUrl = "Нет файла";
+        if (pdf) {
+            const buffer = Buffer.from(pdf.replace(/^data:application\/pdf;base64,/, ""), 'base64');
+            const bufferStream = new Readable(); bufferStream.push(buffer); bufferStream.push(null);
+            const fileName = `ОТЧЕТ_${address}_${new Date().toISOString().split('T')[0]}.pdf`;
+            const file = await drive.files.create({ resource: { name: fileName, parents: [shopFolderId] }, media: { mimeType: 'application/pdf', body: bufferStream }, fields: 'webViewLink' });
+            pdfUrl = file.data.webViewLink;
+        }
+
+        await appendMerchToReport(workerId, worker, net, address, stock, shelf, pdfUrl);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
@@ -329,5 +381,5 @@ bot.on('text', async (ctx) => {
     } else { ctx.reply('Ключ не найден.'); }
 });
 
-bot.launch().then(() => console.log("GS SERVER READY"));
+bot.launch().then(() => console.log("GS SERVER READY WITH MERCH MODULE"));
 app.listen(process.env.PORT || 3000);
