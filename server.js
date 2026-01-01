@@ -12,7 +12,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // --- НАСТРОЙКИ ---
 const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A'; 
-const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; // ТВОЯ НОВАЯ ПАПКА МЕРЧА
+const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; // ПАПКА ДЛЯ МЕРЧА
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
@@ -153,7 +153,7 @@ app.post('/check-license', async (req, res) => {
     catch (e) { res.status(500).json({ status: 'error', message: e.message }); }
 });
 
-// СТАРЫЙ API ЛОГИСТИКИ (БЕЗ ИЗМЕНЕНИЙ)
+// СТАРЫЙ API ЛОГИСТИКИ (БЕЗ ИЗМЕНЕНИЙ, ПАПКА MY_ROOT_ID)
 app.post('/upload', async (req, res) => {
     try {
         const body = req.body;
@@ -181,7 +181,7 @@ app.post('/upload', async (req, res) => {
     } catch (e) { res.json({ status: 'error', message: e.message, success: false }); }
 });
 
-// НОВЫЙ API МЕРЧАНДАЙЗИНГА (НАСТРОЕН ПОД MERCH_ROOT_ID)
+// НОВЫЙ API МЕРЧАНДАЙЗИНГА (СТРОГО В ПАПКУ MERCH_ROOT_ID)
 app.post('/merch-upload', async (req, res) => {
     try {
         const { worker, net, address, stock, shelf, pdf, city } = req.body;
