@@ -175,6 +175,7 @@ app.post('/upload', async (req, res) => {
     } catch (e) { res.json({ status: 'error', message: e.message, success: false }); }
 });
 
+// ИСПРАВЛЕННЫЙ РОУТ МЕРЧА (PDF И ПРАВА ДОСТУПА)
 app.post('/merch-upload', async (req, res) => {
     try {
         const { worker, net, address, stock, shelf, priceMy, priceComp, expDate, pdf, city } = req.body;
@@ -192,14 +193,31 @@ app.post('/merch-upload', async (req, res) => {
         if (pdf) {
             const buffer = Buffer.from(pdf.replace(/^data:application\/pdf;base64,/, ""), 'base64');
             const bufferStream = new Readable(); bufferStream.push(buffer); bufferStream.push(null);
-            const fileName = `ОТЧЕТ_${address.replace(/[/\\?%*:|"<>]/g, '-').trim()}.pdf`;
-            const file = await drive.files.create({ resource: { name: fileName, parents: [netFolderId] }, media: { mimeType: 'application/pdf', body: bufferStream }, fields: 'id, webViewLink' });
-            await drive.permissions.create({ fileId: file.data.id, resource: { role: 'reader', type: 'anyone' } });
+            
+            // Очистка имени от спецсимволов для корректного PDF расширения
+            const safeAddress = address.replace(/[/\\?%*:|"<>]/g, '-').trim();
+            const fileName = `ОТЧЕТ_${safeAddress}.pdf`;
+            
+            const file = await drive.files.create({ 
+                resource: { name: fileName, parents: [netFolderId] }, 
+                media: { mimeType: 'application/pdf', body: bufferStream }, 
+                fields: 'id, webViewLink' 
+            });
+
+            // ПРИНУДИТЕЛЬНОЕ ОТКРЫТИЕ ДОСТУПА ДЛЯ КЛИЕНТА (ПО ССЫЛКЕ)
+            await drive.permissions.create({
+                fileId: file.data.id,
+                requestBody: { role: 'reader', type: 'anyone' }
+            });
+
             pdfUrl = file.data.webViewLink;
         }
         await appendMerchToReport(workerId, worker, net, address, stock, shelf, priceMy, priceComp, expDate, pdfUrl);
         res.json({ success: true, url: pdfUrl });
-    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    } catch (e) { 
+        console.error("Ошибка PDF:", e.message);
+        res.status(500).json({ success: false, error: e.message }); 
+    }
 });
 
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
@@ -355,5 +373,5 @@ bot.on('text', async (ctx) => {
     } else { ctx.reply('Ключ не найден.'); }
 });
 
-bot.launch().then(() => console.log("GS SERVER READY"));
+bot.launch().then(() => console.log("GS SERVER READY WITH PDF FIX"));
 app.listen(process.env.PORT || 3000);
