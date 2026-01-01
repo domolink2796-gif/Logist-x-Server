@@ -8,20 +8,19 @@ const { Readable } = require('stream');
 const app = express();
 app.use(cors());
 
-// Устанавливаем высокие лимиты для "сочных" HD отчетов
+// Лимиты для тяжелых PDF и данных логистики
 app.use(bodyParser.json({ limit: '150mb' }));
 app.use(bodyParser.urlencoded({ limit: '150mb', extended: true }));
 
-// --- НАСТРОЙКИ ---
+// --- НАСТРОЙКИ (ТВОИ ОРИГИНАЛЬНЫЕ ID) ---
 const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A'; 
 const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; 
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
-const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
 
-// Auth
+// Auth Google
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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'
@@ -32,11 +31,11 @@ const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- СИСТЕМНЫЕ ФУНКЦИИ ---
+// --- СИСТЕМНЫЕ ФУНКЦИИ (ЛОГИСТИКА + БАЗА) ---
 async function getOrCreateFolder(rawName, parentId) {
     try {
         const name = String(rawName).trim(); 
-        const q = `name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
+        const q = `name = '${name.replace(/'/g, "\\")}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
         const res = await drive.files.list({ q, fields: 'files(id)' });
         if (res.data.files.length > 0) return res.data.files[0].id;
         const fileMetadata = { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] };
@@ -68,7 +67,7 @@ async function saveDatabase(keys) {
     else { await drive.files.create({ resource: { name: DB_FILE_NAME, parents: [MY_ROOT_ID] }, media: media }); }
 }
 
-// --- ОТЧЕТНОСТЬ МЕРЧ (УЛУЧШЕННАЯ ТАБЛИЦА) ---
+// --- ОТЧЕТНОСТЬ МЕРЧ (АНАЛИТИКА) ---
 async function appendMerchToReport(workerId, workerName, net, address, stock, shelf, priceMy, priceComp, expDate, pdfUrl) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
@@ -86,70 +85,19 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, sh
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            // Добавляем новые колонки: Цены и Срок годности
             await sheets.spreadsheets.values.update({ 
-                spreadsheetId, 
-                range: `${sheetTitle}!A1`, 
-                valueInputOption: 'USER_ENTERED', 
-                resource: { values: [['ДАТА/ВРЕМЯ', 'СЕТЬ', 'АДРЕС (ФАЙЛ)', 'ОСТАТОК', 'ФЕЙСИНГ', 'ЦЕНА (МЫ)', 'ЦЕНА (КОНК)', 'СРОК ГОДНОСТИ', 'PDF ОТЧЕТ']] } 
+                spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', 
+                resource: { values: [['ДАТА', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ЦЕНА_МЫ', 'ЦЕНА_КОНК', 'СРОК', 'PDF']] } 
             });
         }
         await sheets.spreadsheets.values.append({ 
-            spreadsheetId, 
-            range: `${sheetTitle}!A1`, 
-            valueInputOption: 'USER_ENTERED', 
+            spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', 
             resource: { values: [[timeNow, net, address, stock, shelf, priceMy, priceComp, expDate, pdfUrl]] } 
         });
     } catch (e) { console.error("Sheet Error:", e); }
 }
 
-// === API ДЛЯ МЕРЧА ===
-app.post('/merch-upload', async (req, res) => {
-    try {
-        const { worker, net, address, stock, shelf, priceMy, priceComp, expDate, pdf, city } = req.body;
-        
-        const keys = await readDatabase();
-        const keyData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
-        const ownerName = keyData ? keyData.name : "ОБЩАЯ_ПАПКА";
-
-        const ownerId = await getOrCreateFolder(ownerName, MERCH_ROOT_ID);
-        const workerId = await getOrCreateFolder(worker || "Без_имени", ownerId);
-        const cityId = await getOrCreateFolder(city || "Орёл", workerId);
-        
-        const today = new Date().toISOString().split('T')[0];
-        const dateId = await getOrCreateFolder(today, cityId);
-
-        let pdfUrl = "Файл не загружен";
-
-        if (pdf) {
-            const base64Data = pdf.split(',')[1] || pdf;
-            const buffer = Buffer.from(base64Data, 'base64');
-            const bufferStream = new Readable(); bufferStream.push(buffer); bufferStream.push(null);
-            
-            // Название по твоей просьбе: Сеть_Улица_Дом_Имя
-            const fileName = `ОТЧЕТ_${address}.pdf`.replace(/[/\\?%*:|"<>]/g, '-');
-
-            const driveRes = await drive.files.create({
-                resource: { name: fileName, parents: [dateId] },
-                media: { mimeType: 'application/pdf', body: bufferStream },
-                fields: 'id, webViewLink'
-            });
-
-            await drive.permissions.create({ fileId: driveRes.data.id, resource: { role: 'reader', type: 'anyone' } });
-            pdfUrl = driveRes.data.webViewLink;
-        }
-
-        // Пишем в таблицу расширенный набор данных
-        await appendMerchToReport(workerId, worker, net, address, stock, shelf, priceMy || 0, priceComp || 0, expDate || "-", pdfUrl);
-
-        res.json({ success: true, url: pdfUrl });
-    } catch (e) {
-        console.error("UPLOAD ERROR:", e);
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
-// --- ЛИЦЕНЗИИ ---
+// === API РОУТЫ (ЛОГИСТИКА И ЛИЦЕНЗИИ) ===
 app.post('/check-license', async (req, res) => {
     const { licenseKey, workerName } = req.body;
     const keys = await readDatabase();
@@ -165,6 +113,41 @@ app.post('/check-license', async (req, res) => {
 });
 
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
-app.get('/', (req, res) => res.send("LOGIST_X HD SERVER ACTIVE"));
 
-app.listen(process.env.PORT || 3000, () => console.log("SERVER RUNNING ON PORT 3000"));
+// === API РОУТ МЕРЧАНДАЙЗИНГ ===
+app.post('/merch-upload', async (req, res) => {
+    try {
+        const { worker, net, address, stock, shelf, priceMy, priceComp, expDate, pdf, city } = req.body;
+        const keys = await readDatabase();
+        const keyData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
+        const ownerName = keyData ? keyData.name : "ОБЩАЯ_ПАПКА";
+
+        const ownerId = await getOrCreateFolder(ownerName, MERCH_ROOT_ID);
+        const workerId = await getOrCreateFolder(worker || "Без_имени", ownerId);
+        const cityId = await getOrCreateFolder(city || "Орёл", workerId);
+        const today = new Date().toISOString().split('T')[0];
+        const dateId = await getOrCreateFolder(today, cityId);
+
+        let pdfUrl = "Файл не загружен";
+        if (pdf) {
+            const buffer = Buffer.from(pdf.split(',')[1], 'base64');
+            const bufferStream = new Readable(); bufferStream.push(buffer); bufferStream.push(null);
+            const fileName = `ОТЧЕТ_${address}.pdf`.replace(/[/\\?%*:|"<>]/g, '-');
+            const driveRes = await drive.files.create({
+                resource: { name: fileName, parents: [dateId] },
+                media: { mimeType: 'application/pdf', body: bufferStream },
+                fields: 'id, webViewLink'
+            });
+            await drive.permissions.create({ fileId: driveRes.data.id, resource: { role: 'reader', type: 'anyone' } });
+            pdfUrl = driveRes.data.webViewLink;
+        }
+
+        await appendMerchToReport(workerId, worker, net, address, stock, shelf, priceMy, priceComp, expDate, pdfUrl);
+        res.json({ success: true, url: pdfUrl });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.get('/', (req, res) => res.send("LOGIST_X MULTI-SERVER ACTIVE"));
+app.listen(process.env.PORT || 3000);
