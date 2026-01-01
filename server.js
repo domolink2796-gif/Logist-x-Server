@@ -1,4 +1,4 @@
-const express = require('express');
+Const express = require('express');
 const { google } = require('googleapis');
 const { Telegraf } = require('telegraf');
 const bodyParser = require('body-parser');
@@ -202,7 +202,6 @@ app.post('/merch-upload', async (req, res) => {
     try {
         const { worker, net, address, stock, shelf, priceMy, priceComp, expDate, pdf, city, startTime, endTime, lat, lon, targetLat, targetLon } = req.body;
 
-        // GPS Проверка (Геозабор) - только если в плане есть координаты
         if (lat && lon && targetLat && targetLon) {
             const dist = getDistance(lat, lon, targetLat, targetLon);
             if (dist > MAX_DISTANCE_METERS) {
@@ -239,9 +238,21 @@ app.post('/merch-upload', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// --- АДМИНКА И БОТ ---
+// --- АДМИНКА ---
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
-app.get('/dashboard', (req, res) => { res.send(``); });
+app.get('/dashboard', (req, res) => {
+    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>ADMIN</title>
+    <style>body{background:#000;color:#fff;font-family:sans-serif;padding:20px;}.card{background:#111;padding:20px;border-radius:10px;border:1px solid #333;}</style>
+    </head><body><div class="card"><h3>LOGIST_X ПАНЕЛЬ</h3><div id="list">Загрузка...</div></div>
+    <script>async function load(){ const r=await fetch('/api/keys'); const d=await r.json(); document.getElementById('list').innerHTML=d.map(k=>'<div>'+k.name+': '+k.key+'</div>').join(''); } load();</script>
+    </body></html>`);
+});
+
+bot.on('text', async (ctx) => {
+    if (ctx.chat.id === MY_TELEGRAM_ID && ctx.message.text === '/start') {
+        return ctx.reply('👑 АДМИН-ПАНЕЛЬ', { reply_markup: { inline_keyboard: [[{ text: "ОТКРЫТЬ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
+    }
+});
 
 bot.launch().then(() => console.log("LOGIST_X SERVER ONLINE"));
 app.listen(process.env.PORT || 3000);
