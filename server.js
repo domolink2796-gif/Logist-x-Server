@@ -7,11 +7,11 @@ const { Readable } = require('stream');
 
 const app = express();
 app.use(cors());
-// Увеличиваем лимит для HD-отчетов (150МБ)
+// Лимит 150МБ для HD фото и PDF мерчандайзинга
 app.use(bodyParser.json({ limit: '150mb' }));
 app.use(bodyParser.urlencoded({ limit: '150mb', extended: true }));
 
-// --- НАСТРОЙКИ ---
+// --- НАСТРОЙКИ (ТВОИ ДАННЫЕ) ---
 const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A'; 
 const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; 
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
@@ -20,7 +20,7 @@ const ADMIN_PASS = 'Logist_X_ADMIN';
 const MY_TELEGRAM_ID = 6846149935; 
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
 
-// Auth
+// Auth Google
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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'
@@ -31,12 +31,12 @@ const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- БАЗОВЫЕ ФУНКЦИИ ---
+// --- СИСТЕМНЫЕ ФУНКЦИИ ---
 async function getOrCreateFolder(rawName, parentId) {
     try {
         const name = String(rawName).trim(); 
         const q = `name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
-        const res = await drive.files.list({ q, fields: 'files(id, trashed)' });
+        const res = await drive.files.list({ q, fields: 'files(id)' });
         if (res.data.files.length > 0) return res.data.files[0].id;
         const fileMetadata = { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] };
         const file = await drive.files.create({ resource: fileMetadata, fields: 'id' });
@@ -78,13 +78,13 @@ async function saveDatabase(keys) {
 async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
         const reportName = `Отчет ${workerName}`;
-        const q = `name = '${reportName}' and '${workerId}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`;
+        const q = `name = '${reportName}' and '${workerId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         let spreadsheetId;
         if (res.data.files.length === 0) {
-            const createRes = await sheets.spreadsheets.create({ resource: { properties: { title: reportName } }, fields: 'spreadsheetId' });
+            const createRes = await sheets.spreadsheets.create({ resource: { properties: { title: reportName } } });
             spreadsheetId = createRes.data.spreadsheetId;
-            await drive.files.update({ fileId: spreadsheetId, addParents: workerId, removeParents: (await drive.files.get({ fileId: spreadsheetId, fields: 'parents' })).data.parents.join(',') });
+            await drive.files.update({ fileId: spreadsheetId, addParents: workerId, removeParents: 'root' });
         } else { spreadsheetId = res.data.files[0].id; }
         const sheetTitle = `${city}_${dateStr}`;
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
@@ -95,27 +95,26 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
                 resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS', 'ФОТО']] }
             });
         }
-        let gpsValue = "Нет GPS";
-        if (lat && lon) { gpsValue = `=HYPERLINK("http://maps.google.com/maps?q=${lat},${lon}"; "СМОТРЕТЬ")`; }
+        const gpsValue = (lat && lon) ? `=HYPERLINK("https://www.google.com/maps?q=${lat},${lon}"; "КАРТА")` : "Нет GPS";
         const timeNow = new Date().toLocaleTimeString("ru-RU");
         await sheets.spreadsheets.values.append({
             spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED',
             resource: { values: [[timeNow, address, entrance, client, workType, price, gpsValue, "ЗАГРУЖЕНО"]] }
         });
-    } catch (e) { console.error("Report Error:", e); }
+    } catch (e) { console.error("Logist Report Error:", e); }
 }
 
-// --- ОТЧЕТЫ МЕРЧА (ОБНОВЛЕНО ПОД ФОТО ДО/ПОСЛЕ/ЦЕННИК) ---
+// --- ОТЧЕТЫ МЕРЧА ---
 async function appendMerchToReport(workerId, workerName, net, address, stock, shelf, pMy, pComp, pExp, pdfUrl) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
-        const q = `name = '${reportName}' and '${workerId}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`;
+        const q = `name = '${reportName}' and '${workerId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         let spreadsheetId;
         if (res.data.files.length === 0) {
-            const createRes = await sheets.spreadsheets.create({ resource: { properties: { title: reportName } }, fields: 'spreadsheetId' });
+            const createRes = await sheets.spreadsheets.create({ resource: { properties: { title: reportName } } });
             spreadsheetId = createRes.data.spreadsheetId;
-            await drive.files.update({ fileId: spreadsheetId, addParents: workerId, removeParents: (await drive.files.get({ fileId: spreadsheetId, fields: 'parents' })).data.parents.join(',') });
+            await drive.files.update({ fileId: spreadsheetId, addParents: workerId, removeParents: 'root' });
         } else { spreadsheetId = res.data.files[0].id; }
 
         const timeNow = new Date().toLocaleString("ru-RU");
@@ -124,11 +123,11 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, sh
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', 
-                resource: { values: [['ДАТА/ВРЕМЯ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ЦЕНА (МЫ)', 'ЦЕНА (КОНК)', 'СРОК', 'PDF ОТЧЕТ']] } 
+                resource: { values: [['ДАТА/ВРЕМЯ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ЦЕНА(МЫ)', 'ЦЕНА(КОНК)', 'СРОК', 'PDF']] } 
             });
         }
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', 
-            resource: { values: [[timeNow, net, address, stock, shelf, pMy || 0, pComp || 0, pExp || "-", pdfUrl]] } 
+            resource: { values: [[timeNow, net, address, stock, shelf, pMy, pComp, pExp, pdfUrl]] } 
         });
     } catch (e) { console.error("Merch Report Error:", e); }
 }
@@ -148,7 +147,7 @@ async function handleLicenseCheck(body) {
     return { status: 'active', expiry: keyData.expiry };
 }
 
-// === API ===
+// === API РОУТЫ ===
 
 app.post('/check-license', async (req, res) => {
     try { res.json(await handleLicenseCheck(req.body)); } 
@@ -168,12 +167,13 @@ app.post('/upload', async (req, res) => {
         const cityId = await getOrCreateFolder(city || "Город", workerId);
         const todayStr = new Date().toISOString().split('T')[0]; 
         const dateFolderId = await getOrCreateFolder(todayStr, cityId);
-        let finalFolderName = client && client.trim().length > 0 ? client.trim() : "Общий";
+        let finalFolderName = (client && client.trim()) ? client.trim() : "Общий";
         const finalFolderId = await getOrCreateFolder(finalFolderName, dateFolderId);
-        const fileName = `${address || "Без адреса"} ${entrance || ""}.jpg`.trim();
+        
         if (image) {
             const buffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
             const bufferStream = new Readable(); bufferStream.push(buffer); bufferStream.push(null);
+            const fileName = `${address || "Без адреса"} ${entrance || ""}.jpg`.trim();
             await drive.files.create({ resource: { name: fileName, parents: [finalFolderId] }, media: { mimeType: 'image/jpeg', body: bufferStream } });
         }
         await appendToReport(workerId, worker, city, todayStr, address, entrance, finalFolderName, workType, price, lat, lon);
@@ -193,37 +193,33 @@ app.post('/merch-upload', async (req, res) => {
         const cityId = await getOrCreateFolder(city || "Орёл", workerId);
         const todayStr = new Date().toISOString().split('T')[0]; 
         const dateFolderId = await getOrCreateFolder(todayStr, cityId);
-        const netFolderId = await getOrCreateFolder(net || "Общая сеть", dateFolderId);
+        const netFolderId = await getOrCreateFolder(net || "Сеть", dateFolderId);
 
         let pdfUrl = "Нет файла";
         if (pdf) {
             const buffer = Buffer.from(pdf.replace(/^data:application\/pdf;base64,/, ""), 'base64');
             const bufferStream = new Readable(); bufferStream.push(buffer); bufferStream.push(null);
             const fileName = `ОТЧЕТ_${address.replace(/[/\\?%*:|"<>]/g, '-')}.pdf`;
-            const file = await drive.files.create({ 
-                resource: { name: fileName, parents: [netFolderId] }, 
-                media: { mimeType: 'application/pdf', body: bufferStream }, 
-                fields: 'id, webViewLink' 
-            });
+            const file = await drive.files.create({ resource: { name: fileName, parents: [netFolderId] }, media: { mimeType: 'application/pdf', body: bufferStream }, fields: 'id, webViewLink' });
             await drive.permissions.create({ fileId: file.data.id, resource: { role: 'reader', type: 'anyone' } });
             pdfUrl = file.data.webViewLink;
         }
-
         await appendMerchToReport(workerId, worker, net, address, stock, shelf, priceMy, priceComp, expDate, pdfUrl);
         res.json({ success: true, url: pdfUrl });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// --- ОСТАЛЬНЫЕ РОУТЫ (DASHBOARD / KEYS) ---
+// --- API КЛЮЧЕЙ ---
 app.get('/api/keys', async (req, res) => res.json(await readDatabase()));
 app.get('/api/client-keys', async (req, res) => {
-    try { const keys = await readDatabase(); res.json(keys.filter(k => String(k.ownerChatId) === String(req.query.chatId))); } catch (e) { res.json([]); }
+    const keys = await readDatabase();
+    res.json(keys.filter(k => String(k.ownerChatId) === String(req.query.chatId)));
 });
 app.post('/api/keys/add', async (req, res) => {
     const { name, limit, days } = req.body; let keys = await readDatabase();
-    const newKey = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
-    const expiry = new Date(); expiry.setDate(expiry.getDate() + parseInt(days));
-    keys.push({ key: newKey, name, limit, expiry: expiry.toISOString(), workers: [], ownerChatId: null });
+    const newK = Math.random().toString(36).substring(2,7).toUpperCase() + "-" + Math.random().toString(36).substring(2,7).toUpperCase();
+    const exp = new Date(); exp.setDate(exp.getDate() + parseInt(days));
+    keys.push({ key: newK, name, limit, expiry: exp.toISOString(), workers: [], ownerChatId: null });
     await saveDatabase(keys); res.json({ success: true });
 });
 app.post('/api/keys/extend', async (req, res) => {
@@ -235,48 +231,83 @@ app.post('/api/notify-admin', async (req, res) => {
     res.json({ success: true });
 });
 
-// --- DASHBOARD (HTML) ---
-app.get('/dashboard', (req, res) => { res.send(``); });
-app.get('/client-dashboard', (req, res) => { res.send(``); });
+// --- ИНТЕРФЕЙСЫ (HTML) ---
+app.get('/dashboard', (req, res) => {
+    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>ADMIN</title><style>
+        body { background: #0a0c10; color: #fff; font-family: sans-serif; padding: 20px; display:none; }
+        .card { background: #161b22; border: 1px solid #30363d; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        input, select, button { width: 100%; padding: 10px; margin: 5px 0; border-radius: 5px; border: 1px solid #30363d; background: #0d1117; color: #fff; }
+        button { background: #f0ad4e; color: #000; font-weight: bold; cursor: pointer; }
+        .key-item { border-bottom: 1px solid #30363d; padding: 10px 0; }
+    </style></head><body>
+        <div class="card"><h3>НОВЫЙ КЛЮЧ</h3>
+            <input id="n" placeholder="Объект"><input type="number" id="l" value="5">
+            <select id="d"><option value="30">30 дней</option><option value="365">1 год</option></select>
+            <button onclick="add()">СОЗДАТЬ</button>
+        </div>
+        <div id="list"></div>
+    <script>
+        const PASS = "${ADMIN_PASS}";
+        if(localStorage.getItem('p')===PASS){ document.body.style.display='block'; load(); }
+        else { let p=prompt('PASS:'); if(p===PASS){localStorage.setItem('p',PASS); location.reload();} }
+        async function load(){
+            const r = await fetch('/api/keys'); const data = await r.json();
+            document.getElementById('list').innerHTML = data.map(k => \`
+                <div class="key-item"><b>\${k.key}</b> | \${k.name} (\${k.workers.length}/\${k.limit})<br>
+                <small>До: \${new Date(k.expiry).toLocaleDateString()}</small>
+                <button style="width:auto; padding:5px; font-size:10px;" onclick="ext('\${k.key}')"> +30 дн.</button></div>\`).join('');
+        }
+        async function add(){ await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:document.getElementById('d').value})}); load(); }
+        async function ext(key){ await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})}); load(); }
+    </script></body></html>`);
+});
 
-// --- БОТ ---
+app.get('/client-dashboard', (req, res) => {
+    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>CABINET</title><style>
+        body { background: #0a0c10; color: #fff; font-family: sans-serif; padding: 15px; }
+        .card { background: #161b22; border-radius: 12px; padding: 15px; margin-bottom: 15px; border: 1px solid #30363d; }
+        .btn { background: #f0ad4e; color: #000; padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; cursor: pointer; }
+    </style></head><body>
+        <h3>МОИ ОБЪЕКТЫ</h3><div id="c"></div>
+    <script>
+        async function load(){
+            const cid = new URLSearchParams(window.location.search).get('chatId');
+            const r = await fetch('/api/client-keys?chatId=' + cid); const data = await r.json();
+            document.getElementById('c').innerHTML = data.map(k => \`
+                <div class="card"><b>\${k.name}</b><br><small>Ключ: \${k.key}</small><br>
+                Мест: \${k.workers.length}/\${k.limit}<br>До: \${new Date(k.expiry).toLocaleDateString()}<br><br>
+                <div class="btn" onclick="req('\${k.key}','\${k.name}')">ПРОДЛИТЬ</div></div>\`).join('');
+        }
+        async function req(key,name){ await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name})}); alert('Запрос отправлен'); }
+        load();
+    </script></body></html>`);
+});
+
+// --- ТЕЛЕГРАМ БОТ ---
 bot.start(async (ctx) => {
-    const chatId = ctx.chat.id;
-    if (chatId === MY_TELEGRAM_ID) {
-        return ctx.reply('👑 ПАНЕЛЬ УПРАВЛЕНИЯ', { reply_markup: { inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ КЛЮЧАМИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
+    const cid = ctx.chat.id;
+    if (cid === MY_TELEGRAM_ID) {
+        return ctx.reply('👑 АДМИН-ПАНЕЛЬ', { reply_markup: { inline_keyboard: [[{ text: "🔑 УПРАВЛЕНИЕ КЛЮЧАМИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
     }
     const keys = await readDatabase();
-    const clientKey = keys.find(k => String(k.ownerChatId) === String(chatId));
-    if (clientKey) {
-        return ctx.reply('🏢 ВАШ КАБИНЕТ ОБЪЕКТОВ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + chatId } }]] } });
+    const myK = keys.find(k => String(k.ownerChatId) === String(cid));
+    if (myK) {
+        return ctx.reply('🏢 ВАШ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ОБЪЕКТЫ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
     }
-    ctx.reply('👋 Привет! У вас пока нет активной лицензии Logist X.', {
-        reply_markup: { inline_keyboard: [[{ text: "💳 ОФОРМИТЬ ЛИЦЕНЗИЮ", callback_data: "buy_license" }], [{ text: "🔑 У МЕНЯ ЕСТЬ КЛЮЧ", callback_data: "have_key" }]] }
-    });
+    ctx.reply('Привет! Для доступа введите лицензионный ключ:');
 });
-
-bot.action('buy_license', async (ctx) => {
-    const from = ctx.from;
-    const userLabel = from.username ? `@${from.username}` : `${from.first_name} (ID: ${from.id})`;
-    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔥 **НОВЫЙ КЛИЕНТ!**\n\nКлиент: ${userLabel}`, { parse_mode: 'Markdown' });
-    await ctx.answerCbQuery();
-    await ctx.reply('✅ Запрос отправлен! Мы свяжемся с вами.', { reply_markup: { inline_keyboard: [[{ text: "💬 НАПИСАТЬ АДМИНУ", url: "https://t.me/G_E_S_S_E_N" }]] } });
-});
-
-bot.action('have_key', async (ctx) => { await ctx.answerCbQuery(); await ctx.reply('Введите ваш КЛЮЧ:'); });
 
 bot.on('text', async (ctx) => {
     if (ctx.chat.id === MY_TELEGRAM_ID) return;
-    const key = ctx.message.text.trim(); if (key.length < 5) return; 
+    const txt = ctx.message.text.trim(); if (txt.length < 5) return;
     const keys = await readDatabase();
-    const idx = keys.findIndex(k => k.key === key);
+    const idx = keys.findIndex(k => k.key === txt);
     if (idx !== -1) {
-        if (keys[idx].ownerChatId) return ctx.reply('Ключ уже привязан.');
-        keys[idx].ownerChatId = ctx.chat.id;
-        await saveDatabase(keys);
-        ctx.reply('✅ ДОСТУП АКТИВИРОВАН!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
+        if (keys[idx].ownerChatId) return ctx.reply('Ключ уже занят.');
+        keys[idx].ownerChatId = ctx.chat.id; await saveDatabase(keys);
+        ctx.reply('✅ ДОСТУП ОТКРЫТ!', { reply_markup: { inline_keyboard: [[{ text: "📊 ВОЙТИ В КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
     } else { ctx.reply('Ключ не найден.'); }
 });
 
-bot.launch().then(() => console.log("GS SERVER READY"));
+bot.launch().then(() => console.log("SERVER ONLINE"));
 app.listen(process.env.PORT || 3000);
