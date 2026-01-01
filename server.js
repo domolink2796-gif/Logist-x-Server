@@ -7,9 +7,10 @@ const { Readable } = require('stream');
 
 const app = express();
 app.use(cors());
-// Увеличиваем лимит, чтобы PDF с фото проходили без ошибок
-app.use(bodyParser.json({ limit: '100mb' }));
-app.use(bodyParser.urlencoded({ limit: '100mb', extended: true }));
+
+// Устанавливаем высокие лимиты для "сочных" HD отчетов
+app.use(bodyParser.json({ limit: '150mb' }));
+app.use(bodyParser.urlencoded({ limit: '150mb', extended: true }));
 
 // --- НАСТРОЙКИ ---
 const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A'; 
@@ -35,7 +36,7 @@ const bot = new Telegraf(BOT_TOKEN);
 async function getOrCreateFolder(rawName, parentId) {
     try {
         const name = String(rawName).trim(); 
-        const q = `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
+        const q = `name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
         const res = await drive.files.list({ q, fields: 'files(id)' });
         if (res.data.files.length > 0) return res.data.files[0].id;
         const fileMetadata = { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] };
@@ -67,8 +68,8 @@ async function saveDatabase(keys) {
     else { await drive.files.create({ resource: { name: DB_FILE_NAME, parents: [MY_ROOT_ID] }, media: media }); }
 }
 
-// --- ОТЧЕТНОСТЬ МЕРЧ ---
-async function appendMerchToReport(workerId, workerName, net, address, stock, shelf, pdfUrl) {
+// --- ОТЧЕТНОСТЬ МЕРЧ (УЛУЧШЕННАЯ ТАБЛИЦА) ---
+async function appendMerchToReport(workerId, workerName, net, address, stock, shelf, priceMy, priceComp, expDate, pdfUrl) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
         const q = `name = '${reportName}' and '${workerId}' in parents and trashed = false`;
@@ -81,27 +82,36 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, sh
         } else { spreadsheetId = res.data.files[0].id; }
 
         const timeNow = new Date().toLocaleString("ru-RU");
-        const sheetTitle = "ОТЧЕТЫ";
+        const sheetTitle = "ОТЧЕТЫ_МЕРЧ";
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА/ВРЕМЯ', 'СЕТЬ', 'АДРЕС (ФАЙЛ)', 'ОСТАТОК', 'ФЕЙСИНГ', 'PDF ССЫЛКА']] } });
+            // Добавляем новые колонки: Цены и Срок годности
+            await sheets.spreadsheets.values.update({ 
+                spreadsheetId, 
+                range: `${sheetTitle}!A1`, 
+                valueInputOption: 'USER_ENTERED', 
+                resource: { values: [['ДАТА/ВРЕМЯ', 'СЕТЬ', 'АДРЕС (ФАЙЛ)', 'ОСТАТОК', 'ФЕЙСИНГ', 'ЦЕНА (МЫ)', 'ЦЕНА (КОНК)', 'СРОК ГОДНОСТИ', 'PDF ОТЧЕТ']] } 
+            });
         }
-        await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[timeNow, net, address, stock, shelf, pdfUrl]] } });
+        await sheets.spreadsheets.values.append({ 
+            spreadsheetId, 
+            range: `${sheetTitle}!A1`, 
+            valueInputOption: 'USER_ENTERED', 
+            resource: { values: [[timeNow, net, address, stock, shelf, priceMy, priceComp, expDate, pdfUrl]] } 
+        });
     } catch (e) { console.error("Sheet Error:", e); }
 }
 
 // === API ДЛЯ МЕРЧА ===
 app.post('/merch-upload', async (req, res) => {
     try {
-        const { worker, net, address, stock, shelf, pdf, city } = req.body;
+        const { worker, net, address, stock, shelf, priceMy, priceComp, expDate, pdf, city } = req.body;
         
-        // 1. Ищем владельца ключа
         const keys = await readDatabase();
         const keyData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const ownerName = keyData ? keyData.name : "ОБЩАЯ_ПАПКА";
 
-        // 2. Создаем структуру папок
         const ownerId = await getOrCreateFolder(ownerName, MERCH_ROOT_ID);
         const workerId = await getOrCreateFolder(worker || "Без_имени", ownerId);
         const cityId = await getOrCreateFolder(city || "Орёл", workerId);
@@ -111,13 +121,12 @@ app.post('/merch-upload', async (req, res) => {
 
         let pdfUrl = "Файл не загружен";
 
-        // 3. Сохраняем PDF
         if (pdf) {
             const base64Data = pdf.split(',')[1] || pdf;
             const buffer = Buffer.from(base64Data, 'base64');
             const bufferStream = new Readable(); bufferStream.push(buffer); bufferStream.push(null);
             
-            // Название файла: Сеть_Улица_Дом_Имя (address уже приходит готовым из приложения)
+            // Название по твоей просьбе: Сеть_Улица_Дом_Имя
             const fileName = `ОТЧЕТ_${address}.pdf`.replace(/[/\\?%*:|"<>]/g, '-');
 
             const driveRes = await drive.files.create({
@@ -126,16 +135,12 @@ app.post('/merch-upload', async (req, res) => {
                 fields: 'id, webViewLink'
             });
 
-            // Открываем доступ по ссылке
-            await drive.permissions.create({
-                fileId: driveRes.data.id,
-                resource: { role: 'reader', type: 'anyone' }
-            });
+            await drive.permissions.create({ fileId: driveRes.data.id, resource: { role: 'reader', type: 'anyone' } });
             pdfUrl = driveRes.data.webViewLink;
         }
 
-        // 4. Пишем в таблицу
-        await appendMerchToReport(workerId, worker, net, address, stock, shelf, pdfUrl);
+        // Пишем в таблицу расширенный набор данных
+        await appendMerchToReport(workerId, worker, net, address, stock, shelf, priceMy || 0, priceComp || 0, expDate || "-", pdfUrl);
 
         res.json({ success: true, url: pdfUrl });
     } catch (e) {
@@ -144,7 +149,7 @@ app.post('/merch-upload', async (req, res) => {
     }
 });
 
-// --- ОСТАЛЬНЫЕ МАРШРУТЫ (ЛИЦЕНЗИИ, ЛОГИСТИКА) ---
+// --- ЛИЦЕНЗИИ ---
 app.post('/check-license', async (req, res) => {
     const { licenseKey, workerName } = req.body;
     const keys = await readDatabase();
@@ -160,7 +165,6 @@ app.post('/check-license', async (req, res) => {
 });
 
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
+app.get('/', (req, res) => res.send("LOGIST_X HD SERVER ACTIVE"));
 
-app.get('/', (req, res) => res.send("GS SERVER ACTIVE"));
-
-app.listen(process.env.PORT || 3000, () => console.log("SERVER RUNNING"));
+app.listen(process.env.PORT || 3000, () => console.log("SERVER RUNNING ON PORT 3000"));
