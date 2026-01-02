@@ -102,8 +102,8 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
     } catch (e) { console.error("Logist Error:", e); }
 }
 
-// --- ОТЧЕТЫ МЕРЧАНДАЙЗИНГА ---
-async function appendMerchToReport(workerId, workerName, net, address, stock, shelf, pMy, pComp, pExp, pdfUrl, startTime, endTime, lat, lon) {
+// --- ОТЧЕТЫ МЕРЧАНДАЙЗИНГА (ОБНОВЛЕНО: ДОБАВЛЕНА ДОЛЯ ПОЛКИ И СРОКИ) ---
+async function appendMerchToReport(workerId, workerName, net, address, stock, shelf, share, pMy, pComp, pExp, pdfUrl, duration, lat, lon) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
         const q = `name = '${reportName}' and '${workerId}' in parents and trashed = false`;
@@ -118,11 +118,26 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, sh
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
+            // Добавлена колонка "ДОЛЯ ПОЛКИ" и "ВРЕМЯ В МАГАЗИНЕ"
+            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'ВРЕМЯ В МАГАЗИНЕ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ ПОЛКИ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
-        let dur = "-"; if (startTime && endTime) { const [h1, m1] = startTime.split(':').map(Number); const [h2, m2] = endTime.split(':').map(Number); const diff = (h2*60+m2)-(h1*60+m1); dur = diff >= 0 ? `${diff} мин.` : "-"; }
-        const gps = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
-        await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, dur, net, address, stock, shelf, pMy, pComp, pExp, pdfUrl, gps]] } });
+        
+        const gps = (lat && lon) ? `=HYPERLINK("https://www.google.com/maps?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
+        
+        await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[
+            new Date().toLocaleDateString("ru-RU"), 
+            duration, 
+            net, 
+            address, 
+            stock, 
+            shelf, 
+            share + '%', 
+            pMy || 0, 
+            pComp || 0, 
+            pExp, 
+            pdfUrl, 
+            gps
+        ]] } });
     } catch (e) { console.error("Merch Error:", e); }
 }
 
@@ -160,7 +175,8 @@ app.post('/upload', async (req, res) => {
 
 app.post('/merch-upload', async (req, res) => {
     try {
-        const { worker, net, address, stock, shelf, priceMy, priceComp, expDate, pdf, startTime, endTime, lat, lon, targetLat, targetLon } = req.body;
+        // Принимаем share (долю полки) и duration (время в магазине)
+        const { worker, net, address, stock, faces, share, priceMy, priceComp, expDate, pdf, duration, lat, lon, targetLat, targetLon } = req.body;
         if (lat && lon && targetLat && targetLon && getDistance(lat, lon, targetLat, targetLon) > MAX_DISTANCE_METERS) return res.status(403).json({ success: false, error: "Далеко от точки" });
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
@@ -174,7 +190,8 @@ app.post('/merch-upload', async (req, res) => {
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
-        await appendMerchToReport(wId, worker, net, address, stock, shelf, priceMy, priceComp, expDate, pUrl, startTime, endTime, lat, lon);
+        // Передаем новые данные в функцию записи таблицы
+        await appendMerchToReport(wId, worker, net, address, stock, faces, share, priceMy, priceComp, expDate, pUrl, duration, lat, lon);
         res.json({ success: true, url: pUrl });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
