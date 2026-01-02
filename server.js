@@ -7,10 +7,11 @@ const { Readable } = require('stream');
 
 const app = express();
 app.use(cors());
+// Лимиты для работы с HD фото и PDF отчетами
 app.use(bodyParser.json({ limit: '150mb' }));
 app.use(bodyParser.urlencoded({ limit: '150mb', extended: true }));
 
-// --- НАСТРОЙКИ (ТВОИ ДАННЫЕ) ---
+// --- НАСТРОЙКИ (SERVER GS) ---
 const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A'; 
 const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; 
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
@@ -18,21 +19,28 @@ const DB_FILE_NAME = 'keys_database.json';
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
+const MAX_DISTANCE_METERS = 600; 
 
-const MY_TG_NICK = 'gena_krokodi';
-const MY_EMAIL = 'Evgeny_orel@mail.ru';
-
+// Auth
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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'
 );
-oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0' });
+oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0' });
 
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- ФУНКЦИИ GOOGLE ---
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+function getDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; 
+    const f1 = lat1 * Math.PI/180; const f2 = lat2 * Math.PI/180;
+    const df = (lat2-lat1) * Math.PI/180; const dl = (lon2-lon1) * Math.PI/180;
+    const a = Math.sin(df/2) * Math.sin(df/2) + Math.cos(f1) * Math.cos(f2) * Math.sin(dl/2) * Math.sin(dl/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
 async function getOrCreateFolder(rawName, parentId) {
     try {
         const name = String(rawName).trim(); 
@@ -71,9 +79,9 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-async function appendToReport(workerId, workerName, city, address, entrance, client, workType, price, lat, lon) {
+// --- ОТЧЕТЫ ЛОГИСТИКИ ---
+async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
-        const dateStr = new Date().toISOString().split('T')[0];
         const reportName = `Отчет ${workerName}`;
         const q = `name = '${reportName}' and '${workerId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
@@ -87,13 +95,14 @@ async function appendToReport(workerId, workerName, city, address, entrance, cli
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS', 'СТАТУС']] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS', 'ФОТО']] } });
         }
         const gpsLink = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleTimeString("ru-RU"), address, entrance, client, workType, price, gpsLink, "ЗАГРУЖЕНО"]] } });
-    } catch (e) { console.error("Logist Sheet Error:", e); }
+    } catch (e) { console.error("Logist Error:", e); }
 }
 
+// --- ОТЧЕТЫ МЕРЧАНДАЙЗИНГА ---
 async function appendMerchToReport(workerId, workerName, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfUrl, startTime, endTime, duration, lat, lon) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
@@ -112,46 +121,41 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
         const gps = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
-        const pdfLink = `=HYPERLINK("${pdfUrl}"; "ССЫЛКА НА ФОТО")`;
+        const pdfLink = `=HYPERLINK("${pdfUrl}"; "ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ")`;
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
     } catch (e) { console.error("Merch Error:", e); }
 }
 
 // === API ===
+app.post('/check-license', async (req, res) => {
+    const { licenseKey, workerName } = req.body;
+    const keys = await readDatabase();
+    const kData = keys.find(k => k.key === licenseKey);
+    if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
+    if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
+    if (!kData.workers) kData.workers = [];
+    if (!kData.workers.includes(workerName)) {
+        if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест' });
+        kData.workers.push(workerName); await saveDatabase(keys);
+    }
+    res.json({ status: 'active', expiry: kData.expiry });
+});
+
 app.post('/upload', async (req, res) => {
     try {
-        const { action } = req.body;
-        if (action === 'check_license') {
-            const { licenseKey, workerName, referrerId } = req.body;
-            const finalKey = (licenseKey || '').trim().toUpperCase();
-            const keys = await readDatabase();
-            const kData = keys.find(k => k.key === finalKey);
-            if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
-            if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
-            if (!kData.workers) kData.workers = [];
-            if (workerName && !kData.workers.includes(workerName)) {
-                if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест' });
-                kData.workers.push(workerName); 
-                if (referrerId && !kData.partnerId) { kData.partnerId = referrerId; await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔥 **ПАРТНЕР!**\nОбъект: ${kData.name}`); }
-                await saveDatabase(keys);
-            }
-            return res.json({ status: 'active', expiry: kData.expiry });
-        }
         const { worker, city, address, entrance, client, image, lat, lon, workType, price } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
-        const mainFolderId = await getOrCreateFolder(kData ? kData.name : "Logist_Users", MY_ROOT_ID);
-        const workerFolderId = await getOrCreateFolder(worker, mainFolderId);
-        const dateFolderId = await getOrCreateFolder(new Date().toISOString().split('T')[0], workerFolderId);
+        const oId = await getOrCreateFolder(kData ? kData.name : "Logist_Users", MY_ROOT_ID);
+        const wId = await getOrCreateFolder(worker, oId);
+        const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], wId);
         if (image) {
-            const cleanAddr = address.replace(/[\\/:*?"<>|]/g, '');
-            const fileName = `${cleanAddr}_п${entrance}_${client}.jpg`;
             const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-            await drive.files.create({ resource: { name: fileName, parents: [dateFolderId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
+            await drive.files.create({ resource: { name: `${address}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
         }
-        await appendToReport(workerFolderId, worker, city, address, entrance, client, workType, price, lat, lon);
+        await appendToReport(wId, worker, city, new Date().toISOString().split('T')[0], address, entrance, client, workType, price, lat, lon);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
 app.post('/merch-upload', async (req, res) => {
@@ -159,24 +163,26 @@ app.post('/merch-upload', async (req, res) => {
         const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
-        const mainFolderId = await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
-        const workerFolderId = await getOrCreateFolder(worker, mainFolderId);
-        const dateFolderId = await getOrCreateFolder(new Date().toISOString().split('T')[0], workerFolderId);
+        const oId = await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
+        const wId = await getOrCreateFolder(worker, oId);
+        const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], wId);
         let pUrl = "Нет файла";
         if (pdf) {
             const buf = Buffer.from(pdf.split(',')[1], 'base64');
-            const cleanAddr = address.replace(/[\\/:*?"<>|]/g, '');
-            const f = await drive.files.create({ resource: { name: `ОТЧЕТ_${cleanAddr}.jpg`, parents: [dateFolderId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
+            const f = await drive.files.create({ resource: { name: `ОТЧЕТ_${address}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
-        await appendMerchToReport(workerFolderId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
+        await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
         res.json({ success: true, url: pUrl });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// API УПРАВЛЕНИЯ
+// === АДМИНКА И КЛИЕНТСКИЕ РОУТЫ ===
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
+app.get('/api/client-keys', async (req, res) => {
+    try { const keys = await readDatabase(); res.json(keys.filter(k => String(k.ownerChatId) === String(req.query.chatId))); } catch (e) { res.json([]); }
+});
 app.post('/api/keys/add', async (req, res) => {
     const { name, limit, days } = req.body; let keys = await readDatabase();
     const newK = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -184,124 +190,108 @@ app.post('/api/keys/add', async (req, res) => {
     keys.push({ key: newK, name, limit, expiry: exp.toISOString(), workers: [], ownerChatId: null });
     await saveDatabase(keys); res.json({ success: true });
 });
-app.post('/api/keys/update', async (req, res) => {
-    let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === req.body.key);
-    if (idx !== -1) {
-        if (req.body.clearOwner) keys[idx].ownerChatId = null;
-        else { keys[idx].name = req.body.name || keys[idx].name; keys[idx].limit = req.body.limit || keys[idx].limit; }
-        await saveDatabase(keys); res.json({ success: true });
-    } else res.json({ success: false });
-});
 app.post('/api/keys/extend', async (req, res) => {
     let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === req.body.key);
     if (idx !== -1) { let d = new Date(keys[idx].expiry); d.setDate(d.getDate() + 30); keys[idx].expiry = d.toISOString(); await saveDatabase(keys); res.json({ success: true }); } else res.json({ success: false });
 });
-app.post('/api/keys/delete', async (req, res) => {
-    let keys = await readDatabase(); keys = keys.filter(k => k.key !== req.body.key);
-    await saveDatabase(keys); res.json({ success: true });
-});
-app.get('/api/client-keys', async (req, res) => {
-    try { const keys = await readDatabase(); const cid = String(req.query.chatId); res.json(keys.filter(k => String(k.ownerChatId) === cid)); } catch (e) { res.json([]); }
+app.post('/api/notify-admin', async (req, res) => {
+    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔔 **ЗАПРОС ПРОДЛЕНИЯ**\n\nОбъект: ${req.body.name}\nКлюч: \`${req.body.key}\``, { parse_mode: 'Markdown' });
+    res.json({ success: true });
 });
 
-// --- АДМИНКА (ТВОЙ ОБРАЗ + СОВРЕМЕННЫЙ СТИЛЬ) ---
+// --- ДИЗАЙН АДМИНКИ ---
 app.get('/dashboard', (req, res) => {
-    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LOGIST_X | ADMIN</title>
+    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ADMIN | LOGIST X</title>
     <style>
-        body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,sans-serif;margin:0;padding:20px}
-        .container{max-width:1000px;margin:0 auto}
-        .gold{color:#f0ad4e;font-weight:900;font-style:italic;text-transform:uppercase}
-        .card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;margin-bottom:20px}
-        .key-item{background:#0d1117;border:1px solid #30363d;padding:15px;border-radius:10px;margin-top:10px;display:flex;justify-content:space-between;align-items:center}
-        input{background:#010409;border:1px solid #30363d;color:#fff;padding:8px;border-radius:6px;margin:5px}
-        .btn{padding:10px 20px;border-radius:6px;border:none;cursor:pointer;font-weight:bold;text-transform:uppercase;font-size:11px}
-        .btn-gold{background:#f0ad4e;color:#000}
-        .btn-red{background:#da3633;color:#fff}
-        .btn-outline{background:transparent;border:1px solid #30363d;color:#8b949e}
+        :root { --bg: #0a0c10; --card: #161b22; --accent: #f0ad4e; --text: #f0f6fc; --green: #238636; --border: #30363d; }
+        body { background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, sans-serif; padding: 15px; display:none; }
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+        h3 { margin-top:0; color: var(--accent); letter-spacing: 1px; }
+        input, select, button { width: 100%; padding: 12px; margin-bottom: 12px; border-radius: 8px; border: 1px solid var(--border); background: #010409; color: #fff; outline: none; box-sizing: border-box; }
+        button { background: var(--accent); color: #000; font-weight: bold; cursor: pointer; border: none; transition: 0.2s; }
+        .key-item { background: #0d1117; padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 5px solid var(--accent); position: relative; }
+        .key-title { font-size: 1.1rem; color: #fff; font-weight: bold; }
+        .key-info { font-size: 0.85rem; color: #8b949e; margin: 5px 0; }
+        .btn-ext { background: var(--green); color: #fff; width: auto; padding: 6px 15px; font-size: 0.8rem; }
     </style></head>
     <body>
-        <div class="container">
-            <h1>LOGIST<span class="gold">_X</span> ПУЛЬТ</h1>
-            <div class="card">
-                <h3 class="gold">+ СОЗДАТЬ КЛЮЧ</h3>
-                <input id="n" placeholder="Имя объекта">
-                <input id="l" type="number" value="5" style="width:60px">
-                <button class="btn btn-gold" onclick="add()">ДОБАВИТЬ</button>
-            </div>
-            <div id="list"></div>
+        <div class="card"><h3>НОВАЯ ЛИЦЕНЗИЯ</h3>
+            <input type="text" id="newName" placeholder="Название объекта">
+            <input type="number" id="newLimit" value="5">
+            <select id="newDays"><option value="30">30 Дней</option><option value="365">1 Год</option></select>
+            <button onclick="addKey()">СГЕНЕРИРОВАТЬ КЛЮЧ</button>
         </div>
-        <script>
-            const PASS = "${ADMIN_PASS}";
-            function auth(){ if(localStorage.getItem('p')!==PASS){ let p=prompt('ВВОД'); if(p===PASS)localStorage.setItem('p',PASS); else auth(); } }
-            async function load(){
-                const r = await fetch('/api/keys');
-                const keys = await r.json();
-                // ТВОЙ ОРИГИНАЛЬНЫЙ ОБРАЗ ВЫВОДА ДАННЫХ
-                document.getElementById('list').innerHTML = keys.map(k => \`
-                    <div class="key-item">
-                        <div style="flex-grow:1">
-                            <span class="gold" style="font-size:12px">\${k.key}</span><br>
-                            <input value="\${k.name}" onchange="upd('\${k.key}','name',this.value)" style="font-weight:bold;font-size:16px;border:none;background:none;width:200px">
-                            <div style="font-size:11px;color:#8b949e">
-                                Лимит: <input type="number" value="\${k.limit}" style="width:40px" onchange="upd('\${k.key}','limit',this.value)"> 
-                                | До: \${new Date(k.expiry).toLocaleDateString()}
-                                | Владелец: \${k.ownerChatId || 'НЕТ'}
-                            </div>
-                        </div>
-                        <div>
-                            <button class="btn btn-gold" onclick="ext('\${k.key}')">ПРОДЛИТЬ</button>
-                            <button class="btn btn-red" onclick="del('\${k.key}')">УДАЛИТЬ</button>
-                            \${k.ownerChatId ? \`<br><button class="btn btn-outline" style="margin-top:5px" onclick="upd('\${k.key}','clearOwner',true)">СБРОС ВЛАДЕЛЬЦА</button>\` : ''}
-                        </div>
-                    </div>
-                \`).join('');
-            }
-            async function add(){
-                const n=document.getElementById('n').value; const l=document.getElementById('l').value;
-                await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,limit:l,days:30})});
-                load();
-            }
-            async function upd(key,f,v){
-                const b={key}; if(f==='clearOwner')b.clearOwner=true; else b[f]=v;
-                await fetch('/api/keys/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
-                load();
-            }
-            async function ext(key){ await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})}); load(); }
-            async function del(key){ if(confirm('УДАЛИТЬ?')){ await fetch('/api/keys/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})}); load(); }}
-            auth(); load();
-        </script>
-    </body></html>`);
+        <div id="keysList"></div>
+    <script>
+        const PASS = "${ADMIN_PASS}";
+        function auth() { if(localStorage.getItem('admin_pass')===PASS){document.body.style.display='block';load();}else{let p=prompt('PASS:');if(p===PASS){localStorage.setItem('admin_pass',PASS);location.reload();}else{alert('STOP');}}}
+        async function load(){ 
+            const res = await fetch('/api/keys'); const keys = await res.json(); 
+            document.getElementById('keysList').innerHTML = keys.map(k => {
+                return '<div class="key-item">' +
+                    '<div class="key-title">' + k.key + '</div>' +
+                    '<div class="key-info">🏢 ' + k.name + ' | 👥 ' + (k.workers ? k.workers.length : 0) + '/' + k.limit + '</div>' +
+                    '<div class="key-info">📅 До: ' + new Date(k.expiry).toLocaleDateString() + '</div>' +
+                    '<button class="btn-ext" onclick="extendKey(\\'' + k.key + '\\')">ПРОДЛИТЬ +30 ДН.</button>' +
+                '</div>';
+            }).join(''); 
+        }
+        async function addKey(){ await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('newName').value,limit:document.getElementById('newLimit').value,days:document.getElementById('newDays').value})}); load(); }
+        async function extendKey(key){ if(confirm('Продлить?')){ await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})}); load(); } }
+        auth();
+    </script></body></html>`);
 });
 
-// КЛИЕНТСКИЙ КАБИНЕТ (Стиль Logist_X)
+// --- ДИЗАЙН КЛИЕНТСКОГО КАБИНЕТА ---
 app.get('/client-dashboard', (req, res) => {
-    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LOGIST_X</title>
-    <style>body{background:#010409;color:#fff;font-family:sans-serif;padding:20px}.card{background:#161b22;border-radius:20px;padding:20px;margin-bottom:15px;border:1px solid #30363d}.gold{color:#f59e0b;font-weight:900}</style></head>
-    <body><h2>LOGIST<span class="gold">_X</span></h2><div id="c"></div>
-    <script>async function load(){const r=await fetch('/api/client-keys?chatId='+new URLSearchParams(window.location.search).get('chatId'));const d=await r.json();
-    document.getElementById('c').innerHTML=d.map(k=>\`<div class="card"><h3>\${k.name}</h3><p>Лимит: \${k.workers.length} / \${k.limit}</p><p>До: \${new Date(k.expiry).toLocaleDateString()}</p></div>\`).join('')}load()</script></body></html>`);
+    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>CLIENT | LOGIST X</title>
+    <style>
+        body { background: #0a0c10; color: #c9d1d9; font-family: sans-serif; padding: 15px; }
+        .accent { color: #f0ad4e; text-transform: uppercase; letter-spacing: 2px; font-size: 1.2rem; text-align:center; display:block; margin-bottom:20px; }
+        .card { background: #161b22; border-radius: 16px; padding: 20px; border: 1px solid #30363d; margin-bottom: 20px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+        .key-code { font-family: monospace; background: #0d1117; padding: 8px; border-radius: 6px; color: #f0ad4e; font-size: 1.1rem; display: block; margin: 10px 0; border: 1px dashed #444; text-align: center; }
+        .btn-pay { background: #f0ad4e; color: #000; border: none; padding: 14px; border-radius: 10px; width: 100%; font-weight: bold; cursor: pointer; display: block; text-align: center; margin-top: 20px; text-decoration:none; }
+    </style></head>
+    <body>
+        <div class="accent">Мои Лицензии</div>
+        <div id="content">Загрузка...</div>
+    <script>
+        async function load(){ 
+            const cid = new URLSearchParams(window.location.search).get('chatId'); 
+            const res = await fetch('/api/client-keys?chatId=' + cid); const keys = await res.json();
+            if(!keys.length) { document.getElementById('content').innerHTML = '<div style="text-align:center; padding: 40px;">Нет активных лицензий</div>'; return; }
+            document.getElementById('content').innerHTML = keys.map(k => {
+                return '<div class="card">' +
+                    '<div style="font-size:1.3rem; font-weight:bold; margin-bottom:5px;">' + k.name + '</div>' +
+                    '<span class="key-code">' + k.key + '</span>' +
+                    '<div>👥 Мест: <b>' + (k.workers ? k.workers.length : 0) + ' / ' + k.limit + '</b></div>' +
+                    '<div>⏳ До: <b>' + new Date(k.expiry).toLocaleDateString() + '</b></div>' +
+                    '<button onclick="requestExtend(\\'' + k.key + '\\', \\'' + k.name + '\\')" class="btn-pay">ПРОДЛИТЬ СРОК</button>' +
+                '</div>';
+            }).join('');
+        }
+        async function requestExtend(key, name) {
+            await fetch('/api/notify-admin', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key, name})});
+            alert('Запрос отправлен!'); window.location.href = "https://t.me/G_E_S_S_E_N";
+        }
+        load();
+    </script></body></html>`);
 });
 
-// --- TELEGRAM BOT ---
+// --- БОТ ---
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
-    if (cid === MY_TELEGRAM_ID) {
-        return ctx.reply('💎 LOGIST_X ADMIN', { reply_markup: { inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ КЛЮЧАМИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
-    }
-    ctx.reply('Введите ключ активации:');
+    if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ПАНЕЛЬ УПРАВЛЕНИЯ', { reply_markup: { inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ КЛЮЧАМИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
+    const keys = await readDatabase(); const ck = keys.find(k => String(k.ownerChatId) === String(cid));
+    if (ck) return ctx.reply('🏢 ВАШ КАБИНЕТ ОБЪЕКТОВ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
+    ctx.reply('👋 Logist X активен.', { reply_markup: { inline_keyboard: [[{ text: "🔑 У МЕНЯ ЕСТЬ КЛЮЧ", callback_data: "have" }]] } });
 });
-
+bot.action('have', ctx => ctx.reply('Введите ключ:'));
 bot.on('text', async (ctx) => {
-    if (ctx.chat.id === MY_TELEGRAM_ID) return;
-    const key = ctx.message.text.trim().toUpperCase(); let keys = await readDatabase();
-    const idx = keys.findIndex(k => k.key === key);
-    if (idx !== -1) {
-        if(keys[idx].ownerChatId) return ctx.reply('Ключ уже занят.');
-        keys[idx].ownerChatId = ctx.chat.id; await saveDatabase(keys);
-        ctx.reply('✅ Активировано!', { reply_markup: { inline_keyboard: [[{ text: "📊 МОЙ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
-    } else ctx.reply('Ключ не найден.');
+    if (ctx.chat.id === ) return; const key = ctx.message.text.trim();
+    let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === key);
+    if (idx !== -1) { if(keys[idx].ownerChatId) return ctx.reply('Занят.'); keys[idx].ownerChatId = ctx.chat.id; await saveDatabase(keys); ctx.reply('✅ АКТИВИРОВАНО!'); } else ctx.reply('Не найден.');
 });
 
-bot.launch();
-app.listen(process.env.PORT || 3000, () => console.log("SERVER UP"));
+bot.launch().then(() => console.log("READY"));
+app.listen(process.env.PORT || 3000);
