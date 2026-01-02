@@ -7,24 +7,21 @@ const { Readable } = require('stream');
 
 const app = express();
 app.use(cors());
-// Увеличенные лимиты для тяжелых фото и PDF
 app.use(bodyParser.json({ limit: '150mb' }));
 app.use(bodyParser.urlencoded({ limit: '150mb', extended: true }));
 
 // --- НАСТРОЙКИ ---
-const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A'; // Папка Логиста
-const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; // Папка Мерча
+const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A'; 
+const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; 
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
 
-// КОНТАКТЫ ВЛАДЕЛЬЦА
 const MY_TG_NICK = 'gena_krokodi';
 const MY_EMAIL = 'Evgeny_orel@mail.ru';
 
-// Авторизация Google
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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'
@@ -35,7 +32,6 @@ const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 async function getOrCreateFolder(rawName, parentId) {
     try {
         const name = String(rawName).trim(); 
@@ -74,7 +70,6 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- ОТЧЕТЫ ЛОГИСТИКИ ---
 async function appendToReport(workerId, workerName, city, address, entrance, client, workType, price, lat, lon) {
     try {
         const dateStr = new Date().toISOString().split('T')[0];
@@ -93,12 +88,11 @@ async function appendToReport(workerId, workerName, city, address, entrance, cli
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS', 'СТАТУС']] } });
         }
-        const gpsLink = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
+        const gpsLink = (lat && lon) ? `=HYPERLINK("http://maps.google.com/maps?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleTimeString("ru-RU"), address, entrance, client, workType, price, gpsLink, "ЗАГРУЖЕНО"]] } });
     } catch (e) { console.error("Logist Sheet Error:", e); }
 }
 
-// --- ОТЧЕТЫ МЕРЧАНДАЙЗИНГА ---
 async function appendMerchToReport(workerId, workerName, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfUrl, startTime, endTime, duration, lat, lon) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
@@ -116,13 +110,12 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
-        const gps = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
+        const gps = (lat && lon) ? `=HYPERLINK("http://maps.google.com/maps?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
         const pdfLink = `=HYPERLINK("${pdfUrl}"; "ССЫЛКА НА ФОТО")`;
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// === УНИВЕРСАЛЬНЫЙ РОУТЕР UPLOAD (ГЛАВНЫЙ ВХОД) ===
 app.post('/upload', async (req, res) => {
     try {
         const { action } = req.body;
@@ -183,7 +176,6 @@ app.post('/merch-upload', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// === API ДЛЯ АДМИНКИ И ЛК ===
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
 app.get('/api/client-keys', async (req, res) => {
     try { 
@@ -221,25 +213,44 @@ app.post('/api/notify-admin', async (req, res) => {
     res.json({ success: true });
 });
 
-// --- ВЕБ-ИНТЕРФЕЙСЫ ---
-app.get('/reg', (req, res) => {
-    const ref = req.query.ref || '';
-    res.send(`<html><body style="background:#010409;color:white;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;">
-        <div style="text-align:center;"><h2>Регистрация партнера...</h2>
-        <script>localStorage.setItem('partnerRef', '\${ref}'); setTimeout(() => { window.location.href = 'https://logist-x.ru'; }, 1000);</script>
-        </div></body></html>`);
-});
-
 app.get('/dashboard', (req, res) => {
+    const userChatId = req.query.chatId;
     res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LOGIST_X | ADMIN</title>
     <style>body{background:#0a0c10;color:#fff;font-family:sans-serif;padding:20px}.card{background:#161b22;padding:20px;margin-bottom:15px;border-radius:12px;border:1px solid #30363d}input,select,button{width:100%;padding:12px;margin-bottom:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:8px}.btn-gold{background:#f0ad4e;color:#000;font-weight:bold;border:none;cursor:pointer}.btn-red{background:#da3633;color:#fff;border:none;cursor:pointer;margin-top:5px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}</style></head>
     <body><div style="max-width:800px;margin:0 auto;"><h2>ADMIN PANEL</h2><div class="card"><h4>+ НОВЫЙ ОБЪЕКТ</h4><input id="n" placeholder="Имя"><div class="grid"><input id="l" type="number" value="5"><select id="d"><option value="30">30 Дней</option><option value="365">1 Год</option></select></div><button class="btn-gold" onclick="add()">СОЗДАТЬ</button></div><div id="list"></div></div>
-    <script>const PASS="\${ADMIN_PASS}";function auth(){if(localStorage.getItem('p')!==PASS){let p=prompt('PASS');if(p===PASS)localStorage.setItem('p',PASS);else auth();}}
-    async function load(){const r=await fetch('/api/keys');const d=await r.json();document.getElementById('list').innerHTML=d.map(k=>\`<div class="card"><b>\${k.key}</b><br><input value="\${k.name}" onchange="upd('\${k.key}','name',this.value)" style="background:none;border:none;color:#f0ad4e;font-weight:bold;font-size:18px"><br>👥 Мест: <input type="number" value="\${k.limit}" style="width:50px" onchange="upd('\${k.key}','limit',this.value)"> | До: \${new Date(k.expiry).toLocaleDateString()}<br>\${k.ownerChatId?'ID '+k.ownerChatId:'<span style="color:red">Свободен</span>'}<div class="grid"><button class="btn-gold" onclick="ext('\${k.key}')">ПРОДЛИТЬ</button><button class="btn-red" onclick="del('\${k.key}')">УДАЛИТЬ</button></div>\${k.ownerChatId?'<button onclick="upd(\\''+k.key+'\\',\\'clearOwner\\',true)" style="background:none;border:1px solid #333;color:gray;font-size:10px">Сброс владельца</button>':''}</div>\`).join('')}
-    async function add(){await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:document.getElementById('d').value})});load()}
-    async function upd(key,f,v){const b={key};if(f==='clearOwner')b.clearOwner=true;else b[f]=v;await fetch('/api/keys/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});load()}
-    async function ext(key){await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}
-    async function del(key){if(confirm('Удалить?')){await fetch('/api/keys/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}}auth();load();</script></body></html>`);
+    <script>
+    const ADMIN_ID = "${MY_TELEGRAM_ID}";
+    const PASS = "${ADMIN_PASS}";
+    const currentChatId = "${userChatId || ''}";
+
+    function auth(){
+        // Если зашел через телеграм с твоим ID - пускаем сразу
+        if(currentChatId === ADMIN_ID) return; 
+        // Иначе просим пароль
+        if(localStorage.getItem('p') !== PASS){
+            let p = prompt('ВВЕДИТЕ ПАРОЛЬ АДМИНИСТРАТОРА');
+            if(p === PASS) localStorage.setItem('p', PASS);
+            else auth();
+        }
+    }
+    async function load(){
+        const r = await fetch('/api/keys');
+        const d = await r.json();
+        document.getElementById('list').innerHTML = d.map(k => \`<div class="card"><b>\${k.key}</b><br><input value="\${k.name}" onchange="upd('\${k.key}','name',this.value)" style="background:none;border:none;color:#f0ad4e;font-weight:bold;font-size:18px"><br>👥 Мест: <input type="number" value="\${k.limit}" style="width:50px" onchange="upd('\${k.key}','limit',this.value)"> | До: \${new Date(k.expiry).toLocaleDateString()}<br>\${k.ownerChatId?'ID '+k.ownerChatId:'<span style="color:red">Свободен</span>'}<div class="grid"><button class="btn-gold" onclick="ext('\${k.key}')">ПРОДЛИТЬ</button><button class="btn-red" onclick="del('\${k.key}')">УДАЛИТЬ</button></div>\${k.ownerChatId?'<button onclick="upd(\\''+k.key+'\\',\\'clearOwner\\',true)" style="background:none;border:1px solid #333;color:gray;font-size:10px">Сброс владельца</button>':''}</div>\`).join('')
+    }
+    async function add(){
+        await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:document.getElementById('d').value})});
+        load();
+    }
+    async function upd(key,f,v){
+        const b={key}; if(f==='clearOwner')b.clearOwner=true; else b[f]=v;
+        await fetch('/api/keys/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+        load();
+    }
+    async function ext(key){ await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})}); load(); }
+    async function del(key){ if(confirm('Удалить?')){ await fetch('/api/keys/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})}); load(); }}
+    auth(); load();
+    </script></body></html>`);
 });
 
 app.get('/client-dashboard', (req, res) => {
@@ -248,12 +259,12 @@ app.get('/client-dashboard', (req, res) => {
     <div class="card"><div class="obj-title"><i data-lucide="map-pin" class="gold-text" size="18"></i> \${k.name}</div><div class="stats-grid"><div class="stat-item"><span class="stat-label">Дней осталось</span><span class="stat-value">\${diff>0?diff:0}</span></div><div class="stat-item"><span class="stat-label">Места</span><span class="stat-value">\${k.workers.length} / \${k.limit}</span></div></div><div class="workers-box"><span class="workers-title">Сотрудники</span>\${k.workers.length>0?k.workers.map(w=>\`<span class="worker-tag">\${w}</span>\`).join(''):'Пусто'}</div><button class="btn btn-gold" onclick="reqExt('\${k.key}','\${k.name}')">Продлить</button><a href="https://t.me/${MY_TG_NICK}" class="btn btn-outline">Поддержка</a></div>\`}).join('');lucide.createIcons()}catch(e){document.getElementById('container').innerHTML='Ошибка'}}async function reqExt(key,name){await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name})});alert('Запрос отправлен')}loadData()</script></body></html>`);
 });
 
-// --- TELEGRAM BOT ---
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
-    if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ADMIN PANEL', { reply_markup: { inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ", web_app: { url: SERVER_URL + "/dashboard" } }],[{ text: "📊 ВСЕ ОБЪЕКТЫ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
+    if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ADMIN PANEL', { reply_markup: { inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ", web_app: { url: SERVER_URL + "/dashboard?chatId=" + cid } }],[{ text: "📊 ВСЕ ОБЪЕКТЫ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
     ctx.reply('Выберите действие:', { reply_markup: { inline_keyboard: [[{ text: "💼 КАБИНЕТ", callback_data: "role_user" }], [{ text: "💰 ПАРТНЕР", callback_data: "role_partner" }]] } });
 });
+
 bot.on('callback_query', async (ctx) => {
     const data = ctx.callbackQuery.data; const cid = ctx.chat.id;
     if (data === "role_user") {
@@ -263,6 +274,7 @@ bot.on('callback_query', async (ctx) => {
     }
     if (data === "role_partner") ctx.reply(`Твоя ссылка:\n\`\${SERVER_URL}/reg?ref=\${cid}\``, { parse_mode: 'Markdown' });
 });
+
 bot.on('text', async (ctx) => {
     if (ctx.chat.id === MY_TELEGRAM_ID) return;
     const key = ctx.message.text.trim().toUpperCase(); let keys = await readDatabase();
@@ -273,5 +285,6 @@ bot.on('text', async (ctx) => {
         ctx.reply('✅ Готово!', { reply_markup: { inline_keyboard: [[{ text: "📊 КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
     } else ctx.reply('Ключ не найден.');
 });
+
 bot.launch();
 app.listen(process.env.PORT || 3000, () => console.log("Server Started"));
