@@ -4,7 +4,7 @@ const { Telegraf } = require('telegraf');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const { Readable } = require('stream');
-const path = require('path'); // Добавлено для работы с файлами
+const path = require('path');
 
 const app = express();
 app.use(cors());
@@ -30,7 +30,6 @@ const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 async function getOrCreateFolder(rawName, parentId) {
     try {
         const name = String(rawName).trim(); 
@@ -69,7 +68,7 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- ОТЧЕТЫ ЛОГИСТИКИ (Твоя идеальная функция) ---
+// ТВОЯ ОРИГИНАЛЬНАЯ ЛОГИКА (БЕЗ ИЗМЕНЕНИЙ)
 async function appendToReport(workerId, workerName, city, address, entrance, client, workType, price, lat, lon) {
     try {
         const dateStr = new Date().toISOString().split('T')[0];
@@ -93,7 +92,6 @@ async function appendToReport(workerId, workerName, city, address, entrance, cli
     } catch (e) { console.error("Logist Sheet Error:", e); }
 }
 
-// --- ОТЧЕТЫ МЕРЧАНДАЙЗИНГА ---
 async function appendMerchToReport(workerId, workerName, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfUrl, startTime, endTime, duration, lat, lon) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
@@ -116,7 +114,6 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// === ГЛАВНЫЙ РОУТЕР UPLOAD ===
 app.post('/upload', async (req, res) => {
     try {
         const { action } = req.body;
@@ -171,7 +168,7 @@ app.post('/merch-upload', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// === АДМИНКА И API ===
+// API ДЛЯ БОТА
 app.get('/api/keys', async (req, res) => res.json(await readDatabase()));
 app.get('/api/client-keys', async (req, res) => {
     try { const keys = await readDatabase(); res.json(keys.filter(k => String(k.ownerChatId) === String(req.query.chatId))); } catch (e) { res.json([]); }
@@ -191,23 +188,27 @@ app.post('/api/keys/delete', async (req, res) => {
     let keys = await readDatabase(); keys = keys.filter(k => k.key !== req.body.key); await saveDatabase(keys); res.json({ success: true });
 });
 app.post('/api/notify-admin', async (req, res) => {
-    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔔 Продление: ${req.body.name} (${req.body.key})`);
+    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔔 Запрос на продление: ${req.body.name} (${req.body.key})`);
     res.json({ success: true });
 });
 
-// Отдача HTML файлов
-app.get('/client-dashboard', (req, res) => res.sendFile(path.join(__dirname, 'client-dashboard.html')));
+// ТВОЯ АДМИНКА С КНОПКОЙ УДАЛЕНИЯ
 app.get('/dashboard', (req, res) => {
-    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>ADMIN</title><style>body{background:#0a0c10;color:#fff;padding:20px;font-family:sans-serif}.card{background:#161b22;padding:20px;border-radius:10px;margin-bottom:10px;border:1px solid #30363d}button{padding:10px;background:#f0ad4e;border:none;border-radius:5px;font-weight:bold;cursor:pointer}.btn-del{background:#d93535;color:#fff;margin-left:5px}</style></head><body><h3>LOGIST ADMIN</h3><div class="card"><input id="n" placeholder="Имя"><input id="l" type="number" value="5"><button onclick="add()">СОЗДАТЬ</button></div><div id="list"></div><script>async function load(){const r=await fetch('/api/keys');const d=await r.json();document.getElementById('list').innerHTML=d.map(k=>'<div class="card"><b>'+k.key+'</b><br>'+k.name+' ('+k.workers.length+'/'+k.limit+')<br>'+new Date(k.expiry).toLocaleDateString()+'<br><button onclick="ext(\\''+k.key+'\\')">ПРОДЛИТЬ</button><button class="btn-del" onclick="del(\\''+k.key+'\\')">УДАЛИТЬ</button></div>').join('')}async function add(){await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:30})});load()}async function ext(key){await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}async function del(key){if(confirm('Удалить?')){await fetch('/api/keys/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}}load()</script></body></html>`);
+    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ADMIN</title><style>body{background:#0a0c10;color:#fff;font-family:sans-serif;padding:20px}.card{background:#161b22;padding:20px;margin-bottom:10px;border-radius:10px;border:1px solid #30363d}input,select,button{width:100%;padding:10px;margin-bottom:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:5px}.btn{background:#f0ad4e;color:#000;font-weight:bold;cursor:pointer}.btn-del{background:#d93535;color:#fff}</style></head><body><h3>LOGIST ADMIN</h3><div class="card"><input id="n" placeholder="Имя"><input id="l" type="number" value="5"><select id="d"><option value="30">30 Дней</option><option value="365">1 Год</option></select><button class="btn" onclick="add()">СОЗДАТЬ</button></div><div id="list"></div><script>const PASS="${ADMIN_PASS}";function auth(){if(localStorage.getItem('p')!==PASS){if(prompt('PASS')===PASS)localStorage.setItem('p',PASS);else auth();}}async function load(){const r=await fetch('/api/keys');const d=await r.json();document.getElementById('list').innerHTML=d.map(k=>'<div class="card"><b>'+k.key+'</b><br>'+k.name+' ('+k.workers.length+'/'+k.limit+')<br>'+new Date(k.expiry).toLocaleDateString()+'<br><div style="display:flex;gap:10px;"><button class="btn" onclick="ext(\\''+k.key+'\\')">ПРОДЛИТЬ</button><button class="btn btn-del" onclick="del(\\''+k.key+'\\')">УДАЛИТЬ</button></div></div>').join('')}async function add(){await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:document.getElementById('d').value})});load()}async function ext(key){await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}async function del(key){if(confirm('Удалить?')){await fetch('/api/keys/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}}auth();load()</script></body></html>`);
 });
 
-// --- TELEGRAM BOT ---
+// КЛИЕНТСКАЯ ПАНЕЛЬ (ПОДГРУЖАЕТ ТВОЙ ФАЙЛ)
+app.get('/client-dashboard', (req, res) => {
+    res.sendFile(path.join(__dirname, 'client-dashboard.html'));
+});
+
+// TELEGRAM BOT
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
     if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ADMIN PANEL', { reply_markup: { inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
     const keys = await readDatabase(); 
     if (keys.find(k => String(k.ownerChatId) === String(cid))) return ctx.reply('🏢 ЛИЧНЫЙ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ОБЪЕКТЫ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
-    ctx.reply('Введите ключ или купите доступ:', { reply_markup: { inline_keyboard: [[{ text: "💳 КУПИТЬ ДОСТУП", url: "https://t.me/твой_контакт" }]] } });
+    ctx.reply('Введите лицензионный ключ или купите доступ:', { reply_markup: { inline_keyboard: [[{ text: "💳 КУПИТЬ ДОСТУП", url: "https://t.me/твой_контакт" }]] } });
 });
 
 bot.on('text', async (ctx) => {
@@ -218,7 +219,7 @@ bot.on('text', async (ctx) => {
     if (idx !== -1) { 
         if(keys[idx].ownerChatId) return ctx.reply('Ключ занят.'); 
         keys[idx].ownerChatId = ctx.chat.id; await saveDatabase(keys); 
-        ctx.reply('✅ Привязано!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
+        ctx.reply('✅ Привязано!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
     } else { ctx.reply('Ключ не найден.'); }
 });
 
