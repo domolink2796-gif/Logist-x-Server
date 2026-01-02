@@ -127,18 +127,31 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
 }
 
 // === API ===
+
+// --- ИСПРАВЛЕННАЯ ПРОВЕРКА ЛИЦЕНЗИИ ---
 app.post('/check-license', async (req, res) => {
-    const { licenseKey, workerName } = req.body;
-    const keys = await readDatabase();
-    const kData = keys.find(k => k.key === licenseKey);
-    if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
-    if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
-    if (!kData.workers) kData.workers = [];
-    if (!kData.workers.includes(workerName)) {
-        if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест' });
-        kData.workers.push(workerName); await saveDatabase(keys);
+    try {
+        const { licenseKey, key, workerName } = req.body;
+        // Универсальная проверка: берет или licenseKey, или key, и убирает пробелы
+        const finalKey = (licenseKey || key || '').trim();
+
+        const keys = await readDatabase();
+        const kData = keys.find(k => k.key === finalKey);
+        
+        if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
+        if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
+        
+        if (!kData.workers) kData.workers = [];
+        if (workerName && !kData.workers.includes(workerName)) {
+            if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест' });
+            kData.workers.push(workerName); 
+            await saveDatabase(keys);
+        }
+        res.json({ status: 'active', expiry: kData.expiry });
+    } catch (e) {
+        console.error("Check Error:", e);
+        res.json({ status: 'error', message: 'Ошибка сервера' });
     }
-    res.json({ status: 'active', expiry: kData.expiry });
 });
 
 app.post('/upload', async (req, res) => {
