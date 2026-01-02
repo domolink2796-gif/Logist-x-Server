@@ -2,147 +2,150 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>LOGIST_X | Личный кабинет</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LOGIST X | Кабинет клиента</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { background-color: #010409; color: #e6edf3; font-family: 'Inter', sans-serif; overflow-x: hidden; }
-        .gold-card { background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(180, 83, 9, 0.05) 100%); border: 1px solid rgba(245, 158, 11, 0.2); }
-        .btn-gold { background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%); color: #000; font-weight: 900; text-transform: uppercase; }
-        .status-badge { background: rgba(35, 134, 54, 0.2); color: #3fb950; border: 1px solid rgba(35, 134, 54, 0.3); }
-        .status-expired { background: rgba(232, 65, 24, 0.2); color: #e84118; border: 1px solid rgba(232, 65, 24, 0.3); }
+        body {
+            background: #0a0c10;
+            color: #c9d1d9;
+            font-family: -apple-system, system-ui, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+        .header h2 {
+            color: #f0ad4e;
+            margin: 0;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+        }
+        .obj-name {
+            font-size: 1.4em;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 10px;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            font-size: 0.95em;
+        }
+        .info-label { color: #8b949e; }
+        .info-value { color: #f0ad4e; font-weight: bold; }
+        
+        .workers-list {
+            background: #0d1117;
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-size: 0.85em;
+            color: #8b949e;
+        }
+
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 15px;
+            margin-top: 15px;
+            border: none;
+            border-radius: 10px;
+            font-weight: bold;
+            font-size: 1em;
+            cursor: pointer;
+            transition: 0.3s;
+            text-align: center;
+            text-decoration: none;
+        }
+        .btn-ext { background: #f0ad4e; color: #000; }
+        .btn-support { 
+            background: transparent; 
+            color: #8b949e; 
+            border: 1px solid #30363d;
+            margin-top: 10px;
+        }
+        .btn:active { transform: scale(0.98); }
+        
+        #loader { text-align: center; color: #8b949e; margin-top: 50px; }
     </style>
 </head>
-<body class="p-4">
+<body>
 
-    <div class="flex items-center justify-between mb-8">
-        <div class="flex items-center gap-2">
-            <div class="bg-amber-500 p-1 rounded-lg"><i data-lucide="shield-check" class="text-black" size="18"></i></div>
-            <span class="text-xl font-black italic uppercase tracking-tighter">LOGIST<span class="text-amber-500">_X</span></span>
-        </div>
-        <div id="obj_name" class="text-[10px] opacity-60 font-bold uppercase tracking-widest text-right leading-tight">Загрузка объекта...</div>
+    <div class="header">
+        <h2>Мои Объекты</h2>
     </div>
 
-    <div class="gold-card rounded-[2rem] p-6 mb-6">
-        <div class="flex justify-between items-start mb-4">
-            <div>
-                <p class="text-[10px] font-black uppercase tracking-widest opacity-60 mb-1">Статус подписки</p>
-                <span id="status_text" class="status-badge text-[10px] px-3 py-1 rounded-full font-black uppercase text-center">Проверка...</span>
-            </div>
-            <i data-lucide="calendar" class="text-amber-500/40" size="24"></i>
-        </div>
-        <div id="days_left" class="text-4xl font-black italic mb-2">-- <span class="text-lg opacity-40 not-italic">дней</span></div>
-        <p id="expiry_date" class="text-[10px] opacity-40 uppercase font-bold italic">Загрузка даты...</p>
-    </div>
-
-    <div class="grid grid-cols-2 gap-3 mb-8">
-        <div class="bg-white/5 border border-white/5 p-4 rounded-2xl flex flex-col items-center">
-            <i data-lucide="users" class="text-amber-500 mb-2" size="20"></i>
-            <span class="text-[10px] font-black uppercase opacity-60">Сотрудники</span>
-            <span id="worker_count" class="text-xl font-black italic mt-1">0 / 0</span>
-        </div>
-        <div class="bg-white/5 border border-white/5 p-4 rounded-2xl flex flex-col items-center">
-            <i data-lucide="key" class="text-amber-500 mb-2" size="20"></i>
-            <span class="text-[10px] font-black uppercase opacity-60">Ваш ключ</span>
-            <span id="license_key" class="text-[10px] font-black italic mt-2 opacity-80 uppercase tracking-tighter">-------</span>
-        </div>
-    </div>
-
-    <button onclick="handlePay()" class="btn-gold w-full py-5 rounded-2xl flex items-center justify-center gap-3 shadow-2xl mb-8">
-        <i data-lucide="credit-card" size="20"></i>
-        <span class="text-sm tracking-widest">Продлить доступ</span>
-    </button>
-
-    <div class="mb-4">
-        <h3 class="text-[10px] font-black uppercase tracking-[4px] opacity-40 ml-2 mb-4 italic">Зарегистрированы в системе</h3>
-        <div id="staff_list" class="space-y-2">
-            <p class="text-center opacity-20 text-xs py-4">Список пуст</p>
-        </div>
+    <div id="container">
+        <div id="loader">Загрузка данных...</div>
     </div>
 
     <script>
-        const tg = window.Telegram.WebApp;
-        tg.expand();
-        lucide.createIcons();
-
         async function loadData() {
-            const userId = tg.initDataUnsafe?.user?.id || 6846149935; // Твой ID для теста если не в ТГ
+            const params = new URLSearchParams(window.location.search);
+            const chatId = params.get('chatId');
             
             try {
-                const response = await fetch(`/api/client-keys?chatId=${userId}`);
-                const data = await response.json();
-
-                if (data && data.length > 0) {
-                    const keyData = data[0]; // Берем первый привязанный объект
-                    
-                    // Название объекта
-                    document.getElementById('obj_name').innerText = keyData.name;
-                    document.getElementById('license_key').innerText = keyData.key;
-                    
-                    // Расчет дней
-                    const exp = new Date(keyData.expiry);
-                    const now = new Date();
-                    const diffTime = exp - now;
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                    
-                    document.getElementById('days_left').innerHTML = `${diffDays > 0 ? diffDays : 0} <span class="text-lg opacity-40 not-italic">дн.</span>`;
-                    document.getElementById('expiry_date').innerText = `Доступ до: ${exp.toLocaleDateString()}`;
-                    
-                    // Статус
-                    const statusBadge = document.getElementById('status_text');
-                    if (diffDays > 0) {
-                        statusBadge.innerText = "Активен";
-                        statusBadge.className = "status-badge text-[10px] px-3 py-1 rounded-full font-black uppercase";
-                    } else {
-                        statusBadge.innerText = "Истек";
-                        statusBadge.className = "status-expired text-[10px] px-3 py-1 rounded-full font-black uppercase";
-                    }
-
-                    // Сотрудники
-                    const workers = keyData.workers || [];
-                    document.getElementById('worker_count').innerText = `${workers.length} / ${keyData.limit}`;
-
-                    // Отрисовка списка сотрудников
-                    const listContainer = document.getElementById('staff_list');
-                    if (workers.length > 0) {
-                        listContainer.innerHTML = workers.map(name => `
-                            <div class="bg-white/5 border border-white/5 p-4 rounded-2xl flex items-center justify-between">
-                                <div class="flex items-center gap-3">
-                                    <div class="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-500 text-xs font-black uppercase">
-                                        ${name.substring(0,2)}
-                                    </div>
-                                    <div>
-                                        <p class="text-xs font-black uppercase italic">${name}</p>
-                                        <p class="text-[9px] opacity-40">Лицензия активна</p>
-                                    </div>
-                                </div>
-                                <div class="text-[9px] font-black text-amber-500/60 italic tracking-widest">OK</div>
-                            </div>
-                        `).join('');
-                    }
-
-                } else {
-                    document.getElementById('obj_name').innerText = "Ключ не найден";
+                const response = await fetch('/api/client-keys?chatId=' + chatId);
+                const keys = await response.json();
+                
+                const container = document.getElementById('container');
+                if (keys.length === 0) {
+                    container.innerHTML = '<p style="text-align:center">У вас пока нет активных объектов.</p>';
+                    return;
                 }
+
+                container.innerHTML = keys.map(k => `
+                    <div class="card">
+                        <div class="obj-name">${k.name}</div>
+                        <div class="info-row">
+                            <span class="info-label">Ключ:</span>
+                            <span class="info-value">${k.key}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Места:</span>
+                            <span class="info-value">${k.workers.length} / ${k.limit}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Активен до:</span>
+                            <span class="info-value">${new Date(k.expiry).toLocaleDateString()}</span>
+                        </div>
+                        
+                        <div class="workers-list">
+                            <b>Рабочие на объекте:</b><br>
+                            ${k.workers.length > 0 ? k.workers.join(', ') : 'Никого нет'}
+                        </div>
+
+                        <button class="btn btn-ext" onclick="requestExtend('${k.key}', '${k.name}')">ПРОДЛИТЬ ДОСТУП</button>
+                        <a href="https://t.me/твой_ник_в_телеге" class="btn btn-support">СВЯЗАТЬСЯ С ТЕХПОДДЕРЖКОЙ</a>
+                    </div>
+                `).join('');
             } catch (e) {
-                console.error("Ошибка загрузки данных:", e);
+                document.getElementById('container').innerHTML = '<p style="color:red">Ошибка загрузки</p>';
             }
         }
 
-        function handlePay() {
-            tg.HapticFeedback.notificationOccurred('success');
-            tg.showPopup({
-                title: 'Продление',
-                message: 'Выберите тариф для автоматического продления через Robokassa',
-                buttons: [
-                    {id: 'p1', type: 'default', text: '30 дней - 1500₽'},
-                    {id: 'p2', type: 'default', text: '180 дней - 7500₽'},
-                    {type: 'cancel', text: 'Отмена'}
-                ]
+        async function requestExtend(key, name) {
+            const res = await fetch('/api/notify-admin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key, name })
             });
+            if (res.ok) {
+                alert('Запрос на продление отправлен администратору!');
+            }
         }
 
         loadData();
