@@ -148,10 +148,11 @@ app.post('/upload', async (req, res) => {
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const oId = await getOrCreateFolder(kData ? kData.name : "Logist_Users", MY_ROOT_ID);
         const wId = await getOrCreateFolder(worker, oId);
-        const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], wId);
+        // ВОЗВРАЩЕНА ПАПКА ГОРОДА
+        const cityId = await getOrCreateFolder(city, wId);
+        const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
         if (image) {
             const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-            // Название фото по правилу: адрес номер дома, потом подъезд
             const fileName = `${address}_п${entrance}.jpg`;
             await drive.files.create({ resource: { name: fileName, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
         }
@@ -215,100 +216,169 @@ app.post('/api/notify-admin', async (req, res) => {
 
 // --- ДИЗАЙН АДМИНКИ (WEB APP) ---
 app.get('/dashboard', (req, res) => {
-    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ADMIN | LOGIST X</title>
+    res.send(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LOGIST_X | Admin</title>
+    <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        :root { --bg: #0a0c10; --card: #161b22; --accent: #f0ad4e; --text: #f0f6fc; --green: #238636; --border: #30363d; --red: #da3633; }
-        body { background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, sans-serif; padding: 15px; }
-        .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-        h3 { margin-top:0; color: var(--accent); }
-        input, select, button { width: 100%; padding: 12px; margin-bottom: 12px; border-radius: 8px; border: 1px solid var(--border); background: #010409; color: #fff; box-sizing: border-box; }
-        button { background: var(--accent); color: #000; font-weight: bold; cursor: pointer; border: none; }
-        .key-item { background: #0d1117; padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 5px solid var(--accent); }
-        .btn-red { background: var(--red); color: #fff; margin-top: 5px; }
-        .btn-green { background: var(--green); color: #fff; margin-top: 5px; }
-    </style></head>
-    <body>
-        <div class="card"><h3>НОВАЯ ЛИЦЕНЗИЯ</h3>
-            <input type="text" id="newName" placeholder="Название объекта">
-            <input type="number" id="newLimit" value="5">
-            <button onclick="addKey()">СГЕНЕРИРОВАТЬ КЛЮЧ</button>
-        </div>
-        <div id="keysList"></div>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { background-color: #010409; color: #e6edf3; font-family: 'Inter', sans-serif; margin: 0; padding: 15px; }
+        .gold-text { color: #f59e0b; }
+        .header { display: flex; align-items: center; gap: 10px; margin-bottom: 25px; padding: 10px; }
+        .logo-box { background: #f59e0b; padding: 5px; border-radius: 8px; display: flex; align-items: center; }
+        .logo-text { font-size: 1.2rem; font-weight: 900; text-transform: uppercase; letter-spacing: -1px; font-style: italic; }
+        .card { background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%); border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; padding: 20px; margin-bottom: 20px; }
+        input { width: 100%; padding: 14px; margin-bottom: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.3); color: #fff; box-sizing: border-box; }
+        .btn { width: 100%; padding: 16px; border-radius: 16px; border: none; font-weight: 900; text-transform: uppercase; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; transition: 0.2s; }
+        .btn-gold { background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%); color: #000; }
+        .btn-red { background: rgba(218, 54, 51, 0.1); color: #da3633; border: 1px solid rgba(218, 54, 51, 0.2); margin-top: 5px; padding: 8px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo-box"><i data-lucide="shield-check" color="black" size="18"></i></div>
+        <div class="logo-text">LOGIST<span class="gold-text">_X ADMIN</span></div>
+    </div>
+    <div class="card">
+        <div style="font-weight:900; margin-bottom:15px">НОВЫЙ ОБЪЕКТ</div>
+        <input id="n" placeholder="Название объекта">
+        <input id="l" type="number" value="5" placeholder="Лимит">
+        <button class="btn btn-gold" onclick="add()">СОЗДАТЬ КЛЮЧ</button>
+    </div>
+    <div id="list"></div>
     <script>
-        async function load(){ 
-            const res = await fetch('/api/keys'); const keys = await res.json(); 
-            document.getElementById('keysList').innerHTML = keys.map(k => \`
-                <div class="key-item">
-                    <div style="font-weight:bold; color:var(--accent)">\${k.key}</div>
-                    <input value="\${k.name}" onchange="upd('\${k.key}','name',this.value)" style="border:none; background:transparent; font-size:1.1rem; padding:5px 0">
-                    <div style="font-size:0.85rem; color:#8b949e">Пользователей: \${k.workers ? k.workers.length : 0} / \${k.limit}</div>
-                    <div style="font-size:0.85rem; color:#8b949e">До: \${new Date(k.expiry).toLocaleDateString()}</div>
-                    <button class="btn-green" onclick="extendKey('\${k.key}')">ПРОДЛИТЬ +30 ДН.</button>
-                    <button class="btn-red" onclick="delKey('\${k.key}')">УДАЛИТЬ</button>
-                </div>\`).join(''); 
+        async function load(){
+            const r = await fetch('/api/keys');
+            const keys = await r.json();
+            document.getElementById('list').innerHTML = keys.map(k => \`
+                <div class="card">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start">
+                        <div>
+                            <div class="gold-text" style="font-weight:900; font-family:monospace">\${k.key}</div>
+                            <div style="font-weight:700; margin:5px 0">\${k.name}</div>
+                            <div style="font-size:11px; opacity:0.5">Лимит: \${k.workers.length}/\${k.limit} | До: \${new Date(k.expiry).toLocaleDateString()}</div>
+                        </div>
+                        <button class="btn btn-gold" style="width:auto; padding:10px" onclick="ext('\${k.key}')">+30</button>
+                    </div>
+                    <button class="btn btn-red" onclick="del('\${k.key}')">УДАЛИТЬ ОБЪЕКТ</button>
+                </div>\`).join('');
+            lucide.createIcons();
         }
-        async function addKey(){ await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('newName').value,limit:document.getElementById('newLimit').value,days:30})}); load(); }
-        async function extendKey(key){ await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})}); load(); }
-        async function delKey(key){ if(confirm('Удалить?')){ await fetch('/api/keys/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})}); load(); }}
-        async function upd(key,f,v){ await fetch('/api/keys/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key, [f]:v})}); load(); }
+        async function add(){
+            await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:30})});
+            load();
+        }
+        async function ext(key){
+            await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});
+            load();
+        }
+        async function del(key){
+            if(confirm('Удалить?')){
+                await fetch('/api/keys/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});
+                load();
+            }
+        }
         load();
-    </script></body></html>`);
+    </script>
+</body>
+</html>`);
 });
 
 // --- ДИЗАЙН КЛИЕНТСКОГО КАБИНЕТА (WEB APP) ---
 app.get('/client-dashboard', (req, res) => {
-    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>CLIENT | LOGIST X</title>
+    res.send(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LOGIST_X | Кабинет</title>
+    <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        body { background: #0a0c10; color: #c9d1d9; font-family: sans-serif; padding: 15px; }
-        .accent { color: #f0ad4e; text-transform: uppercase; text-align:center; display:block; margin-bottom:20px; }
-        .card { background: #161b22; border-radius: 16px; padding: 20px; border: 1px solid #30363d; margin-bottom: 20px; }
-        .key-code { font-family: monospace; background: #0d1117; padding: 8px; border-radius: 6px; color: #f0ad4e; display: block; margin: 10px 0; text-align: center; }
-        .btn-pay { background: #f0ad4e; color: #000; border: none; padding: 14px; border-radius: 10px; width: 100%; font-weight: bold; text-decoration:none; display:block; text-align:center; }
-    </style></head>
-    <body>
-        <div class="accent">Мои Лицензии</div>
-        <div id="content"></div>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { background-color: #010409; color: #e6edf3; font-family: 'Inter', sans-serif; margin: 0; padding: 15px; }
+        .gold-text { color: #f59e0b; }
+        .header { display: flex; align-items: center; gap: 10px; margin-bottom: 25px; padding: 10px; }
+        .logo-box { background: #f59e0b; padding: 5px; border-radius: 8px; display: flex; align-items: center; }
+        .logo-text { font-size: 1.2rem; font-weight: 900; text-transform: uppercase; letter-spacing: -1px; font-style: italic; }
+        .card { background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%); border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; padding: 20px; margin-bottom: 20px; }
+        .obj-title { font-weight: 900; text-transform: uppercase; font-size: 1.1rem; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; }
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+        .stat-item { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); padding: 12px; border-radius: 16px; text-align: center; }
+        .stat-label { font-size: 9px; text-transform: uppercase; font-weight: 700; opacity: 0.5; display: block; margin-bottom: 4px; }
+        .stat-value { font-weight: 900; font-style: italic; font-size: 1.1rem; }
+        .workers-box { background: rgba(0,0,0,0.2); border-radius: 12px; padding: 12px; margin-bottom: 20px; }
+        .worker-tag { display: inline-block; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; margin: 2px; }
+        .btn { width: 100%; padding: 16px; border-radius: 16px; border: none; font-weight: 900; text-transform: uppercase; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; transition: 0.2s; text-decoration: none; }
+        .btn-gold { background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%); color: #000; }
+        .btn-outline { background: transparent; border: 1px solid rgba(255,255,255,0.1); color: #fff; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo-box"><i data-lucide="shield-check" color="black" size="18"></i></div>
+        <div class="logo-text">LOGIST<span class="gold-text">_X</span></div>
+    </div>
+    <div id="container"></div>
     <script>
-        async function load(){ 
-            const cid = new URLSearchParams(window.location.search).get('chatId'); 
-            const res = await fetch('/api/client-keys?chatId=' + cid); const keys = await res.json();
-            document.getElementById('content').innerHTML = keys.map(k => \`
-                <div class="card">
-                    <div style="font-size:1.3rem; font-weight:bold;">\${k.name}</div>
-                    <span class="key-code">\${k.key}</span>
-                    <div>👥 Мест: \${k.workers ? k.workers.length : 0} / \${k.limit}</div>
-                    <div>⏳ До: \${new Date(k.expiry).toLocaleDateString()}</div>
-                    <button onclick="requestExtend('\${k.key}', '\${k.name}')" class="btn-pay" style="margin-top:15px">ПРОДЛИТЬ СРОК</button>
-                </div>\`).join('');
+        async function load(){
+            const params = new URLSearchParams(window.location.search);
+            const cid = params.get('chatId');
+            try {
+                const r = await fetch('/api/client-keys?chatId=' + cid);
+                const keys = await r.json();
+                if (keys.length === 0) {
+                    document.getElementById('container').innerHTML = '<div class="card" style="text-align:center">НЕТ ОБЪЕКТОВ</div>';
+                    return;
+                }
+                document.getElementById('container').innerHTML = keys.map(k => {
+                    const days = Math.ceil((new Date(k.expiry) - new Date()) / (1000*60*60*24));
+                    return \`<div class="card">
+                        <div class="obj-title"><i data-lucide="map-pin" class="gold-text" size="18"></i> \${k.name}</div>
+                        <div class="stats-grid">
+                            <div class="stat-item"><span class="stat-label">Дней</span><span class="stat-value">\${days > 0 ? days : 0}</span></div>
+                            <div class="stat-item"><span class="stat-label">Места</span><span class="stat-value">\${k.workers.length} / \${k.limit}</span></div>
+                        </div>
+                        <div class="workers-box">
+                            <span style="font-size:9px; opacity:0.4; text-transform:uppercase; font-weight:900">В штате:</span><br>
+                            \${k.workers.length > 0 ? k.workers.map(w => \`<span class="worker-tag">\${w}</span>\`).join('') : '---'}
+                        </div>
+                        <button class="btn btn-gold" onclick="req('\${k.key}','\${k.name}')"><i data-lucide="zap" size="18"></i> ПРОДЛИТЬ</button>
+                        <a href="https://t.me/твой_ник" class="btn btn-outline"><i data-lucide="message-circle" size="18"></i> ПОДДЕРЖКА</a>
+                    </div>\`;
+                }).join('');
+                lucide.createIcons();
+            } catch(e) {}
         }
-        async function requestExtend(key, name) {
-            await fetch('/api/notify-admin', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key, name})});
-            alert('Запрос отправлен!');
+        async function req(key, name){
+            await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name})});
+            alert('ОТПРАВЛЕНО');
         }
         load();
-    </script></body></html>`);
+    </script>
+</body>
+</html>`);
 });
 
-// --- БОТ ---
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
-    if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ПАНЕЛЬ УПРАВЛЕНИЯ', { reply_markup: { inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ КЛЮЧАМИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
+    if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ПУЛЬТ УПРАВЛЕНИЯ', { reply_markup: { inline_keyboard: [[{ text: "📦 ОБЪЕКТЫ / КЛЮЧИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
     const keys = await readDatabase(); const ck = keys.find(k => String(k.ownerChatId) === String(cid));
-    if (ck) return ctx.reply('🏢 ВАШ КАБИНЕТ ОБЪЕКТОВ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
-    ctx.reply('👋 Logist X активен.', { reply_markup: { inline_keyboard: [[{ text: "🔑 У МЕНЯ ЕСТЬ КЛЮЧ", callback_data: "have" }]] } });
+    if (ck) return ctx.reply('🏢 ВАШ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
+    ctx.reply('👋 Введите ваш ключ для активации:');
 });
-
-bot.action('have', ctx => ctx.reply('Введите ключ:'));
 
 bot.on('text', async (ctx) => {
     if (ctx.chat.id === MY_TELEGRAM_ID) return; 
     const key = ctx.message.text.trim().toUpperCase();
     let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === key);
     if (idx !== -1) { 
-        if(keys[idx].ownerChatId) return ctx.reply('Занят.'); 
+        if(keys[idx].ownerChatId) return ctx.reply('Ключ уже занят.'); 
         keys[idx].ownerChatId = ctx.chat.id; await saveDatabase(keys); 
         ctx.reply('✅ АКТИВИРОВАНО!', { reply_markup: { inline_keyboard: [[{ text: "📊 МОЙ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
-    } else ctx.reply('Не найден.');
+    } else ctx.reply('Ключ не найден.');
 });
 
 bot.launch().then(() => console.log("READY"));
