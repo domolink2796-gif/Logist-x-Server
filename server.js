@@ -7,6 +7,7 @@ const { Readable } = require('stream');
 
 const app = express();
 app.use(cors());
+// Лимиты увеличены для передачи тяжелых фото отчетов
 app.use(bodyParser.json({ limit: '150mb' }));
 app.use(bodyParser.urlencoded({ limit: '150mb', extended: true }));
 
@@ -15,10 +16,8 @@ const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A';
 const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; 
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
-const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
-const MAX_DISTANCE_METERS = 500; 
 
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
@@ -64,7 +63,7 @@ async function saveDatabase(data) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- ТАБЛИЦА ЛОГИСТИКИ ---
+// --- ТАБЛИЦА ЛОГИСТИКИ (НЕ ТРОГАЕМ) ---
 async function appendToLogistReport(parentId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
         const reportName = `Отчет ${workerName}`;
@@ -80,17 +79,17 @@ async function appendToLogistReport(parentId, workerName, city, dateStr, address
         const meta = await sheets.spreadsheets.get({ spreadsheetId: ssId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId: ssId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            await sheets.spreadsheets.values.update({ spreadsheetId: ssId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS']] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId: ssId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАОРТЫ', 'СУММА', 'GPS']] } });
         }
         const gpsLink = (lat && lon) ? `=HYPERLINK("https://www.google.com/maps?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
         await sheets.spreadsheets.values.append({ spreadsheetId: ssId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleTimeString("ru-RU"), address, entrance, client, workType, price, gpsLink]] } });
     } catch (e) { console.error("Logist Sheet Error:", e); }
 }
 
-// --- ТАБЛИЦА МЕРЧАНДАЙЗИНГА ---
-async function appendToMerchReport(parentId, workerName, net, address, stock, shelf, pMy, pComp, pExp, pdfUrl, startTime, endTime, lat, lon) {
+// --- ТАБЛИЦА МЕРЧАНДАЙЗИНГА (ОБНОВЛЕНА) ---
+async function appendToMerchReport(parentId, data, pdfUrl) {
     try {
-        const reportName = `Мерч_Аналитика_${workerName}`;
+        const reportName = `Мерч_Аналитика_${data.worker}`;
         const q = `name = '${reportName}' and '${parentId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         let ssId = res.data.files.length > 0 ? res.data.files[0].id : null;
@@ -103,17 +102,27 @@ async function appendToMerchReport(parentId, workerName, net, address, stock, sh
         const meta = await sheets.spreadsheets.get({ spreadsheetId: ssId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId: ssId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            await sheets.spreadsheets.values.update({ spreadsheetId: ssId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId: ssId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'ВРЕМЯ В МАГАЗИНЕ', 'GPS']] } });
         }
-        let dur = "-";
-        if (startTime && endTime) {
-            const [h1, m1] = startTime.split(':').map(Number);
-            const [h2, m2] = endTime.split(':').map(Number);
-            const diff = (h2 * 60 + m2) - (h1 * 60 + m1);
-            dur = diff >= 0 ? `${diff} мин.` : "-";
-        }
-        const gps = (lat && lon) ? `=HYPERLINK("https://www.google.com/maps?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
-        await sheets.spreadsheets.values.append({ spreadsheetId: ssId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, dur, net, address, stock, shelf, pMy, pComp, pExp, pdfUrl, gps]] } });
+        const gps = (data.lat && data.lon) ? `=HYPERLINK("https://www.google.com/maps?q=${data.lat},${data.lon}"; "КАРТА")` : "Нет";
+        
+        // Согласно твоей инструкции: Название файла PDF должно быть "ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ" (в таблице как ссылка)
+        const pdfLink = `=HYPERLINK("${pdfUrl}"; "ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ")`;
+
+        await sheets.spreadsheets.values.append({ spreadsheetId: ssId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[
+            new Date().toLocaleDateString("ru-RU"), 
+            data.duration || "-", 
+            data.net, 
+            data.address, 
+            data.stock, 
+            data.faces, 
+            data.share, 
+            data.priceMy, 
+            data.priceComp, 
+            data.expDate, 
+            pdfLink, 
+            gps
+        ]] } });
     } catch (e) { console.error("Merch Sheet Error:", e); }
 }
 
@@ -134,18 +143,17 @@ app.post('/check-license', async (req, res) => {
     res.json({ status: 'active', expiry: kData.expiry });
 });
 
+// ЛОГИСТ (БЕЗ ИЗМЕНЕНИЙ)
 app.post('/upload', async (req, res) => {
     try {
         const { worker, city, address, entrance, client, image, lat, lon, workType, price } = req.body;
         const db = await readDatabase();
         const kData = db.keys.find(k => k.workers && k.workers.includes(worker)) || db.keys.find(k => k.key === 'DEV-MASTER-999');
         const dateStr = new Date().toISOString().split('T')[0];
-
         const oId = await getOrCreateFolder(kData ? kData.name : "Unknown", MY_ROOT_ID);
         const cityId = await getOrCreateFolder(city || "Без города", oId);
         const dateId = await getOrCreateFolder(dateStr, cityId);
         const wId = await getOrCreateFolder(worker, dateId);
-
         if (image) {
             const base64Data = image.includes(',') ? image.split(',')[1] : image;
             const photoName = `${address} ${entrance || ""}`.trim();
@@ -159,39 +167,39 @@ app.post('/upload', async (req, res) => {
     } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// МЕРЧ (ОБНОВЛЕННАЯ ИЕРАРХИЯ ПАПОК И ОТЧЕТ)
 app.post('/merch-upload', async (req, res) => {
     try {
-        const { worker, net, city, address, stock, shelf, priceMy, priceComp, expDate, pdf, startTime, endTime, lat, lon } = req.body;
+        const d = req.body;
         const db = await readDatabase();
-        const kData = db.keys.find(k => k.workers && k.workers.includes(worker)) || db.keys.find(k => k.key === 'DEV-MASTER-999');
+        const kData = db.keys.find(k => k.workers && k.workers.includes(d.worker)) || db.keys.find(k => k.key === 'DEV-MASTER-999');
         const dateStr = new Date().toISOString().split('T')[0];
 
+        // ИЕРАРХИЯ: Объект -> Сотрудник -> Город -> Дата
         const oId = await getOrCreateFolder(kData ? kData.name : "Merch_Objects", MERCH_ROOT_ID);
-        const cityId = await getOrCreateFolder(city || "Без города", oId);
+        const wId = await getOrCreateFolder(d.worker, oId);
+        const cityId = await getOrCreateFolder(d.city || "Орёл", wId);
         const dateId = await getOrCreateFolder(dateStr, cityId);
-        const wId = await getOrCreateFolder(worker, dateId);
 
         let pUrl = "Нет файла";
-        if (pdf) {
-            const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
+        if (d.pdf) {
+            const base64Data = d.pdf.includes(',') ? d.pdf.split(',')[1] : d.pdf;
+            // Файл отчета лежит в папке Даты
             const f = await drive.files.create({ 
-                resource: { name: `ОТЧЕТ_${address}.pdf`, parents: [wId] }, 
-                media: { mimeType: 'application/pdf', body: Readable.from(Buffer.from(base64Data, 'base64')) }, 
+                resource: { name: `ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ.jpg`, parents: [dateId] }, 
+                media: { mimeType: 'image/jpeg', body: Readable.from(Buffer.from(base64Data, 'base64')) }, 
                 fields: 'id, webViewLink' 
             });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
-        await appendToMerchReport(oId, worker, net, address, stock, shelf, priceMy, priceComp, expDate, pUrl, startTime, endTime, lat, lon);
+        await appendToMerchReport(oId, d, pUrl);
         res.json({ success: true, url: pUrl });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// --- АДМИН ПАНЕЛЬ И КЛИЕНТСКИЕ РОУТЫ ---
+// --- АДМИНКА (ДОБАВЛЕНО ПРОДЛЕНИЕ И СРОК) ---
 app.get('/api/keys', async (req, res) => { const db = await readDatabase(); res.json(db.keys); });
-app.get('/api/client-keys', async (req, res) => {
-    try { const db = await readDatabase(); res.json(db.keys.filter(k => String(k.ownerChatId) === String(req.query.chatId))); } catch (e) { res.json([]); }
-});
 
 app.post('/api/keys/add', async (req, res) => {
     const { name, limit, days } = req.body; 
@@ -202,50 +210,56 @@ app.post('/api/keys/add', async (req, res) => {
     await saveDatabase(db); res.json({ success: true });
 });
 
-// --- ДИЗАЙН ПАНЕЛЕЙ (HTML) ---
+app.post('/api/keys/extend', async (req, res) => {
+    const { key } = req.body;
+    let db = await readDatabase();
+    const idx = db.keys.findIndex(k => k.key === key);
+    if (idx !== -1) {
+        let d = new Date(db.keys[idx].expiry); d.setDate(d.getDate() + 30);
+        db.keys[idx].expiry = d.toISOString();
+        await saveDatabase(db); res.json({ success: true });
+    } else res.json({ success: false });
+});
+
 app.get('/dashboard', (req, res) => {
-    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ADMIN | LOGIST X</title>
+    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>ADMIN</title>
     <style>
-        :root { --bg: #0a0c10; --card: #161b22; --accent: #f0ad4e; --text: #f0f6fc; --border: #30363d; }
+        :root { --bg: #0a0c10; --card: #161b22; --accent: #f59e0b; --text: #fff; --border: #30363d; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; padding: 15px; }
         .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-        input, button { width: 100%; padding: 12px; margin-bottom: 12px; border-radius: 8px; border: 1px solid var(--border); background: #010409; color: #fff; box-sizing: border-box; }
-        button { background: var(--accent); color: #000; font-weight: bold; border: none; cursor: pointer; }
+        input, select, button { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--border); background: #000; color: #fff; box-sizing: border-box; }
+        button { background: var(--accent); color: #000; font-weight: bold; cursor: pointer; border: none; }
         .key-item { background: #0d1117; padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 5px solid var(--accent); }
     </style></head>
     <body>
-        <div class="card"><h3>НОВАЯ ЛИЦЕНЗИЯ</h3>
-            <input type="text" id="newName" placeholder="Название объекта">
-            <input type="number" id="newLimit" placeholder="Лимит человек" value="5">
-            <button onclick="addKey()">СГЕНЕРИРОВАТЬ</button>
+        <div class="card">
+            <h3>СОЗДАТЬ КЛЮЧ</h3>
+            <input type="text" id="n" placeholder="Объект">
+            <input type="number" id="l" value="5">
+            <select id="d"><option value="30">30 Дней</option><option value="365">1 Год</option></select>
+            <button onclick="add()">СОЗДАТЬ</button>
         </div>
-        <div id="keysList"></div>
-    <script>
-        async function load(){ 
-            const res = await fetch('/api/keys'); const keys = await res.json(); 
-            document.getElementById('keysList').innerHTML = keys.map(k => \`
-                <div class="key-item">
-                    <b>\${k.key}</b><br>🏢 \${k.name} | 👥 \${k.workers ? k.workers.length : 0}/\${k.limit}<br>📅 До: \${new Date(k.expiry).toLocaleDateString()}
-                </div>\`).join(''); 
-        }
-        async function addKey(){ 
-            await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('newName').value,limit:document.getElementById('newLimit').value,days:30})}); 
-            load(); 
-        }
-        load();
-    </script></body></html>`);
-});
-
-app.get('/client-dashboard', (req, res) => {
-    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>CLIENT | LOGIST X</title>
-    <style>body { background: #0a0c10; color: #c9d1d9; font-family: sans-serif; padding: 15px; } .card { background: #161b22; border-radius: 16px; padding: 20px; border: 1px solid #30363d; margin-bottom: 20px; }</style></head>
-    <body><div id="content">Загрузка...</div><script>
-        async function load(){ 
-            const cid = new URLSearchParams(window.location.search).get('chatId'); 
-            const res = await fetch('/api/client-keys?chatId=' + cid); const keys = await res.json();
-            document.getElementById('content').innerHTML = keys.map(k => \`<div class="card"><b>\${k.name}</b><br>Ключ: \${k.key}<br>Мест: \${k.workers.length}/\${k.limit}</div>\`).join('');
-        } load();
-    </script></body></html>`);
+        <div id="list"></div>
+        <script>
+            async function load(){
+                const r = await fetch('/api/keys'); const keys = await r.json();
+                document.getElementById('list').innerHTML = keys.map(k => \`
+                    <div class="key-item">
+                        <b>\${k.key}</b> | \${k.name}<br>
+                        👥 \${k.workers ? k.workers.length : 0}/\${k.limit} | 📅 До: \${new Date(k.expiry).toLocaleDateString()}<br>
+                        <button style="width:auto; padding:5px 10px; margin-top:5px; background:#238636; color:#fff;" onclick="ext('\${k.key}')">Продлить +30 дн.</button>
+                    </div>\`).join('');
+            }
+            async function add(){
+                await fetch('/api/keys/add', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:document.getElementById('n').value, limit:document.getElementById('l').value, days:document.getElementById('d').value})});
+                load();
+            }
+            async function ext(key){
+                await fetch('/api/keys/extend', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key})});
+                load();
+            }
+            load();
+        </script></body></html>`);
 });
 
 // --- БОТ ---
@@ -268,7 +282,7 @@ bot.on('text', async (ctx) => {
         if(db.keys[idx].ownerChatId) return ctx.reply('⚠️ Этот ключ уже активирован.');
         db.keys[idx].ownerChatId = ctx.chat.id;
         await saveDatabase(db);
-        ctx.reply('✅ КЛЮЧ УСПЕШНО ПРИВЯЗАН! Теперь вам доступен личный кабинет Начальника через /start');
+        ctx.reply('✅ КЛЮЧ УСПЕШНО ПРИВЯЗАН!');
     } else ctx.reply('❌ Ключ не найден.');
 });
 
