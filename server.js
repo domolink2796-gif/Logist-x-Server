@@ -95,11 +95,11 @@ async function appendToMerchReport(parentId, data, pdfUrl) {
         const meta = await sheets.spreadsheets.get({ spreadsheetId: ssId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId: ssId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            await sheets.spreadsheets.values.update({ spreadsheetId: ssId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'ОТЧЕТ', 'GPS']] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId: ssId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'ОТЧЕТ', 'GPS']] } });
         }
         const gps = (data.lat && data.lon) ? `=HYPERLINK("https://www.google.com/maps?q=${data.lat},${data.lon}"; "КАРТА")` : "Нет";
-        const pdfLink = `=HYPERLINK("${pdfUrl}"; "ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ")`;
-        await sheets.spreadsheets.values.append({ spreadsheetId: ssId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), data.duration || "-", data.net, data.address, data.stock, data.faces, data.share, data.priceMy, data.priceComp, data.expDate, pdfLink, gps]] } });
+        const pdfLink = `=HYPERLINK("${pdfUrl}"; "ОТКРЫТЬ ОТЧЕТ")`;
+        await sheets.spreadsheets.values.append({ spreadsheetId: ssId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), data.startTime || "-", data.endTime || "-", data.duration || "-", data.net, data.address, data.stock, data.faces, data.share, data.ourPrice, data.compPrice, data.expDate, pdfLink, gps]] } });
     } catch (e) { console.error("Merch Sheet Error:", e); }
 }
 
