@@ -136,6 +136,12 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
     } catch (e) { console.error("Merch Error:", e); }
 }
 
+// === НОВЫЙ РОУТ ДЛЯ РЕФЕРАЛОВ (НЕВИДИМЫЙ ПЕРЕХВАТ) ===
+app.get('/reg', (req, res) => {
+    const ref = req.query.ref || '';
+    res.send(`<html><body><script>localStorage.setItem('partnerRef', '${ref}'); window.location.href='/';</script></body></html>`);
+});
+
 // === УНИВЕРСАЛЬНЫЙ РОУТЕР UPLOAD (ГЛАВНЫЙ ВХОД) ===
 app.post('/upload', async (req, res) => {
     try {
@@ -143,7 +149,7 @@ app.post('/upload', async (req, res) => {
 
         // 1. ПРОВЕРКА ЛИЦЕНЗИИ (Если action='check_license')
         if (action === 'check_license') {
-            const { licenseKey, workerName } = req.body;
+            const { licenseKey, workerName, referrerId } = req.body; // Добавили referrerId
             const finalKey = (licenseKey || '').trim().toUpperCase();
             
             const keys = await readDatabase();
@@ -157,6 +163,13 @@ app.post('/upload', async (req, res) => {
             if (workerName && !kData.workers.includes(workerName)) {
                 if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест исчерпан' });
                 kData.workers.push(workerName); 
+                
+                // Если клиент пришел от партнера, записываем это в базу ключа
+                if (referrerId && !kData.partnerId) {
+                    kData.partnerId = referrerId;
+                    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔥 **НОВЫЙ КЛИЕНТ ОТ ПАРТНЕРА!**\n\nОбъект: ${kData.name}\nПартнер ID: ${referrerId}\nНужно начислить: **15%** бонуса.`);
+                }
+                
                 await saveDatabase(keys);
             }
             return res.json({ status: 'active', expiry: kData.expiry });
@@ -250,21 +263,44 @@ app.post('/api/notify-admin', async (req, res) => {
 
 // --- ВЕБ-ИНТЕРФЕЙСЫ (АДМИНКА И ЛК) ---
 app.get('/dashboard', (req, res) => {
-    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>LOGIST_X | ADMIN</title><script src="https://unpkg.com/lucide@latest"></script><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;900&display=swap');body{background:#010409;color:#e6edf3;font-family:'Inter',sans-serif;margin:0;padding:20px;display:flex;flex-direction:column;align-items:center}.card{background:#0d1117;border:1px solid #30363d;border-radius:16px;padding:20px;margin-bottom:15px;width:100%;max-width:400px;box-sizing:border-box}.btn{width:100%;padding:14px;border-radius:10px;border:none;font-weight:900;cursor:pointer;text-transform:uppercase;font-size:12px;display:flex;align-items:center;justify-content:center;gap:8px;transition:0.2s}.btn-gold{background:#f59e0b;color:#000}.btn-gold:hover{background:#d97706}.gold{color:#f59e0b}input,select{width:100%;padding:12px;background:#000;border:1px solid #30363d;color:#fff;margin-bottom:10px;border-radius:8px;box-sizing:border-box;font-family:inherit}</style></head><body><h2 style="font-style:italic;letter-spacing:-1px">LOGIST<span class="gold">_X</span> ADMIN</h2><div class="card"><input id="n" placeholder="НАЗВАНИЕ ОБЪЕКТА"><input id="l" type="number" value="5" placeholder="ЛИМИТ МЕСТ"><select id="d"><option value="30">30 ДНЕЙ (МЕСЯЦ)</option><option value="365">365 ДНЕЙ (ГОД)</option></select><button class="btn btn-gold" onclick="add()"><i data-lucide="plus-circle"></i> СОЗДАТЬ КЛЮЧ</button></div><div id="list" style="width:100%;max-width:400px"></div><script>const PASS="${ADMIN_PASS}";function auth(){if(localStorage.getItem('p')!==PASS){let p=prompt('ACCESS PASSWORD');if(p===PASS)localStorage.setItem('p',PASS);else auth();}}async function load(){const r=await fetch('/api/keys');const d=await r.json();document.getElementById('list').innerHTML=d.map(k=>'<div class="card"><div style="display:flex;justify-content:space-between;align-items:start"><b class="gold" style="font-size:18px">'+k.key+'</b><span style="font-size:10px;background:#21262d;padding:4px 8px;border-radius:10px">'+(k.workers?k.workers.length:0)+'/'+k.limit+'</span></div><div style="font-size:13px;margin:10px 0;color:#8b949e">ОБЪЕКТ: <span style="color:#fff">'+k.name+'</span><br>ДО: <span style="color:#fff">'+new Date(k.expiry).toLocaleDateString()+'</span></div><button class="btn btn-gold" style="height:35px;font-size:10px;opacity:0.8" onclick="ext(\\''+k.key+'\\')"><i data-lucide="calendar-plus" style="width:14px"></i> ПРОДЛИТЬ НА МЕСЯЦ</button></div>').join('');lucide.createIcons();}async function add(){await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:document.getElementById('d').value})});load()}async function ext(key){if(confirm('Продлить лицензию на 30 дней?')){await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}}auth();load();</script></body></html>`);
+    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>LOGIST_X | ADMIN</title><script src="https://unpkg.com/lucide@latest"></script><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;900&display=swap');body{background:#010409;color:#e6edf3;font-family:'Inter',sans-serif;margin:0;padding:20px;display:flex;flex-direction:column;align-items:center}.card{background:#0d1117;border:1px solid #30363d;border-radius:16px;padding:20px;margin-bottom:15px;width:100%;max-width:400px;box-sizing:border-box}.btn{width:100%;padding:14px;border-radius:10px;border:none;font-weight:900;cursor:pointer;text-transform:uppercase;font-size:12px;display:flex;align-items:center;justify-content:center;gap:8px;transition:0.2s}.btn-gold{background:#f59e0b;color:#000}.btn-gold:hover{background:#d97706}.gold{color:#f59e0b}input,select{width:100%;padding:12px;background:#000;border:1px solid #30363d;color:#fff;margin-bottom:10px;border-radius:8px;box-sizing:border-box;font-family:inherit}</style></head><body><h2 style="font-style:italic;letter-spacing:-1px">LOGIST<span class="gold">_X</span> ADMIN</h2><div class="card"><input id="n" placeholder="НАЗВАНИЕ ОБЪЕКТА"><input id="l" type="number" value="5" placeholder="ЛИМИТ МЕСТ"><select id="d"><option value="30">30 ДНЕЙ (МЕСЯЦ)</option><option value="365">365 ДНЕЙ (ГОД)</option></select><button class="btn btn-gold" onclick="add()"><i data-lucide="plus-circle"></i> СОЗДАТЬ КЛЮЧ</button></div><div id="list" style="width:100%;max-width:400px"></div><script>const PASS="${ADMIN_PASS}";function auth(){if(localStorage.getItem('p')!==PASS){let p=prompt('ACCESS PASSWORD');if(p===PASS)localStorage.setItem('p',PASS);else auth();}}async function load(){const r=await fetch('/api/keys');const d=await r.json();document.getElementById('list').innerHTML=d.map(k=>'<div class="card"><div style="display:flex;justify-content:space-between;align-items:start"><b class="gold" style="font-size:18px">'+k.key+'</b><span style="font-size:10px;background:#21262d;padding:4px 8px;border-radius:10px">'+(k.workers?k.workers.length:0)+'/'+k.limit+'</span></div><div style="font-size:13px;margin:10px 0;color:#8b949e">ОБЪЕКТ: <span style="color:#fff">'+k.name+'</span><br>ДО: <span style="color:#fff">'+new Date(k.expiry).toLocaleDateString()+'</span>'+(k.partnerId ? '<br>ПАРТНЕР: <span class="gold">'+k.partnerId+'</span>' : '')+'</div><button class="btn btn-gold" style="height:35px;font-size:10px;opacity:0.8" onclick="ext(\\''+k.key+'\\')"><i data-lucide="calendar-plus" style="width:14px"></i> ПРОДЛИТЬ НА МЕСЯЦ</button></div>').join('');lucide.createIcons();}async function add(){await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:document.getElementById('d').value})});load()}async function ext(key){if(confirm('Продлить лицензию на 30 дней?')){await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}}auth();load();</script></body></html>`);
 });
 
 app.get('/client-dashboard', (req, res) => {
     res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>MY OBJECTS</title><script src="https://unpkg.com/lucide@latest"></script><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;900&display=swap');body{background:#010409;color:#e6edf3;font-family:'Inter',sans-serif;margin:0;padding:15px}.card{background:#0d1117;border:1px solid #30363d;border-radius:20px;padding:20px;margin-bottom:15px;position:relative;overflow:hidden}.btn-action{background:#f59e0b;color:#000;border:none;padding:15px;border-radius:12px;width:100%;font-weight:900;cursor:pointer;text-transform:uppercase;font-size:12px;display:flex;align-items:center;justify-content:center;gap:10px;margin-top:15px}.gold{color:#f59e0b}.status{font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:900;margin-bottom:5px;display:block}</style></head><body><h2 style="text-align:center;font-style:italic">МОИ <span class="gold">ОБЪЕКТЫ</span></h2><div id="c"><p align="center" style="opacity:0.5">Загрузка данных...</p></div><script>async function l(){const id=new URLSearchParams(window.location.search).get('chatId');const r=await fetch('/api/client-keys?chatId='+id);const k=await r.json();document.getElementById('c').innerHTML=k.length?k.map(i=>'<div class="card"><span class="status gold">Активен</span><h3 style="margin:5px 0">'+i.name+'</h3><code style="background:#000;padding:5px 10px;border-radius:8px;display:inline-block;margin:10px 0;border:1px solid #30363d">'+i.key+'</code><div style="display:flex;gap:20px;font-size:12px;opacity:0.7"><span><i data-lucide="users" style="width:12px;vertical-align:middle"></i> '+i.workers.length+' / '+i.limit+'</span><span><i data-lucide="calendar" style="width:12px;vertical-align:middle"></i> до '+new Date(i.expiry).toLocaleDateString()+'</span></div><button class="btn-action" onclick="ask(\\''+i.key+'\\',\\''+i.name+'\\')"><i data-lucide="zap"></i> Запросить продление</button></div>').join(''):'<p align="center" style="margin-top:50px;opacity:0.5">У вас пока нет привязанных объектов</p>';lucide.createIcons();}async function ask(k,n){await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k,name:n})});alert('Запрос на продление отправлен администратору!');}l();</script></body></html>`);
 });
 
-// --- TELEGRAM BOT ---
+// --- TELEGRAM BOT (ОБНОВЛЕННЫЙ С РОЛЯМИ) ---
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
     if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ADMIN PANEL', { reply_markup: { inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
-    const keys = await readDatabase(); 
-    if (keys.find(k => String(k.ownerChatId) === String(cid))) return ctx.reply('🏢 ЛИЧНЫЙ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ОБЪЕКТЫ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
-    ctx.reply('Введите ключ доступа для привязки:');
+    
+    // Главное меню выбора роли
+    ctx.reply('ДОБРО ПОЖАЛОВАТЬ В LOGIST_X!\nВыберите вашу роль:', {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: "💼 Я КЛИЕНТ / ЛОГИСТ", callback_data: "role_user" }],
+                [{ text: "💰 СТАТЬ ПАРТНЕРОМ (15%)", callback_data: "role_partner" }]
+            ]
+        }
+    });
 });
+
+bot.on('callback_query', async (ctx) => {
+    const data = ctx.callbackQuery.data;
+    if (data === 'role_user') {
+        const keys = await readDatabase(); 
+        if (keys.find(k => String(k.ownerChatId) === String(ctx.chat.id))) {
+            return ctx.reply('🏢 ВАШ ЛИЧНЫЙ КАБИНЕТ:', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ОБЪЕКТЫ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
+        }
+        ctx.reply('Введите ваш лицензионный ключ для активации:');
+    }
+    if (data === 'role_partner') {
+        const refLink = `${SERVER_URL}/reg?ref=${ctx.chat.id}`;
+        ctx.reply(`🤝 **ПАРТНЕРСКАЯ ПРОГРАММА**\n\nТвоя ссылка для привлечения клиентов:\n\`${refLink}\`\n\n📜 **УСЛОВИЯ:**\n1. Ты получаешь **15%** с каждой оплаты лицензии.\n2. Ссылка запоминает клиента навсегда.\n3. Выплаты по запросу администратору.`, { parse_mode: 'Markdown' });
+    }
+});
+
 bot.on('text', async (ctx) => {
     if (ctx.chat.id === MY_TELEGRAM_ID) return; 
     const key = ctx.message.text.trim();
