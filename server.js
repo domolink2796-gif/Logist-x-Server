@@ -3,6 +3,7 @@ const { google } = require('googleapis');
 const { Telegraf } = require('telegraf');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const { Readable } = require('stream');
 const path = require('path');
 
 const app = express();
@@ -29,16 +30,14 @@ const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- РАБОТА С БАЗОЙ (DRIVE JSON) ---
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 async function readDatabase() {
     try {
         const q = `name = '${DB_FILE_NAME}' and '${MY_ROOT_ID}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         if (res.data.files.length === 0) return [];
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
-        let data = content.data;
-        if (typeof data === 'string') data = JSON.parse(data);
-        return data.keys || [];
+        return content.data.keys || [];
     } catch (e) { return []; }
 }
 
@@ -47,217 +46,133 @@ async function saveDatabase(keys) {
         const q = `name = '${DB_FILE_NAME}' and '${MY_ROOT_ID}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         const media = { mimeType: 'application/json', body: JSON.stringify({ keys }, null, 2) };
-        if (res.data.files.length > 0) {
-            await drive.files.update({ fileId: res.data.files[0].id, media });
-        } else {
-            await drive.files.create({ resource: { name: DB_FILE_NAME, parents: [MY_ROOT_ID] }, media });
-        }
-    } catch (e) { console.error("Database save error:", e); }
+        if (res.data.files.length > 0) { await drive.files.update({ fileId: res.data.files[0].id, media }); }
+        else { await drive.files.create({ resource: { name: DB_FILE_NAME, parents: [MY_ROOT_ID] }, media }); }
+    } catch (e) { console.error("DB Save Error"); }
 }
 
-// --- РОУТ АКТИВАЦИИ (СПЕЦИАЛЬНО ДЛЯ МЕРЧА) ---
+async function getOrCreateFolder(name, parentId) {
+    const q = `name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
+    const res = await drive.files.list({ q });
+    if (res.data.files.length > 0) return res.data.files[0].id;
+    const file = await drive.files.create({ resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }, fields: 'id' });
+    return file.data.id;
+}
+
+// --- ЛОГИКА СОХРАНЕНИЯ ЛОГИСТА (ФОТО + ТАБЛИЦЫ) ---
+async function appendToReport(spreadsheetId, data) {
+    await sheets.spreadsheets.values.append({
+        spreadsheetId, range: 'Sheet1!A1', valueInputOption: 'USER_ENTERED',
+        resource: { values: [[data.date, data.address, data.entrance, data.worker, data.status, data.photoUrl]] }
+    });
+}
+
+// --- РОУТЫ СЕРВЕРА ---
+
+// 1. УНИВЕРСАЛЬНЫЙ UPLOAD ДЛЯ ЛОГИСТА
+app.post('/upload', async (req, res) => {
+    try {
+        const { action, licenseKey, workerName, image, address, entrance, status, date } = req.body;
+        const keys = await readDatabase();
+
+        // Активация внутри Логиста
+        if (action === 'check_license') {
+            const kData = keys.find(k => k.key === (licenseKey || '').trim().toUpperCase());
+            if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
+            if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
+            if (!kData.workers) kData.workers = [];
+            if (workerName && !kData.workers.includes(workerName)) {
+                if (kData.workers.length >= kData.limit) return res.json({ status: 'error', message: 'Мест нет' });
+                kData.workers.push(workerName); await saveDatabase(keys);
+            }
+            return res.json({ status: 'active', expiry: kData.expiry });
+        }
+
+        // Сохранение фото Логиста
+        if (image) {
+            const workerFolderId = await getOrCreateFolder(workerName, MY_ROOT_ID);
+            const cleanAddr = address.replace(/[\\\/\?\*\:\|\"<>]/g, "");
+            const fileName = `${cleanAddr}_${entrance}_${workerName}.jpg`;
+            const buffer = Buffer.from(image, 'base64');
+            const media = { mimeType: 'image/jpeg', body: Readable.from(buffer) };
+            const file = await drive.files.create({ resource: { name: fileName, parents: [workerFolderId] }, media, fields: 'id, webViewLink' });
+
+            const tableId = '1f1S797i037tVIdy40G9o0Y5I7GfR00u6O_y92G5H2E0'; // Твоя таблица
+            await appendToReport(tableId, { date, address, entrance, worker: workerName, status, photoUrl: file.data.webViewLink });
+            return res.json({ success: true, url: file.data.webViewLink });
+        }
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// 2. АКТИВАЦИЯ ДЛЯ МЕРЧА (ОТДЕЛЬНО)
 app.post('/check-license', async (req, res) => {
     try {
         const { licenseKey, workerName } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.key === (licenseKey || '').trim().toUpperCase());
-
-        if (!kData) return res.json({ status: 'error', message: 'КЛЮЧ НЕ НАЙДЕН' });
-        if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'СРОК КЛЮЧА ИСТЁК' });
-
-        if (!kData.workers) kData.workers = [];
-        if (workerName && !kData.workers.includes(workerName)) {
-            if (kData.workers.length >= parseInt(kData.limit)) {
-                return res.json({ status: 'error', message: 'НЕТ СВОБОДНЫХ МЕСТ' });
+        if (kData && new Date(kData.expiry) > new Date()) {
+            if (!kData.workers.includes(workerName)) {
+                kData.workers.push(workerName); await saveDatabase(keys);
             }
-            kData.workers.push(workerName);
-            await saveDatabase(keys);
+            return res.json({ status: 'active' });
         }
-        res.json({ status: 'active' });
-    } catch (e) {
-        res.status(500).json({ status: 'error', message: 'ОШИБКА СЕРВЕРА' });
-    }
+        res.json({ status: 'error', message: 'Ключ не активен' });
+    } catch (e) { res.json({ status: 'error' }); }
 });
 
-// --- РОУТ ЗАГРУЗКИ ОТЧЕТОВ МЕРЧА ---
+// 3. ЗАГРУЗКА ИЗ МЕРЧА
 app.post('/merch-upload', async (req, res) => {
     try {
-        const data = req.body;
-        // Здесь твоя логика сохранения PDF в MERCH_ROOT_ID и запись в таблицу
-        // (Для краткости не дублирую весь код сохранения, но роут теперь доступен)
-        console.log("Отчет мерча получен от:", data.worker);
+        const d = req.body;
+        const merchFolderId = await getOrCreateFolder(d.worker, MERCH_ROOT_ID);
+        const buffer = Buffer.from(d.pdf.split(',')[1], 'base64');
+        const media = { mimeType: 'image/jpeg', body: Readable.from(buffer) };
+        const file = await drive.files.create({ resource: { name: `${d.pdfName}.jpg`, parents: [merchFolderId] }, media, fields: 'id, webViewLink' });
+        
+        // Запись в таблицу Мерча (твоя таблица мерча)
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p', // Замени на ID таблицы мерча если нужно
+            range: 'Sheet1!A1', valueInputOption: 'USER_ENTERED',
+            resource: { values: [[new Date().toLocaleString(), d.net, d.address, d.worker, d.stock, d.share, file.data.webViewLink]] }
+        });
         res.json({ success: true });
-    } catch (e) {
-        res.json({ success: false, error: e.message });
-    }
+    } catch (e) { res.json({ success: false }); }
 });
 
-// --- API ДЛЯ АДМИНКИ И КЛИЕНТОВ ---
+// --- API ДЛЯ АДМИНКИ ---
 app.get('/api/keys', async (req, res) => res.json(await readDatabase()));
-app.get('/api/client-keys', async (req, res) => {
-    const keys = await readDatabase();
-    res.json(keys.filter(k => String(k.ownerChatId) === String(req.query.chatId)));
-});
-
 app.post('/api/keys/add', async (req, res) => {
-    const { name, limit, days } = req.body;
-    let keys = await readDatabase();
+    const { name, limit, days } = req.body; let keys = await readDatabase();
     const newK = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
-    const exp = new Date();
-    exp.setDate(exp.getDate() + parseInt(days));
+    const exp = new Date(); exp.setDate(exp.getDate() + parseInt(days));
     keys.push({ key: newK, name, limit: parseInt(limit), expiry: exp.toISOString(), workers: [], ownerChatId: null });
-    await saveDatabase(keys);
-    res.json({ success: true });
+    await saveDatabase(keys); res.json({ success: true });
 });
-
 app.post('/api/keys/delete', async (req, res) => {
-    let keys = await readDatabase();
-    keys = keys.filter(k => k.key !== req.body.key);
-    await saveDatabase(keys);
-    res.json({ success: true });
+    let keys = await readDatabase(); keys = keys.filter(k => k.key !== req.body.key);
+    await saveDatabase(keys); res.json({ success: true });
 });
-
 app.post('/api/keys/clear', async (req, res) => {
-    let keys = await readDatabase();
-    const idx = keys.findIndex(k => k.key === req.body.key);
+    let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === req.body.key);
     if (idx !== -1) { keys[idx].workers = []; await saveDatabase(keys); }
     res.json({ success: true });
 });
 
-// --- КРУТАЯ АДМИНКА (В СТИЛЕ ЛОГИСТА) ---
+// --- ДИЗАЙН АДМИНКИ ---
 app.get('/dashboard', (req, res) => {
-    res.send(`
-    <!DOCTYPE html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>LOGIST_X | ADMIN</title>
-        <script src="https://unpkg.com/lucide@latest"></script>
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-            body { background: #010409; color: #e6edf3; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; }
-            .gold { color: #f59e0b; }
-            .card { background: #0d1117; border: 1px solid #30363d; border-radius: 16px; padding: 20px; margin-bottom: 15px; }
-            .btn { width: 100%; padding: 12px; border-radius: 10px; border: none; font-weight: 900; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; text-transform: uppercase; font-size: 11px; }
-            .btn-gold { background: #f59e0b; color: #000; }
-            .btn-red { background: #da3633; color: #fff; margin-top: 10px; }
-            .btn-outline { background: transparent; border: 1px solid #30363d; color: #8b949e; margin-top: 10px; }
-            input, select { width: 100%; padding: 12px; background: #010409; border: 1px solid #30363d; border-radius: 10px; color: #fff; margin-bottom: 10px; box-sizing: border-box; }
-            .k-title { font-size: 1.2rem; font-weight: 900; font-style: italic; margin-bottom: 5px; }
-            .k-info { font-size: 10px; opacity: 0.6; text-transform: uppercase; letter-spacing: 1px; line-height: 1.5; }
-        </style>
-    </head>
-    <body>
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
-            <div style="background:#f59e0b; padding:5px; border-radius:8px;"><i data-lucide="shield-check" color="black" size="20"></i></div>
-            <h2 style="margin:0; font-weight:900; font-style:italic;">LOGIST<span class="gold">_X</span> <span style="opacity:0.5; font-size:0.7em;">ADMIN</span></h2>
-        </div>
-
-        <div class="card">
-            <input id="n" placeholder="ОБЪЕКТ (НАПРИМЕР: ОРЕЛ_СКЛАД)">
-            <input id="l" type="number" value="5" placeholder="ЛИМИТ ЛЮДЕЙ">
-            <select id="d">
-                <option value="30">30 ДНЕЙ (МЕСЯЦ)</option>
-                <option value="365">365 ДНЕЙ (ГОД)</option>
-            </select>
-            <button class="btn btn-gold" onclick="add()"><i data-lucide="plus" size="16"></i> СОЗДАТЬ КЛЮЧ</button>
-        </div>
-
-        <div id="list"></div>
-
-        <script>
-            async function load() {
-                const r = await fetch('/api/keys');
-                const keys = await r.json();
-                document.getElementById('list').innerHTML = keys.map(k => \`
-                    <div class="card">
-                        <div class="k-title gold">\${k.key}</div>
-                        <div class="k-info">
-                            ОБЪЕКТ: \${k.name}<br>
-                            МЕСТА: \${k.workers.length} / \${k.limit}<br>
-                            ДО: \${new Date(k.expiry).toLocaleDateString()}<br>
-                            ID ВЛАДЕЛЬЦА: \${k.ownerChatId || 'СВОБОДЕН'}<br>
-                            <span style="color:#f59e0b">ЛЮДИ: \${k.workers.join(', ') || 'НЕТ'}</span>
-                        </div>
-                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:15px;">
-                            <button class="btn btn-outline" onclick="clr('\${k.key}')">СБРОСИТЬ ЛЮДЕЙ</button>
-                            <button class="btn btn-red" onclick="del('\${k.key}')">УДАЛИТЬ</button>
-                        </div>
-                    </div>
-                \`).join('');
-                lucide.createIcons();
-            }
-
-            async function add() {
-                const name = document.getElementById('n').value;
-                const limit = document.getElementById('l').value;
-                const days = document.getElementById('d').value;
-                if(!name) return alert('ВВЕДИ ИМЯ');
-                await fetch('/api/keys/add', {
-                    method: 'POST',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({name, limit, days})
-                });
-                load();
-            }
-
-            async function clr(key) {
-                if(confirm('ОЧИСТИТЬ СПИСОК РАБОЧИХ?')) {
-                    await fetch('/api/keys/clear', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({key}) });
-                    load();
-                }
-            }
-
-            async function del(key) {
-                if(confirm('УДАЛИТЬ КЛЮЧ НАВСЕГДА?')) {
-                    await fetch('/api/keys/delete', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({key}) });
-                    load();
-                }
-            }
-
-            load();
-        </script>
-    </body>
-    </html>
-    `);
+    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>LOGIST_X | ADMIN</title><script src="https://unpkg.com/lucide@latest"></script><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;900&display=swap');body{background:#010409;color:#e6edf3;font-family:'Inter',sans-serif;padding:20px}.card{background:#0d1117;border:1px solid #30363d;border-radius:15px;padding:20px;margin-bottom:10px}.btn{width:100%;padding:12px;border-radius:8px;border:none;font-weight:900;cursor:pointer;text-transform:uppercase;font-size:10px}.btn-gold{background:#f59e0b;color:#000}.gold{color:#f59e0b}input,select{width:100%;padding:12px;background:#000;border:1px solid #30363d;color:#fff;margin-bottom:10px;border-radius:8px;box-sizing:border-box}</style></head><body><h2 style="font-style:italic">LOGIST<span class="gold">_X</span> ADMIN</h2><div class="card"><input id="n" placeholder="ОБЪЕКТ"><input id="l" type="number" value="5" placeholder="ЛИМИТ"><select id="d"><option value="30">30 ДНЕЙ</option><option value="365">ГОД</option></select><button class="btn btn-gold" onclick="add()">СОЗДАТЬ КЛЮЧ</button></div><div id="list"></div><script>async function load(){const r=await fetch('/api/keys');const d=await r.json();document.getElementById('list').innerHTML=d.map(k=>'<div class="card"><b class="gold">'+k.key+'</b><div style="font-size:10px;opacity:0.6;margin:10px 0">ОБЪЕКТ: '+k.name+'<br>МЕСТА: '+k.workers.length+'/'+k.limit+'<br>ДО: '+new Date(k.expiry).toLocaleDateString()+'</div><button class="btn btn-gold" style="opacity:0.5" onclick="clr(\\''+k.key+'\\')">СБРОС</button><button class="btn" style="background:#da3633;color:#fff;margin-top:5px" onclick="del(\\''+k.key+'\\')">УДАЛИТЬ</button></div>').join('');}async function add(){await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:document.getElementById('d').value})});load()}async function clr(key){await fetch('/api/keys/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}async function del(key){await fetch('/api/keys/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}load();</script></body></html>`);
 });
 
-// --- ТЕЛЕГРАМ БОТ ---
-bot.start(async (ctx) => {
-    const cid = ctx.chat.id;
-    if (cid === MY_TELEGRAM_ID) {
-        return ctx.reply('👑 ПАНЕЛЬ УПРАВЛЕНИЯ LOGIST_X', {
-            reply_markup: { inline_keyboard: [[{ text: "ОТКРЫТЬ АДМИНКУ", web_app: { url: SERVER_URL + "/dashboard" } }]] }
-        });
-    }
-    const keys = await readDatabase();
-    const userKey = keys.find(k => String(k.ownerChatId) === String(cid));
-    if (userKey) {
-        return ctx.reply('🏢 ВАШ ЛИЧНЫЙ КАБИНЕТ', {
-            reply_markup: { inline_keyboard: [[{ text: "МОИ ОБЪЕКТЫ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] }
-        });
-    }
-    ctx.reply('ПРИВЕТ! ВВЕДИТЕ ВАШ ЛИЦЕНЗИОННЫЙ КЛЮЧ ДЛЯ ПРИВЯЗКИ:');
-});
-
+bot.start((ctx) => ctx.reply('ВВЕДИТЕ КЛЮЧ ДЛЯ ПРИВЯЗКИ:'));
 bot.on('text', async (ctx) => {
-    if (ctx.chat.id === MY_TELEGRAM_ID) return;
-    const msg = ctx.message.text.trim().toUpperCase();
+    const key = ctx.message.text.trim().toUpperCase();
     let keys = await readDatabase();
-    const idx = keys.findIndex(k => k.key === msg);
-
+    const idx = keys.findIndex(k => k.key === key);
     if (idx !== -1) {
-        if (keys[idx].ownerChatId) return ctx.reply('❌ ЭТОТ КЛЮЧ УЖЕ ЗАНЯТ ДРУГИМ ПОЛЬЗОВАТЕЛЕМ');
-        keys[idx].ownerChatId = ctx.chat.id;
-        await saveDatabase(keys);
-        ctx.reply('✅ КЛЮЧ УСПЕШНО ПРИВЯЗАН!', {
-            reply_markup: { inline_keyboard: [[{ text: "ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] }
-        });
-    } else {
-        ctx.reply('❌ КЛЮЧ НЕ НАЙДЕН. ПРОВЕРЬТЕ ПРАВИЛЬНОСТЬ ВВОДА.');
-    }
+        keys[idx].ownerChatId = ctx.chat.id; await saveDatabase(keys);
+        ctx.reply('✅ ПРИВЯЗАНО');
+    } else ctx.reply('❌ НЕТ ТАКОГО КЛЮЧА');
 });
 
 bot.launch();
-app.listen(process.env.PORT || 3000, () => console.log("LOGIST_X SERVER RUNNING"));
+app.listen(process.env.PORT || 3000);
