@@ -18,7 +18,7 @@ const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
-const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
+const SERVER_URL = 'https://logist-x-server-production.app';
 const MAX_DISTANCE_METERS = 600; 
 
 // Auth
@@ -121,7 +121,7 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
         const gps = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
-        const pdfLink = `=HYPERLINK("${pdfUrl}"; "ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ")`;
+        const pdfLink = `=HYPERLINK("${pdfUrl}"; "ОТЧЕТ ФОТО")`;
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
     } catch (e) { console.error("Merch Error:", e); }
 }
@@ -148,7 +148,6 @@ app.post('/upload', async (req, res) => {
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const oId = await getOrCreateFolder(kData ? kData.name : "Logist_Users", MY_ROOT_ID);
         const wId = await getOrCreateFolder(worker, oId);
-        // ВОЗВРАЩЕНА ПАПКА ГОРОДА
         const cityId = await getOrCreateFolder(city, wId);
         const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
         if (image) {
@@ -195,13 +194,21 @@ app.post('/api/keys/add', async (req, res) => {
 });
 app.post('/api/keys/extend', async (req, res) => {
     let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === req.body.key);
-    if (idx !== -1) { let d = new Date(keys[idx].expiry); d.setDate(d.getDate() + 30); keys[idx].expiry = d.toISOString(); await saveDatabase(keys); res.json({ success: true }); } else res.json({ success: false });
+    if (idx !== -1) { 
+        let d = new Date(keys[idx].expiry); 
+        d.setDate(d.getDate() + parseInt(req.body.days || 30)); 
+        keys[idx].expiry = d.toISOString(); 
+        await saveDatabase(keys); res.json({ success: true }); 
+    } else res.json({ success: false });
 });
 app.post('/api/keys/update', async (req, res) => {
     let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === req.body.key);
     if (idx !== -1) {
         if (req.body.clearOwner) keys[idx].ownerChatId = null;
-        else { keys[idx].name = req.body.name || keys[idx].name; keys[idx].limit = req.body.limit || keys[idx].limit; }
+        else { 
+            keys[idx].name = req.body.name || keys[idx].name; 
+            keys[idx].limit = req.body.limit || keys[idx].limit; 
+        }
         await saveDatabase(keys); res.json({ success: true });
     } else res.json({ success: false });
 });
@@ -210,7 +217,7 @@ app.post('/api/keys/delete', async (req, res) => {
     await saveDatabase(keys); res.json({ success: true });
 });
 app.post('/api/notify-admin', async (req, res) => {
-    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔔 **ЗАПРОС ПРОДЛЕНИЯ**\n\nОбъект: ${req.body.name}\nКлюч: \`${req.body.key}\``, { parse_mode: 'Markdown' });
+    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔔 **ЗАПРОС ПРОДЛЕНИЯ**\n\nОбъект: ${req.body.name}\nКлюч: \`${req.body.key}\`\nСрок: ${req.body.days} дн.`, { parse_mode: 'Markdown' });
     res.json({ success: true });
 });
 
@@ -234,7 +241,10 @@ app.get('/dashboard', (req, res) => {
         input { width: 100%; padding: 14px; margin-bottom: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.3); color: #fff; box-sizing: border-box; }
         .btn { width: 100%; padding: 16px; border-radius: 16px; border: none; font-weight: 900; text-transform: uppercase; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; transition: 0.2s; }
         .btn-gold { background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%); color: #000; }
-        .btn-red { background: rgba(218, 54, 51, 0.1); color: #da3633; border: 1px solid rgba(218, 54, 51, 0.2); margin-top: 5px; padding: 8px; }
+        .btn-small { padding: 8px; font-size: 0.7rem; border-radius: 8px; width: auto; flex: 1; }
+        .btn-red { background: rgba(218, 54, 51, 0.1); color: #da3633; border: 1px solid rgba(218, 54, 51, 0.2); margin-top: 15px; padding: 8px; }
+        .worker-list { background: rgba(0,0,0,0.4); padding: 10px; border-radius: 10px; margin: 10px 0; font-size: 12px; }
+        .row { display: flex; gap: 5px; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -255,15 +265,25 @@ app.get('/dashboard', (req, res) => {
             const keys = await r.json();
             document.getElementById('list').innerHTML = keys.map(k => \`
                 <div class="card">
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start">
-                        <div>
-                            <div class="gold-text" style="font-weight:900; font-family:monospace">\${k.key}</div>
-                            <div style="font-weight:700; margin:5px 0">\${k.name}</div>
-                            <div style="font-size:11px; opacity:0.5">Лимит: \${k.workers.length}/\${k.limit} | До: \${new Date(k.expiry).toLocaleDateString()}</div>
-                        </div>
-                        <button class="btn btn-gold" style="width:auto; padding:10px" onclick="ext('\${k.key}')">+30</button>
+                    <div class="gold-text" style="font-weight:900; font-family:monospace">\${k.key}</div>
+                    <div style="font-weight:700; margin:5px 0">\${k.name}</div>
+                    
+                    <div style="font-size:11px; margin-bottom:10px">
+                        Лимит: <input type="number" value="\${k.limit}" style="width:50px; padding:2px; display:inline; margin:0" onchange="updLimit('\${k.key}', this.value)">
+                        До: \${new Date(k.expiry).toLocaleDateString()}
                     </div>
-                    <button class="btn btn-red" onclick="del('\${k.key}')">УДАЛИТЬ ОБЪЕКТ</button>
+
+                    <div class="worker-list">
+                        <b>ШТАТ (\${k.workers.length}):</b><br>
+                        \${k.workers.join(', ') || 'Пусто'}
+                    </div>
+
+                    <div class="row">
+                        <button class="btn btn-gold btn-small" onclick="ext('\${k.key}', 30)">+30д</button>
+                        <button class="btn btn-gold btn-small" onclick="ext('\${k.key}', 90)">+90д</button>
+                        <button class="btn btn-gold btn-small" onclick="ext('\${k.key}', 180)">+180д</button>
+                    </div>
+                    <button class="btn btn-red" onclick="del('\${k.key}')">УДАЛИТЬ</button>
                 </div>\`).join('');
             lucide.createIcons();
         }
@@ -271,9 +291,12 @@ app.get('/dashboard', (req, res) => {
             await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:30})});
             load();
         }
-        async function ext(key){
-            await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});
+        async function ext(key, days){
+            await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key, days})});
             load();
+        }
+        async function updLimit(key, limit){
+            await fetch('/api/keys/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key, limit})});
         }
         async function del(key){
             if(confirm('Удалить?')){
@@ -304,16 +327,14 @@ app.get('/client-dashboard', (req, res) => {
         .logo-box { background: #f59e0b; padding: 5px; border-radius: 8px; display: flex; align-items: center; }
         .logo-text { font-size: 1.2rem; font-weight: 900; text-transform: uppercase; letter-spacing: -1px; font-style: italic; }
         .card { background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%); border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; padding: 20px; margin-bottom: 20px; }
-        .obj-title { font-weight: 900; text-transform: uppercase; font-size: 1.1rem; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; }
+        .obj-title { font-weight: 900; text-transform: uppercase; font-size: 1.1rem; margin-bottom: 15px; }
         .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
-        .stat-item { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); padding: 12px; border-radius: 16px; text-align: center; }
-        .stat-label { font-size: 9px; text-transform: uppercase; font-weight: 700; opacity: 0.5; display: block; margin-bottom: 4px; }
-        .stat-value { font-weight: 900; font-style: italic; font-size: 1.1rem; }
-        .workers-box { background: rgba(0,0,0,0.2); border-radius: 12px; padding: 12px; margin-bottom: 20px; }
-        .worker-tag { display: inline-block; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; margin: 2px; }
-        .btn { width: 100%; padding: 16px; border-radius: 16px; border: none; font-weight: 900; text-transform: uppercase; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; transition: 0.2s; text-decoration: none; }
+        .stat-item { background: rgba(255,255,255,0.03); padding: 12px; border-radius: 16px; text-align: center; }
+        .stat-label { font-size: 9px; text-transform: uppercase; opacity: 0.5; }
+        .stat-value { font-weight: 900; display: block; font-size: 1.1rem; }
+        .btn { width: 100%; padding: 16px; border-radius: 16px; border: none; font-weight: 900; text-transform: uppercase; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 5px; }
         .btn-gold { background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%); color: #000; }
-        .btn-outline { background: transparent; border: 1px solid rgba(255,255,255,0.1); color: #fff; margin-top: 10px; }
+        .btn-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -326,35 +347,29 @@ app.get('/client-dashboard', (req, res) => {
         async function load(){
             const params = new URLSearchParams(window.location.search);
             const cid = params.get('chatId');
-            try {
-                const r = await fetch('/api/client-keys?chatId=' + cid);
-                const keys = await r.json();
-                if (keys.length === 0) {
-                    document.getElementById('container').innerHTML = '<div class="card" style="text-align:center">НЕТ ОБЪЕКТОВ</div>';
-                    return;
-                }
-                document.getElementById('container').innerHTML = keys.map(k => {
-                    const days = Math.ceil((new Date(k.expiry) - new Date()) / (1000*60*60*24));
-                    return \`<div class="card">
-                        <div class="obj-title"><i data-lucide="map-pin" class="gold-text" size="18"></i> \${k.name}</div>
-                        <div class="stats-grid">
-                            <div class="stat-item"><span class="stat-label">Дней</span><span class="stat-value">\${days > 0 ? days : 0}</span></div>
-                            <div class="stat-item"><span class="stat-label">Места</span><span class="stat-value">\${k.workers.length} / \${k.limit}</span></div>
-                        </div>
-                        <div class="workers-box">
-                            <span style="font-size:9px; opacity:0.4; text-transform:uppercase; font-weight:900">В штате:</span><br>
-                            \${k.workers.length > 0 ? k.workers.map(w => \`<span class="worker-tag">\${w}</span>\`).join('') : '---'}
-                        </div>
-                        <button class="btn btn-gold" onclick="req('\${k.key}','\${k.name}')"><i data-lucide="zap" size="18"></i> ПРОДЛИТЬ</button>
-                        <a href="https://t.me/твой_ник" class="btn btn-outline"><i data-lucide="message-circle" size="18"></i> ПОДДЕРЖКА</a>
-                    </div>\`;
-                }).join('');
-                lucide.createIcons();
-            } catch(e) {}
+            const r = await fetch('/api/client-keys?chatId=' + cid);
+            const keys = await r.json();
+            document.getElementById('container').innerHTML = keys.map(k => {
+                const days = Math.ceil((new Date(k.expiry) - new Date()) / (1000*60*60*24));
+                return \`<div class="card">
+                    <div class="obj-title">\${k.name}</div>
+                    <div class="stats-grid">
+                        <div class="stat-item"><span class="stat-label">Дней</span><span class="stat-value">\${days > 0 ? days : 0}</span></div>
+                        <div class="stat-item"><span class="stat-label">Места</span><span class="stat-value">\${k.workers.length} / \${k.limit}</span></div>
+                    </div>
+                    <div style="font-size:10px; opacity:0.6; margin-bottom:10px">ЗАПРОС ПРОДЛЕНИЯ:</div>
+                    <div class="btn-row">
+                        <button class="btn btn-gold" style="padding:10px" onclick="req('\${k.key}','\${k.name}', 30)">30д</button>
+                        <button class="btn btn-gold" style="padding:10px" onclick="req('\${k.key}','\${k.name}', 90)">90д</button>
+                        <button class="btn btn-gold" style="padding:10px" onclick="req('\${k.key}','\${k.name}', 180)">180д</button>
+                    </div>
+                </div>\`;
+            }).join('');
+            lucide.createIcons();
         }
-        async function req(key, name){
-            await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name})});
-            alert('ОТПРАВЛЕНО');
+        async function req(key, name, days){
+            await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days})});
+            alert('Запрос на продление ('+days+' дн.) отправлен!');
         }
         load();
     </script>
