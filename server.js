@@ -58,6 +58,12 @@ async function saveDatabase(keys) {
 // === API ДЛЯ АДМИНКИ ===
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
 
+app.get('/api/client-keys', async (req, res) => {
+    const cid = req.query.chatId;
+    const keys = await readDatabase();
+    res.json(keys.filter(k => String(k.ownerChatId) === String(cid)));
+});
+
 app.post('/api/keys/add', async (req, res) => {
     const { name, limit, days } = req.body; 
     let keys = await readDatabase();
@@ -158,7 +164,6 @@ app.get('/dashboard', (req, res) => {
     </script></body></html>`);
 });
 
-// КЛИЕНТСКАЯ ПАНЕЛЬ (ЗОЛОТАЯ)
 app.get('/client-panel', (req, res) => {
     res.sendFile(path.join(__dirname, 'client_panel.html'));
 });
@@ -166,18 +171,22 @@ app.get('/client-panel', (req, res) => {
 // --- ТЕЛЕГРАМ БОТ ---
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
-    if (cid === MY_TELEGRAM_ID) {
-        return ctx.reply('👑 ДОБРО ПОЖАЛОВАТЬ, ЕВГЕНИЙ', { reply_markup: { inline_keyboard: [[{ text: "⚙️ УПРАВЛЕНИЕ СИСТЕМОЙ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
-    }
     const keys = await readDatabase(); 
-    if (keys.find(k => String(k.ownerChatId) === String(cid))) {
+    const hasKey = keys.find(k => String(k.ownerChatId) === String(cid));
+
+    if (cid === MY_TELEGRAM_ID) {
+        let kb = [[{ text: "⚙️ АДМИН-ПАНЕЛЬ", web_app: { url: SERVER_URL + "/dashboard" } }]];
+        if(hasKey) kb.push([{ text: "📊 МОЙ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-panel?chatId=" + cid } }]);
+        return ctx.reply('👑 ПРИВЕТ, ЕВГЕНИЙ!', { reply_markup: { inline_keyboard: kb } });
+    }
+    
+    if (hasKey) {
         return ctx.reply('🏢 ВАШ КАБИНЕТ ОБЪЕКТОВ', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ ПАНЕЛЬ", web_app: { url: SERVER_URL + "/client-panel?chatId=" + cid } }]] } });
     }
     ctx.reply('Введите ваш ключ доступа:');
 });
 
 bot.on('text', async (ctx) => {
-    if (ctx.chat.id === MY_TELEGRAM_ID) return; 
     const key = ctx.message.text.trim().toUpperCase();
     let keys = await readDatabase(); 
     const idx = keys.findIndex(k => k.key === key);
@@ -186,7 +195,7 @@ bot.on('text', async (ctx) => {
         keys[idx].ownerChatId = ctx.chat.id; 
         await saveDatabase(keys); 
         ctx.reply('✅ Доступ разрешен!', { reply_markup: { inline_keyboard: [[{ text: "📊 ПАНЕЛЬ УПРАВЛЕНИЯ", web_app: { url: SERVER_URL + "/client-panel?chatId=" + ctx.chat.id } }]] } });
-    } else { ctx.reply('Ключ не найден в базе.'); }
+    } else if (ctx.chat.id !== MY_TELEGRAM_ID) { ctx.reply('Ключ не найден в базе.'); }
 });
 
 bot.launch();
