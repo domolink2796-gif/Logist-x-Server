@@ -4,12 +4,12 @@ const { Telegraf } = require('telegraf');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const { Readable } = require('stream');
-const path = require('path'); // Добавили для работы с путями
+const path = require('path');
 
 const app = express();
 app.use(cors());
-// Разрешаем серверу отдавать статические файлы (наш новый client_panel.html)
-app.use(express.static(__dirname)); 
+// Подключаем раздачу статических файлов (для client_panel.html)
+app.use(express.static(__dirname));
 app.use(bodyParser.json({ limit: '150mb' }));
 app.use(bodyParser.urlencoded({ limit: '150mb', extended: true }));
 
@@ -194,7 +194,7 @@ app.post('/merch-upload', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// === API ДЛЯ ПАНЕЛЕЙ ===
+// === АДМИНКА И API ===
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
 app.get('/api/client-keys', async (req, res) => {
     try { const keys = await readDatabase(); res.json(keys.filter(k => String(k.ownerChatId) === String(req.query.chatId))); } catch (e) { res.json([]); }
@@ -208,39 +208,53 @@ app.post('/api/keys/add', async (req, res) => {
 });
 app.post('/api/keys/extend', async (req, res) => {
     let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === req.body.key);
-    if (idx !== -1) { let d = new Date(keys[idx].expiry); d.setDate(d.getDate() + 30); keys[idx].expiry = d.toISOString(); await saveDatabase(keys); res.json({ success: true }); } else res.json({ success: false });
+    if (idx !== -1) { 
+        let d = new Date(keys[idx].expiry); 
+        d.setDate(d.getDate() + 30); 
+        keys[idx].expiry = d.toISOString(); 
+        await saveDatabase(keys); 
+        res.json({ success: true }); 
+    } else res.json({ success: false });
+});
+app.post('/api/notify-admin', async (req, res) => {
+    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔔 **ЗАПРОС ПРОДЛЕНИЯ**\n\nОбъект: ${req.body.name}\nКлюч: \`${req.body.key}\``, { parse_mode: 'Markdown' });
+    res.json({ success: true });
 });
 
-// === РОУТЫ ДЛЯ ВЕБ-ИНТЕРФЕЙСОВ ===
+// --- ВЕБ-ИНТЕРФЕЙСЫ ---
 
-// 1. Твоя старая админка (без изменений)
+// Оригинальная админка (твоя личная)
 app.get('/dashboard', (req, res) => {
     res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ADMIN</title><style>body{background:#0a0c10;color:#fff;font-family:sans-serif;padding:20px}.card{background:#161b22;padding:20px;margin-bottom:10px;border-radius:10px;border:1px solid #30363d}input,select,button{width:100%;padding:10px;margin-bottom:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:5px}.btn{background:#f0ad4e;color:#000;font-weight:bold;cursor:pointer}</style></head><body><h3>LOGIST ADMIN</h3><div class="card"><input id="n" placeholder="Имя"><input id="l" type="number" value="5"><select id="d"><option value="30">30 Дней</option><option value="365">1 Год</option></select><button class="btn" onclick="add()">СОЗДАТЬ</button></div><div id="list"></div><script>const PASS="${ADMIN_PASS}";function auth(){if(localStorage.getItem('p')!==PASS){if(prompt('PASS')===PASS)localStorage.setItem('p',PASS);else auth();}}async function load(){const r=await fetch('/api/keys');const d=await r.json();document.getElementById('list').innerHTML=d.map(k=>'<div class="card"><b>'+k.key+'</b><br>'+k.name+' ('+k.workers.length+'/'+k.limit+')<br>'+new Date(k.expiry).toLocaleDateString()+'<br><button class="btn" onclick="ext(\\''+k.key+'\\')">ПРОДЛИТЬ</button></div>').join('')}async function add(){await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:document.getElementById('d').value})});load()}async function ext(key){if(confirm('Продлить?')){await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}}auth();load()</script></body></html>`);
 });
 
-// 2. Новая клиентская панель (отдает созданный тобой файл)
+// Новый интерфейс (для клиентов)
 app.get('/client-panel', (req, res) => {
     res.sendFile(path.join(__dirname, 'client_panel.html'));
+});
+
+// Совместимость со старой кнопкой клиента (на всякий случай)
+app.get('/client-dashboard', (req, res) => {
+    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CLIENT</title><style>body{background:#0a0c10;color:#c9d1d9;font-family:sans-serif;padding:15px}.card{background:#161b22;border-radius:16px;padding:20px;border:1px solid #30363d;margin-bottom:20px}.btn{background:#f0ad4e;color:#000;border:none;padding:14px;border-radius:10px;width:100%;font-weight:bold;cursor:pointer;display:block;margin-top:10px}</style></head><body><h2 style="text-align:center;color:#f0ad4e">МОИ ОБЪЕКТЫ</h2><div id="c">Загрузка...</div><script>async function l(){const id=new URLSearchParams(window.location.search).get('chatId');const r=await fetch('/api/client-keys?chatId='+id);const k=await r.json();document.getElementById('c').innerHTML=k.length?k.map(i=>'<div class="card"><h3>'+i.name+'</h3><code>'+i.key+'</code><p>👥 '+i.workers.length+' / '+i.limit+'</p><p>📅 до '+new Date(i.expiry).toLocaleDateString()+'</p><button class="btn" onclick="ask(\\''+i.key+'\\',\\''+i.name+'\\')">ПРОДЛИТЬ</button></div>').join(''):'<p align="center">Нет лицензий</p>'}async function ask(k,n){await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k,name:n})});alert('Запрос отправлен!')}l()</script></body></html>`);
 });
 
 // --- TELEGRAM BOT ---
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
-    // Если заходишь ТЫ (Админ)
+    // ТВОЙ ДОСТУП
     if (cid === MY_TELEGRAM_ID) {
-        return ctx.reply('👑 ПРИВЕТ, ЕВГЕНИЙ! ВАША АДМИН-ПАНЕЛЬ:', { 
+        return ctx.reply('👑 ADMIN PANEL', { 
             reply_markup: { 
-                inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ СИСТЕМОЙ", web_app: { url: SERVER_URL + "/dashboard" } }]] 
+                inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ", web_app: { url: SERVER_URL + "/dashboard" } }]] 
             } 
         });
     }
-    
-    // Если заходит КЛИЕНТ
+    // ДОСТУП КЛИЕНТА
     const keys = await readDatabase(); 
     if (keys.find(k => String(k.ownerChatId) === String(cid))) {
-        return ctx.reply('🏢 ВАШ ЛИЧНЫЙ КАБИНЕТ LOGIST_X:', { 
+        return ctx.reply('🏢 ЛИЧНЫЙ КАБИНЕТ', { 
             reply_markup: { 
-                inline_keyboard: [[{ text: "📊 ОТКРЫТЬ ПАНЕЛЬ", web_app: { url: SERVER_URL + "/client-panel?chatId=" + cid } }]] 
+                inline_keyboard: [[{ text: "📊 МОИ ОБЪЕКТЫ", web_app: { url: SERVER_URL + "/client-panel?chatId=" + cid } }]] 
             } 
         });
     }
@@ -258,7 +272,7 @@ bot.on('text', async (ctx) => {
         await saveDatabase(keys); 
         ctx.reply('✅ Ключ успешно привязан!', { 
             reply_markup: { 
-                inline_keyboard: [[{ text: "📊 ВХОД В КАБИНЕТ", web_app: { url: SERVER_URL + "/client-panel?chatId=" + ctx.chat.id } }]] 
+                inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-panel?chatId=" + ctx.chat.id } }]] 
             } 
         });
     } else { ctx.reply('Ключ не найден.'); }
