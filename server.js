@@ -56,7 +56,6 @@ async function readDatabase() {
         let data = content.data;
         if (typeof data === 'string') data = JSON.parse(data);
         let keys = data.keys || [];
-        // Гарантируем наличие мастер-ключа
         if (!keys.find(k => k.key === 'DEV-MASTER-999')) {
             keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [] });
             await saveDatabase(keys);
@@ -83,27 +82,19 @@ async function appendToReport(workerId, workerName, city, address, entrance, cli
         const q = `name = '${reportName}' and '${workerId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         let spreadsheetId = res.data.files.length > 0 ? res.data.files[0].id : null;
-        
         if (!spreadsheetId) {
             const createRes = await sheets.spreadsheets.create({ resource: { properties: { title: reportName } } });
             spreadsheetId = createRes.data.spreadsheetId;
             await drive.files.update({ fileId: spreadsheetId, addParents: workerId, removeParents: 'root' });
         }
-        
         const sheetTitle = `${city}_${dateStr}`;
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS', 'СТАТУС']] } });
         }
-        
         const gpsLink = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
-        await sheets.spreadsheets.values.append({ 
-            spreadsheetId, 
-            range: `${sheetTitle}!A1`, 
-            valueInputOption: 'USER_ENTERED', 
-            resource: { values: [[new Date().toLocaleTimeString("ru-RU"), address, entrance, client, workType, price, gpsLink, "ЗАГРУЖЕНО"]] } 
-        });
+        await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleTimeString("ru-RU"), address, entrance, client, workType, price, gpsLink, "ЗАГРУЖЕНО"]] } });
     } catch (e) { console.error("Logist Sheet Error:", e); }
 }
 
@@ -114,135 +105,97 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
         const q = `name = '${reportName}' and '${workerId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         let spreadsheetId = res.data.files.length > 0 ? res.data.files[0].id : null;
-        
         if (!spreadsheetId) {
             const cr = await sheets.spreadsheets.create({ resource: { properties: { title: reportName } } });
             spreadsheetId = cr.data.spreadsheetId;
             await drive.files.update({ fileId: spreadsheetId, addParents: workerId, removeParents: 'root' });
         }
-        
         const sheetTitle = "ОТЧЕТЫ_МЕРЧ";
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
-        
         const gps = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
         const pdfLink = `=HYPERLINK("${pdfUrl}"; "ССЫЛКА НА ФОТО")`;
-        
-        await sheets.spreadsheets.values.append({ 
-            spreadsheetId, 
-            range: `${sheetTitle}!A1`, 
-            valueInputOption: 'USER_ENTERED', 
-            resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } 
-        });
+        await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// === УНИВЕРСАЛЬНЫЙ РОУТЕР UPLOAD (ГЛАВНЫЙ ВХОД) ===
+// === УНИВЕРСАЛЬНЫЙ РОУТЕР UPLOAD ===
 app.post('/upload', async (req, res) => {
     try {
         const { action } = req.body;
-
-        // 1. ПРОВЕРКА ЛИЦЕНЗИИ (Если action='check_license')
         if (action === 'check_license') {
             const { licenseKey, workerName, referrerId } = req.body;
             const finalKey = (licenseKey || '').trim().toUpperCase();
-            
             const keys = await readDatabase();
             const kData = keys.find(k => k.key === finalKey);
-            
             if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
             if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
-            
-            // Проверяем/добавляем работника в список
             if (!kData.workers) kData.workers = [];
             if (workerName && !kData.workers.includes(workerName)) {
-                if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест исчерпан' });
+                if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест' });
                 kData.workers.push(workerName); 
-                
-                // Обработка реферала при первой активации ключа работником
                 if (referrerId && !kData.partnerId) {
                     kData.partnerId = referrerId;
-                    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔥 **НОВАЯ ПАРТНЕРСКАЯ ПРОДАЖА!**\nПартнер: \`${referrerId}\`\nОбъект: ${kData.name}\nПочта для связи: ${MY_EMAIL}`);
+                    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔥 **ПАРТНЕРСКАЯ ПРОДАЖА!**\nПартнер: \`${referrerId}\`\nОбъект: ${kData.name}`);
                 }
-                
                 await saveDatabase(keys);
             }
             return res.json({ status: 'active', expiry: kData.expiry });
         }
-
-        // 2. ОТЧЕТ ЛОГИСТА (Если нет action или action='save_report')
         const { worker, city, address, entrance, client, image, lat, lon, workType, price } = req.body;
-        
-        // Получаем ID папки работника
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
-        
         const mainFolderId = await getOrCreateFolder(kData ? kData.name : "Logist_Users", MY_ROOT_ID);
         const workerFolderId = await getOrCreateFolder(worker, mainFolderId);
         const dateFolderId = await getOrCreateFolder(new Date().toISOString().split('T')[0], workerFolderId);
-        
-        // Сохраняем фото (имя: Адрес + Подъезд + Клиент)
         if (image) {
-            const cleanAddr = address.replace(/[\\/:*?"<>|]/g, ''); // Убираем плохие символы
+            const cleanAddr = address.replace(/[\\/:*?"<>|]/g, '');
             const fileName = `${cleanAddr}_п${entrance}_${client}.jpg`;
             const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-            
-            await drive.files.create({ 
-                resource: { name: fileName, parents: [dateFolderId] }, 
-                media: { mimeType: 'image/jpeg', body: Readable.from(buf) } 
-            });
+            await drive.files.create({ resource: { name: fileName, parents: [dateFolderId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
         }
-        
-        // Пишем в таблицу
         await appendToReport(workerFolderId, worker, city, address, entrance, client, workType, price, lat, lon);
-        
         res.json({ success: true });
-
-    } catch (e) {
-        console.error("Server Error:", e);
-        res.status(500).json({ success: false, error: e.message });
-    }
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// === ОТДЕЛЬНЫЙ РОУТ ДЛЯ МЕРЧАНДАЙЗИНГА ===
 app.post('/merch-upload', async (req, res) => {
     try {
         const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon } = req.body;
-        
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
-        
         const mainFolderId = await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
         const workerFolderId = await getOrCreateFolder(worker, mainFolderId);
         const dateFolderId = await getOrCreateFolder(new Date().toISOString().split('T')[0], workerFolderId);
-        
         let pUrl = "Нет файла";
         if (pdf) {
-            // В мерче PDF или фото приходит как base64
             const buf = Buffer.from(pdf.split(',')[1], 'base64');
             const cleanAddr = address.replace(/[\\/:*?"<>|]/g, '');
-            const f = await drive.files.create({ 
-                resource: { name: `ОТЧЕТ_${cleanAddr}.jpg`, parents: [dateFolderId] }, 
-                media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, 
-                fields: 'id, webViewLink' 
-            });
+            const f = await drive.files.create({ resource: { name: `ОТЧЕТ_${cleanAddr}.jpg`, parents: [dateFolderId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
-        
         await appendMerchToReport(workerFolderId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
         res.json({ success: true, url: pUrl });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// === АДМИНКА И API ДЛЯ БОТА ===
+// === API ДЛЯ БОТА И ПАНЕЛИ ===
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
+
+// ИСПРАВЛЕННЫЙ РОУТ - ТЕПЕРЬ ТЫ ВИДИШЬ ВСЁ
 app.get('/api/client-keys', async (req, res) => {
-    try { const keys = await readDatabase(); res.json(keys.filter(k => String(k.ownerChatId) === String(req.query.chatId))); } catch (e) { res.json([]); }
+    try { 
+        const keys = await readDatabase(); 
+        const cid = String(req.query.chatId);
+        if (cid === String(MY_TELEGRAM_ID)) return res.json(keys); // ТЫ ВИДИШЬ ВСЕ КЛЮЧИ
+        res.json(keys.filter(k => String(k.ownerChatId) === cid)); // ОСТАЛЬНЫЕ ТОЛЬКО СВОИ
+    } catch (e) { res.json([]); }
 });
+
 app.post('/api/keys/add', async (req, res) => {
     const { name, limit, days } = req.body; let keys = await readDatabase();
     const newK = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -259,19 +212,19 @@ app.post('/api/notify-admin', async (req, res) => {
     res.json({ success: true });
 });
 
-// --- ВЕБ-ИНТЕРФЕЙСЫ (АДМИНКА И ЛК) ---
+// --- ВЕБ-ИНТЕРФЕЙСЫ ---
 app.get('/', (req, res) => { res.send('LOGIST_X SERVER ACTIVE'); });
 
 app.get('/reg', (req, res) => {
     const ref = req.query.ref || '';
     res.send(`<html><body style="background:#010409;color:white;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;">
         <div style="text-align:center;"><h2>Регистрация партнера...</h2>
-        <script>localStorage.setItem('partnerRef', '${ref}'); setTimeout(() => { window.location.href = 'https://logist-x.ru'; }, 1000);</script>
+        <script>localStorage.setItem('partnerRef', '\${ref}'); setTimeout(() => { window.location.href = 'https://logist-x.ru'; }, 1000);</script>
         </div></body></html>`);
 });
 
 app.get('/dashboard', (req, res) => {
-    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ADMIN</title><style>body{background:#0a0c10;color:#fff;font-family:sans-serif;padding:20px}.card{background:#161b22;padding:20px;margin-bottom:10px;border-radius:10px;border:1px solid #30363d}input,select,button{width:100%;padding:10px;margin-bottom:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:5px}.btn{background:#f0ad4e;color:#000;font-weight:bold;cursor:pointer}</style></head><body><h3>LOGIST ADMIN</h3><div class="card"><input id="n" placeholder="Имя"><input id="l" type="number" value="5"><select id="d"><option value="30">30 Дней</option><option value="365">1 Год</option></select><button class="btn" onclick="add()">СОЗДАТЬ</button></div><div id="list"></div><script>const PASS="${ADMIN_PASS}";function auth(){if(localStorage.getItem('p')!==PASS){if(prompt('PASS')===PASS)localStorage.setItem('p',PASS);else auth();}}async function load(){const r=await fetch('/api/keys');const d=await r.json();document.getElementById('list').innerHTML=d.map(k=>'<div class="card"><b>'+k.key+'</b><br>'+k.name+' ('+k.workers.length+'/'+k.limit+')<br>'+new Date(k.expiry).toLocaleDateString()+'<br><button class="btn" onclick="ext(\\''+k.key+'\\')">ПРОДЛИТЬ</button></div>').join('')}async function add(){await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:document.getElementById('d').value})});load()}async function ext(key){if(confirm('Продлить?')){await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}}auth();load()</script></body></html>`);
+    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ADMIN</title><style>body{background:#0a0c10;color:#fff;font-family:sans-serif;padding:20px}.card{background:#161b22;padding:20px;margin-bottom:10px;border-radius:10px;border:1px solid #30363d}input,select,button{width:100%;padding:10px;margin-bottom:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:5px}.btn{background:#f0ad4e;color:#000;font-weight:bold;cursor:pointer}</style></head><body><h3>LOGIST ADMIN</h3><div class="card"><input id="n" placeholder="Имя"><input id="l" type="number" value="5"><select id="d"><option value="30">30 Дней</option><option value="365">1 Год</option></select><button class="btn" onclick="add()">СОЗДАТЬ</button></div><div id="list"></div><script>const PASS="\${ADMIN_PASS}";function auth(){if(localStorage.getItem('p')!==PASS){if(prompt('PASS')===PASS)localStorage.setItem('p',PASS);else auth();}}async function load(){const r=await fetch('/api/keys');const d=await r.json();document.getElementById('list').innerHTML=d.map(k=>'<div class="card"><b>'+k.key+'</b><br>'+k.name+' ('+k.workers.length+'/'+k.limit+')<br>'+new Date(k.expiry).toLocaleDateString()+'<br><button class="btn" onclick="ext(\\\\''+k.key+'\\\\')">ПРОДЛИТЬ</button></div>').join('')}async function add(){await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:document.getElementById('d').value})});load()}async function ext(key){if(confirm('Продлить?')){await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}}auth();load()</script></body></html>`);
 });
 
 app.get('/client-dashboard', (req, res) => {
@@ -318,7 +271,7 @@ app.get('/client-dashboard', (req, res) => {
                 const response = await fetch('/api/client-keys?chatId=' + chatId);
                 const keys = await response.json();
                 const container = document.getElementById('container');
-                if (keys.length === 0) { container.innerHTML = '<div class="card" style="text-align:center">У ВАС НЕТ АКТИВНЫХ ОБЪЕКТОВ</div>'; return; }
+                if (keys.length === 0) { container.innerHTML = '<div class="card" style="text-align:center">ОБЪЕКТОВ НЕ ОБНАРУЖЕНО</div>'; return; }
                 container.innerHTML = keys.map(k => {
                     const diff = Math.ceil((new Date(k.expiry) - new Date()) / (1000 * 60 * 60 * 24));
                     return \`
@@ -352,8 +305,7 @@ app.get('/client-dashboard', (req, res) => {
 // --- TELEGRAM BOT ---
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
-    if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ADMIN PANEL', { reply_markup: { inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
-    
+    if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ADMIN PANEL', { reply_markup: { inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ", web_app: { url: SERVER_URL + "/dashboard" } }],[{ text: "📊 ВСЕ ОБЪЕКТЫ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
     ctx.reply('ДОБРО ПОЖАЛОВАТЬ В LOGIST_X!\nВыберите роль:', { 
         reply_markup: { 
             inline_keyboard: [
@@ -367,21 +319,16 @@ bot.start(async (ctx) => {
 bot.on('callback_query', async (ctx) => {
     const data = ctx.callbackQuery.data;
     const cid = ctx.chat.id;
-
     if (data === "role_user") {
         const keys = await readDatabase(); 
-        if (keys.find(k => String(k.ownerChatId) === String(cid))) {
-            return ctx.reply('🏢 ВАШ КАБИНЕТ:', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ОБЪЕКТЫ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
+        if (cid === MY_TELEGRAM_ID || keys.find(k => String(k.ownerChatId) === String(cid))) {
+            return ctx.reply('🏢 ЛИЧНЫЙ КАБИНЕТ:', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
         }
-        ctx.reply('Введите ключ доступа для привязки:');
+        ctx.reply('Введите ключ доступа:');
     }
-
     if (data === "role_partner") {
-        const refLink = `${SERVER_URL}/reg?ref=${cid}`;
-        ctx.reply(`🤝 **ПАРТНЕРСКАЯ ПРОГРАММА LOGIST_X**\n\n` +
-                  `💰 **Твоя выплата:** 15% с каждой продажи.\n\n` +
-                  `🔗 **Твоя ссылка для привлечения:**\n\`${refLink}\`\n\n` +
-                  `👨‍💻 **По вопросам выплат и связи:**\nTelegram: @${MY_TG_NICK}\nEmail: ${MY_EMAIL}`, { parse_mode: 'Markdown' });
+        const refLink = \`\${SERVER_URL}/reg?ref=\${cid}\`;
+        ctx.reply(\`🤝 **ПАРТНЕРСКАЯ ПРОГРАММА LOGIST_X**\n\n💰 **Твоя выплата:** 15%\n🔗 **Ссылка:** \` + \`\\\`\${refLink}\\\`\`, { parse_mode: 'Markdown' });
     }
 });
 
@@ -391,11 +338,11 @@ bot.on('text', async (ctx) => {
     let keys = await readDatabase(); 
     const idx = keys.findIndex(k => k.key === key);
     if (idx !== -1) { 
-        if(keys[idx].ownerChatId) return ctx.reply('Этот ключ уже занят.'); 
+        if(keys[idx].ownerChatId) return ctx.reply('Ключ занят.'); 
         keys[idx].ownerChatId = ctx.chat.id; 
         await saveDatabase(keys); 
-        ctx.reply('✅ Ключ привязан!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
-    } else { ctx.reply('Ключ не найден.'); }
+        ctx.reply('✅ Привязано!', { reply_markup: { inline_keyboard: [[{ text: "📊 КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
+    } else ctx.reply('Ключ не найден.');
 });
 
 bot.launch();
