@@ -54,7 +54,7 @@ async function readDatabase() {
         if (typeof data === 'string') data = JSON.parse(data);
         let keys = data.keys || [];
         if (!keys.find(k => k.key === 'DEV-MASTER-999')) {
-            keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [] });
+            keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [], type: 'LOGIST' });
             await saveDatabase(keys);
         }
         return keys;
@@ -71,7 +71,7 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- ОТЧЕТЫ ЛОГИСТИКИ И МЕРЧА ---
+// --- ОТЧЕТЫ ЛОГИСТИКИ ---
 async function appendToReport(workerId, workerName, city, address, entrance, client, workType, price, lat, lon) {
     try {
         const dateStr = new Date().toISOString().split('T')[0];
@@ -92,9 +92,10 @@ async function appendToReport(workerId, workerName, city, address, entrance, cli
         }
         const gpsLink = (lat && lon) ? `=HYPERLINK("https://www.google.com/maps?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleTimeString("ru-RU"), address, entrance, client, workType, price, gpsLink, "ЗАГРУЖЕНО"]] } });
-    } catch (e) { console.error("Logist Sheet Error:", e); }
+    } catch (e) { console.error("Logist Error:", e); }
 }
 
+// --- ОТЧЕТЫ МЕРЧАНДАЙЗИНГА ---
 async function appendMerchToReport(workerId, workerName, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfUrl, startTime, endTime, duration, lat, lon) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
@@ -110,21 +111,21 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ВРЕМЯ В МАГАЗИНЕ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
         const gps = (lat && lon) ? `=HYPERLINK("https://www.google.com/maps?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfUrl, gps]] } });
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// === API РОУТЫ ===
+// === API ===
 app.post('/upload', async (req, res) => {
     try {
         const { action } = req.body;
+        const keys = await readDatabase();
         if (action === 'check_license') {
             const { licenseKey, workerName } = req.body;
             const finalKey = (licenseKey || '').trim().toUpperCase();
-            const keys = await readDatabase();
             const kData = keys.find(k => k.key === finalKey);
             if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
             if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
@@ -136,7 +137,6 @@ app.post('/upload', async (req, res) => {
             return res.json({ status: 'active', expiry: kData.expiry });
         }
         const { worker, city, address, entrance, client, image, lat, lon, workType, price } = req.body;
-        const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const mainFolderId = await getOrCreateFolder(kData ? kData.name : "Logist_Users", MY_ROOT_ID);
         const workerFolderId = await getOrCreateFolder(worker, mainFolderId);
@@ -171,57 +171,68 @@ app.post('/merch-upload', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+// === АДМИНКА ===
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
 app.get('/api/client-keys', async (req, res) => {
-    try { const keys = await readDatabase(); res.json(keys.filter(k => String(k.ownerChatId) === String(req.query.chatId))); } catch (e) { res.json([]); }
+    const keys = await readDatabase();
+    res.json(keys.filter(k => String(k.ownerChatId) === String(req.query.chatId)));
 });
 app.post('/api/keys/add', async (req, res) => {
-    const { name, limit, days } = req.body; let keys = await readDatabase();
+    const { name, limit, days, type } = req.body;
+    let keys = await readDatabase();
     const newK = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
     const exp = new Date(); exp.setDate(exp.getDate() + parseInt(days));
-    keys.push({ key: newK, name, limit, expiry: exp.toISOString(), workers: [], ownerChatId: null });
+    keys.push({ key: newK, name, limit: parseInt(limit), expiry: exp.toISOString(), workers: [], ownerChatId: null, type: type || 'LOGIST' });
     await saveDatabase(keys); res.json({ success: true });
 });
-app.post('/api/keys/extend', async (req, res) => {
-    let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === req.body.key);
-    if (idx !== -1) { 
-        let d = new Date(keys[idx].expiry); 
-        let start = d > new Date() ? d : new Date();
-        start.setDate(start.getDate() + 30); keys[idx].expiry = start.toISOString(); 
-        await saveDatabase(keys); res.json({ success: true }); 
-    } else res.json({ success: false });
+app.post('/api/keys/delete', async (req, res) => {
+    let keys = await readDatabase();
+    keys = keys.filter(k => k.key !== req.body.key);
+    await saveDatabase(keys); res.json({ success: true });
 });
 
 app.get('/dashboard', (req, res) => {
-    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LOGIST ADMIN</title><style>body{background:#0a0c10;color:#fff;font-family:sans-serif;padding:20px}.card{background:#161b22;padding:20px;margin-bottom:10px;border-radius:10px;border:1px solid #30363d}input,select,button{width:100%;padding:10px;margin-bottom:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:5px}.btn{background:#f0ad4e;color:#000;font-weight:bold;cursor:pointer}</style></head><body><h3>LOGIST ADMIN</h3><div class="card"><input id="n" placeholder="Объект"><input id="l" type="number" value="5"><select id="d"><option value="30">30 Дней</option><option value="365">1 Год</option></select><button class="btn" onclick="add()">СОЗДАТЬ</button></div><div id="list"></div><script>const PASS="${ADMIN_PASS}";function auth(){if(localStorage.getItem('p')!==PASS){if(prompt('PASS')===PASS)localStorage.setItem('p',PASS);else auth();}}async function load(){const r=await fetch('/api/keys');const d=await r.json();document.getElementById('list').innerHTML=d.map(k=>'<div class="card"><b>'+k.key+'</b><br>'+k.name+' ('+(k.workers?k.workers.length:0)+'/'+k.limit+')<br>'+new Date(k.expiry).toLocaleDateString()+'<br><button class="btn" onclick="ext(\\''+k.key+'\\')">ПРОДЛИТЬ</button></div>').join('')}async function add(){await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:document.getElementById('d').value})});load()}async function ext(key){if(confirm('Продлить на 30 дней?')){await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}}auth();load()</script></body></html>`);
+    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ADMIN CENTER</title>
+    <style>body{background:#0a0c10;color:#fff;font-family:sans-serif;padding:15px}.card{background:#161b22;padding:15px;margin-bottom:10px;border-radius:10px;border:1px solid #30363d}input,select,button{width:100%;padding:10px;margin-bottom:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:5px}.btn{background:#f0ad4e;color:#000;font-weight:bold;cursor:pointer}.btn-del{background:#cf6679;margin-top:5px}.tag{font-size:10px;padding:2px 6px;border-radius:4px;margin-left:10px;text-transform:uppercase}.tag-logist{background:#4cd137}.tag-merch{background:#00a8ff}</style></head><body>
+    <h2>👑 LOGIST & MERCH ADMIN</h2>
+    <div class="card">
+        <input id="n" placeholder="Название объекта">
+        <input id="l" type="number" value="5">
+        <select id="t"><option value="LOGIST">ЛОГИСТИКА</option><option value="MERCH">МЕРЧАНДАЙЗИНГ</option></select>
+        <select id="d"><option value="30">30 Дней</option><option value="365">1 Год</option></select>
+        <button class="btn" onclick="add()">СОЗДАТЬ ОБЪЕКТ</button>
+    </div>
+    <div id="list"></div>
+    <script>const PASS="${ADMIN_PASS}";function auth(){if(localStorage.getItem('p')!==PASS){let p=prompt('PASS');if(p===PASS)localStorage.setItem('p',PASS);else auth();}}
+    async function load(){const r=await fetch('/api/keys');const d=await r.json();document.getElementById('list').innerHTML=d.map(k=>'<div class="card"><b>'+k.name+'</b><span class="tag tag-'+(k.type||'logist').toLowerCase()+'">'+(k.type||'LOGIST')+'</span><br><code>'+k.key+'</code><br><small>👥 '+(k.workers?k.workers.length:0)+'/'+k.limit+' | До: '+new Date(k.expiry).toLocaleDateString()+'</small><button class="btn btn-del" onclick="del(\\''+k.key+'\\')">УДАЛИТЬ</button></div>').join('')}
+    async function add(){await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('n').value,limit:document.getElementById('l').value,days:document.getElementById('d').value,type:document.getElementById('t').value})});load()}
+    async function del(key){if(confirm('Удалить объект?')){await fetch('/api/keys/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});load()}}
+    auth();load();</script></body></html>`);
 });
 
 app.get('/client-panel', (req, res) => { res.sendFile(path.join(__dirname, 'client_panel.html')); });
 
-// --- TELEGRAM BOT ---
+// --- BOT ---
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
     const keys = await readDatabase();
-    const hasKey = keys.find(k => String(k.ownerChatId) === String(cid));
-    if (cid === MY_TELEGRAM_ID) {
-        let kb = [[{ text: "📦 УПРАВЛЕНИЕ", web_app: { url: SERVER_URL + "/dashboard" } }]];
-        if(hasKey) kb.push([{ text: "📊 МОЙ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-panel?chatId=" + cid } }]);
-        return ctx.reply('👑 ADMIN PANEL', { reply_markup: { inline_keyboard: kb } });
-    }
-    if (hasKey) return ctx.reply('🏢 ЛИЧНЫЙ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОЯ ПАНЕЛЬ", web_app: { url: SERVER_URL + "/client-panel?chatId=" + cid } }]] } });
-    ctx.reply('Введите ключ доступа:');
+    const userKeys = keys.filter(k => String(k.ownerChatId) === String(cid));
+    if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ADMIN', { reply_markup: { inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
+    if (userKeys.length > 0) return ctx.reply('🏢 МОЙ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ ПАНЕЛЬ", web_app: { url: SERVER_URL + "/client-panel?chatId=" + cid } }]] } });
+    ctx.reply('Введите ваш ключ доступа:');
 });
 
 bot.on('text', async (ctx) => {
+    if (ctx.chat.id === MY_TELEGRAM_ID) return;
     const key = ctx.message.text.trim().toUpperCase();
-    let keys = await readDatabase(); 
+    let keys = await readDatabase();
     const idx = keys.findIndex(k => k.key === key);
-    if (idx !== -1) { 
-        if(keys[idx].ownerChatId) return ctx.reply('Этот ключ уже занят.'); 
-        keys[idx].ownerChatId = ctx.chat.id; 
-        await saveDatabase(keys); 
-        ctx.reply('✅ Ключ привязан!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-panel?chatId=" + ctx.chat.id } }]] } });
-    } else if(ctx.chat.id !== MY_TELEGRAM_ID) ctx.reply('Ключ не найден.');
+    if (idx !== -1) {
+        if(keys[idx].ownerChatId) return ctx.reply('Ключ уже занят.');
+        keys[idx].ownerChatId = ctx.chat.id;
+        await saveDatabase(keys);
+        ctx.reply('✅ Доступ разрешен!', { reply_markup: { inline_keyboard: [[{ text: "📊 ПЕРЕЙТИ В ПАНЕЛЬ", web_app: { url: SERVER_URL + "/client-panel?chatId=" + ctx.chat.id } }]] } });
+    } else ctx.reply('Ключ не найден.');
 });
 
 bot.launch();
