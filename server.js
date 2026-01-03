@@ -22,9 +22,9 @@ const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
 const MAX_DISTANCE_METERS = 600; 
 
 // --- НАСТРОЙКИ РОБОКАССЫ ---
-const ROBO_LOGIN = 'ВАШ_ЛОГИН'; 
-const ROBO_PASS1 = 'ТЕСТ_ПАРОЛЬ_1'; 
-const ROBO_PASS2 = 'ТЕСТ_ПАРОЛЬ_2'; 
+const ROBO_LOGIN = 'Logist_X'; 
+const ROBO_PASS1 = 'P_password1'; 
+const ROBO_PASS2 = 'P_password2'; 
 const IS_TEST = 1; 
 
 // Auth
@@ -37,6 +37,8 @@ oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 const bot = new Telegraf(BOT_TOKEN);
+
+const userSteps = {};
 
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 function getDistance(lat1, lon1, lat2, lon2) {
@@ -58,7 +60,7 @@ async function getOrCreateFolder(rawName, parentId) {
         } else {
             const file = await drive.files.create({ resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }, fields: 'id' });
             folderId = file.data.id;
-            await drive.permissions.create({ fileId: folderId, resource: { role: 'reader', type: 'anyone' } });
+            await drive.permissions.create({ fileId: folderId, resource: { role: 'writer', type: 'anyone' } });
         }
         return folderId;
     } catch (e) { return parentId; }
@@ -182,7 +184,8 @@ app.post('/upload', async (req, res) => {
         }
         const currentWorker = worker || workerName;
         const kData = keys.find(k => k.workers && k.workers.includes(currentWorker)) || keys.find(k => k.key === 'DEV-MASTER-999');
-        const oId = await getOrCreateFolder(kData ? kData.name : "Logist_Users", MY_ROOT_ID);
+        const projectRoot = (kData && kData.type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
+        const oId = await getOrCreateFolder(kData ? kData.name : "Logist_Users", projectRoot);
         const wId = await getOrCreateFolder(currentWorker, oId);
         const cityId = await getOrCreateFolder(city, wId);
         const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
@@ -208,7 +211,7 @@ app.post('/merch-upload', async (req, res) => {
         if (pdf) {
             const buf = Buffer.from(pdf.split(',')[1], 'base64');
             const f = await drive.files.create({ resource: { name: `ОТЧЕТ_${address}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
-            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
+            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
         await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
@@ -222,12 +225,13 @@ app.get('/api/client-keys', async (req, res) => {
 });
 
 app.post('/api/keys/add', async (req, res) => {
-    const { name, limit, days } = req.body; 
+    const { name, limit, days, type } = req.body; 
     let keys = await readDatabase();
     const newK = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
     const exp = new Date(); exp.setDate(exp.getDate() + parseInt(days));
-    const fId = await getOrCreateFolder(name, MY_ROOT_ID);
-    keys.push({ key: newK, name, limit, expiry: exp.toISOString(), workers: [], ownerChatId: null, folderId: fId });
+    const projectRoot = (type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
+    const fId = await getOrCreateFolder(name, projectRoot);
+    keys.push({ key: newK, name, limit, expiry: exp.toISOString(), workers: [], ownerChatId: null, folderId: fId, type: type || 'logist' });
     await saveDatabase(keys); 
     res.json({ success: true });
 });
@@ -258,37 +262,41 @@ app.post('/api/keys/delete', async (req, res) => {
 });
 
 app.post('/api/notify-admin', async (req, res) => {
-    const { key, name, days } = req.body;
+    const { key, name, days, chatId, limit, type } = req.body;
     const keys = await readDatabase();
-    const kData = keys.find(k => k.key === key);
-    if (!kData) return res.json({ success: false });
+    const kData = keys.find(k => k.key === key) || { limit: limit || 1 };
     let price = kData.limit * 1500;
     if (days == 90) price = kData.limit * 4050;
     if (days == 180) price = kData.limit * 7650;
     if (days == 365) price = kData.limit * 15000;
     const invId = Math.floor(Date.now() / 1000);
-    const desc = `Продление ${name} на ${days} дн.`;
-    const signature = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_days=${days}:Shp_key=${key}`).digest('hex');
-    const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${signature}&Shp_days=${days}&Shp_key=${key}${IS_TEST ? '&IsTest=1' : ''}`;
-    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `💳 **КЛИЕНТ ПЕРЕШЕЛ К ОПЛАТЕ**\n\nОбъект: ${name}\nКлюч: \`${key}\`\nСрок: ${days} дн.\nСумма: ${price} ₽`, { parse_mode: 'Markdown' });
+    const desc = `License ${name}`;
+    const signature = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${key}:Shp_limit=${kData.limit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
+    const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${signature}&Shp_days=${days}&Shp_key=${key}&Shp_chatId=${chatId}&Shp_limit=${kData.limit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}`;
     res.json({ success: true, payUrl });
 });
 
 app.post('/api/payment-result', async (req, res) => {
-    const { OutSum, InvId, SignatureValue, Shp_key, Shp_days } = req.body;
-    const mySign = crypto.createHash('md5').update(`${OutSum}:${InvId}:${ROBO_PASS2}:Shp_days=${Shp_days}:Shp_key=${Shp_key}`).digest('hex');
+    const { OutSum, InvId, SignatureValue, Shp_key, Shp_days, Shp_chatId, Shp_limit, Shp_name, Shp_type } = req.body;
+    const mySign = crypto.createHash('md5').update(`${OutSum}:${InvId}:${ROBO_PASS2}:Shp_chatId=${Shp_chatId}:Shp_days=${Shp_days}:Shp_key=${Shp_key}:Shp_limit=${Shp_limit}:Shp_name=${Shp_name}:Shp_type=${Shp_type}`).digest('hex');
     if (SignatureValue.toLowerCase() === mySign.toLowerCase()) {
         let keys = await readDatabase();
-        const idx = keys.findIndex(k => k.key === Shp_key);
-        if (idx !== -1) {
-            let d = new Date(keys[idx].expiry);
-            if (d < new Date()) d = new Date();
-            d.setDate(d.getDate() + parseInt(Shp_days));
-            keys[idx].expiry = d.toISOString();
-            await saveDatabase(keys);
-            await bot.telegram.sendMessage(MY_TELEGRAM_ID, `✅ **ОПЛАТА ПРИНЯТА**\n\nОбъект: ${keys[idx].name}\nКлюч: \`${Shp_key}\`\nДобавлено: ${Shp_days} дн.`, { parse_mode: 'Markdown' });
-            return res.send(`OK${InvId}`);
+        if (Shp_key === "NEW_USER") {
+            const newK = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
+            const exp = new Date(); exp.setDate(exp.getDate() + parseInt(Shp_days));
+            const projectRoot = (Shp_type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
+            const fId = await getOrCreateFolder(Shp_name, projectRoot);
+            keys.push({ key: newK, name: Shp_name, limit: parseInt(Shp_limit), expiry: exp.toISOString(), workers: [], ownerChatId: Shp_chatId, folderId: fId, type: Shp_type });
+            await bot.telegram.sendMessage(Shp_chatId, `🎉 Оплата успешна! Ваш ключ: ${newK}`);
+        } else {
+            const idx = keys.findIndex(k => k.key === Shp_key);
+            if (idx !== -1) {
+                let d = new Date(keys[idx].expiry); if (d < new Date()) d = new Date();
+                d.setDate(d.getDate() + parseInt(Shp_days)); keys[idx].expiry = d.toISOString();
+                await bot.telegram.sendMessage(Shp_chatId, `✅ Лицензия продлена!`);
+            }
         }
+        await saveDatabase(keys); return res.send(`OK${InvId}`);
     }
     res.send("error");
 });
@@ -306,7 +314,7 @@ app.get('/dashboard', (req, res) => {
         .card { background: #0d1117; border: 1px solid #30363d; border-radius: 16px; padding: 20px; margin-bottom: 15px; }
         .expired { border-color: #da3633 !important; box-shadow: 0 0 10px rgba(218, 54, 51, 0.2); }
         .gold-text { color: #f59e0b; }
-        input { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #30363d; background: #010409; color: #fff; box-sizing: border-box; }
+        input, select { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #30363d; background: #010409; color: #fff; box-sizing: border-box; }
         .btn { padding: 12px; border-radius: 8px; border: none; font-weight: 700; cursor: pointer; width: 100%; margin-top: 5px; }
         .btn-gold { background: #f59e0b; color: #000; }
         .btn-red { background: #da3633; color: #fff; }
@@ -320,6 +328,7 @@ app.get('/dashboard', (req, res) => {
         <b>ДОБАВИТЬ ОБЪЕКТ</b>
         <input id="n" placeholder="Название объекта">
         <input id="l" type="number" value="5" placeholder="Лимит человек">
+        <select id="t"><option value="logist">Логист</option><option value="merch">Мерч</option></select>
         <button class="btn btn-gold" onclick="add()">СОЗДАТЬ КЛЮЧ</button>
     </div>
     <div id="list"></div>
@@ -330,7 +339,7 @@ app.get('/dashboard', (req, res) => {
             document.getElementById('list').innerHTML = keys.map(k => {
                 const isExp = new Date(k.expiry) < new Date();
                 return \`<div class="card \${isExp ? 'expired' : ''}">
-                    <div class="gold-text" style="font-weight:900">\${k.key}</div>
+                    <div class="gold-text" style="font-weight:900">\${k.key} [\${k.type || 'logist'}]</div>
                     <div style="margin:5px 0">\${k.name}</div>
                     <div style="font-size:11px; opacity:0.6">
                         Лимит: <input type="number" value="\${k.limit}" style="width:40px; border:none; background:transparent; color:#f59e0b; font-weight:700" onchange="updLimit('\${k.key}', this.value)">
@@ -351,8 +360,9 @@ app.get('/dashboard', (req, res) => {
         async function add(){
             const n = document.getElementById('n').value;
             const l = document.getElementById('l').value;
+            const t = document.getElementById('t').value;
             if(!n) return alert('Введите имя');
-            await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,limit:l,days:30})});
+            await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,limit:l,days:30,type:t})});
             load();
         }
         async function ext(key, days){
@@ -374,7 +384,6 @@ app.get('/dashboard', (req, res) => {
 </html>`);
 });
 
-// --- ДИЗАЙН КЛИЕНТА (ОБНОВЛЕННЫЙ СО СКИДКАМИ) ---
 app.get('/client-dashboard', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="ru">
@@ -402,6 +411,7 @@ app.get('/client-dashboard', (req, res) => {
         .price-card { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); text-align: center; cursor: pointer; transition: 0.3s; }
         .price-card:hover { border-color: #f59e0b; background: rgba(245,158,11,0.05); }
         .sale-tag { font-size: 8px; background: #da3633; color: #fff; padding: 2px 5px; border-radius: 4px; display: inline-block; margin-bottom: 4px; }
+        .warning-text { font-size: 10px; text-align: center; color: #8b949e; margin-top: 20px; line-height: 1.4; }
     </style>
 </head>
 <body>
@@ -410,6 +420,7 @@ app.get('/client-dashboard', (req, res) => {
         <div style="font-size: 12px; opacity: 0.6">ЛИЧНЫЙ КАБИНЕТ</div>
     </div>
     <div id="root"></div>
+    <div class="warning-text">⚠️ ФОТО-ОТЧЕТЫ И АРХИВЫ ХРАНЯТСЯ 60 ДНЕЙ.<br>ПОЖАЛУЙСТА, СОХРАНЯЙТЕ ДАННЫЕ ВОВРЕМЯ.</div>
     <script>
         async function load(){
             const params = new URLSearchParams(window.location.search);
@@ -427,7 +438,7 @@ app.get('/client-dashboard', (req, res) => {
                 return \`
                 <div class="card">
                     <div class="status-badge">\${days > 0 ? 'Доступ активен' : 'Срок истек'}</div>
-                    <div class="obj-name">\${k.name}</div>
+                    <div class="obj-name">\${k.name} (\${k.type || 'logist'})</div>
                     <div style="font-size: 11px; opacity: 0.4; margin-bottom: 20px;">Ключ: \${k.key}</div>
                     <div class="stats">
                         <div class="stat-item"><span class="stat-val">\${days > 0 ? days : 0}</span><span class="stat-lbl">Дней</span></div>
@@ -437,21 +448,21 @@ app.get('/client-dashboard', (req, res) => {
                     <div class="workers-box">\${workersList.join('')}</div>
                     <div style="font-size: 12px; font-weight: 700">💳 ПРОДЛИТЬ ЛИЦЕНЗИЮ (\${k.limit} чел.):</div>
                     <div class="grid-prices">
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30)">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}')">
                             <div style="font-size:14px; font-weight:800">30 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*1500}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90)">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90,'\${k.type}')">
                             <div class="sale-tag">-10%</div>
                             <div style="font-size:14px; font-weight:800">90 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*4050}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',180)">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',180,'\${k.type}')">
                             <div class="sale-tag">-15%</div>
                             <div style="font-size:14px; font-weight:800">180 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*7650}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',365)">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',365,'\${k.type}')">
                             <div class="sale-tag">+2 МЕС</div>
                             <div style="font-size:14px; font-weight:800">1 ГОД</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*15000}₽</div>
@@ -460,8 +471,9 @@ app.get('/client-dashboard', (req, res) => {
                 </div>\`;
             }).join('');
         }
-        async function req(key, name, days){
-            const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days})});
+        async function req(key, name, days, type){
+            const cid = new URLSearchParams(window.location.search).get('chatId');
+            const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days,chatId:cid,type})});
             const res = await r.json();
             if(res.success && res.payUrl) window.location.href = res.payUrl;
             else alert('Ошибка платежа');
@@ -472,25 +484,71 @@ app.get('/client-dashboard', (req, res) => {
 </html>`);
 });
 
-// --- ТЕЛЕГРАМ БОТ ---
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
     if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ПУЛЬТ УПРАВЛЕНИЯ', { reply_markup: { inline_keyboard: [[{ text: "📦 ОБЪЕКТЫ / КЛЮЧИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
     const keys = await readDatabase(); 
     const ck = keys.find(k => String(k.ownerChatId) === String(cid));
     if (ck) return ctx.reply('🏢 ВАШ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
-    ctx.reply(`👋 **Добро пожаловать!**\n\nВведите ваш ключ активации для доступа в кабинет.`, { parse_mode: 'Markdown' });
+    
+    ctx.reply(`👋 **Добро пожаловать в Logist X!**`, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [
+            [{ text: "💳 КУПИТЬ НОВЫЙ ДОСТУП", callback_data: "buy_new" }],
+            [{ text: "🔑 У МЕНЯ ЕСТЬ КЛЮЧ", callback_data: "have_key" }]
+        ]}
+    });
+});
+
+bot.action('buy_new', (ctx) => {
+    userSteps[ctx.chat.id] = { step: 'type' };
+    ctx.reply("Выберите тип проекта:", {
+        reply_markup: { inline_keyboard: [
+            [{ text: "📦 ЛОГИСТ X", callback_data: "set_type_logist" }],
+            [{ text: "🛒 МЕРЧЕНДАЙЗИНГ", callback_data: "set_type_merch" }]
+        ]}
+    });
+});
+
+bot.action(/set_type_(.+)/, (ctx) => {
+    const type = ctx.match[1];
+    userSteps[ctx.chat.id] = { type, step: 'name' };
+    ctx.reply("Введите название вашего объекта (например: Склад Север):");
+});
+
+bot.action('have_key', (ctx) => {
+    ctx.reply("Введите ваш 8-значный ключ активации:");
 });
 
 bot.on('text', async (ctx) => {
-    if (ctx.chat.id === MY_TELEGRAM_ID) return; 
-    const key = ctx.message.text.trim().toUpperCase();
-    let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === key);
+    const cid = ctx.chat.id; if (cid === MY_TELEGRAM_ID) return; 
+    const txt = ctx.message.text.trim();
+    const step = userSteps[cid];
+
+    if (step && step.step === 'name') {
+        step.name = txt; step.step = 'limit';
+        return ctx.reply("Сколько сотрудников будет работать? (введите число)");
+    }
+    if (step && step.step === 'limit') {
+        const limit = parseInt(txt); if(isNaN(limit)) return ctx.reply("Введите число!");
+        const r = await fetch(SERVER_URL + '/api/notify-admin', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ key: "NEW_USER", name: step.name, days: 30, limit, chatId: cid, type: step.type })
+        });
+        const res = await r.json();
+        ctx.reply(`💳 К оплате за ${limit} чел.: \${limit * 1500}₽`, {
+            reply_markup: { inline_keyboard: [[{ text: "ОПЛАТИТЬ", url: res.payUrl }]] }
+        });
+        delete userSteps[cid]; return;
+    }
+
+    const key = txt.toUpperCase(); let keys = await readDatabase(); 
+    const idx = keys.findIndex(k => k.key === key);
     if (idx !== -1) { 
-        if(keys[idx].ownerChatId && keys[idx].ownerChatId !== ctx.chat.id) return ctx.reply('Этот ключ уже активирован другим.'); 
-        keys[idx].ownerChatId = ctx.chat.id; await saveDatabase(keys); 
-        ctx.reply('✅ КЛЮЧ АКТИВИРОВАН!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
-    } else ctx.reply('❌ Ключ не найден.');
+        if(keys[idx].ownerChatId && keys[idx].ownerChatId !== cid) return ctx.reply('Этот ключ уже активирован.'); 
+        keys[idx].ownerChatId = cid; await saveDatabase(keys); 
+        ctx.reply('✅ КЛЮЧ АКТИВИРОВАН!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
+    } else if (!step) ctx.reply('❌ Ключ не найден.');
 });
 
 bot.launch().then(() => console.log("READY"));
