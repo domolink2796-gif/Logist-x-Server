@@ -98,10 +98,10 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// НОВАЯ ФУНКЦИЯ ЧТЕНИЯ БД ПЛАНОГРАММ
-async function readPlanogramDb() {
+// НОВАЯ ФУНКЦИЯ ЧТЕНИЯ БД ПЛАНОГРАММ (С ПРИВЯЗКОЙ К ПАПКЕ КЛИЕНТА)
+async function readPlanogramDb(clientFolderId) {
     try {
-        const q = `name = '${PLANOGRAM_DB_NAME}' and '${MERCH_ROOT_ID}' in parents and trashed = false`;
+        const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         if (res.data.files.length === 0) return {};
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
@@ -109,16 +109,16 @@ async function readPlanogramDb() {
     } catch (e) { return {}; }
 }
 
-// НОВАЯ ФУНКЦИЯ СОХРАНЕНИЯ БД ПЛАНОГРАММ
-async function savePlanogramDb(data) {
+// НОВАЯ ФУНКЦИЯ СОХРАНЕНИЯ БД ПЛАНОГРАММ (С ПРИВЯЗКОЙ К ПАПКЕ КЛИЕНТА)
+async function savePlanogramDb(clientFolderId, data) {
     try {
-        const q = `name = '${PLANOGRAM_DB_NAME}' and '${MERCH_ROOT_ID}' in parents and trashed = false`;
+        const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
         if (res.data.files.length > 0) {
             await drive.files.update({ fileId: res.data.files[0].id, media });
         } else {
-            await drive.files.create({ resource: { name: PLANOGRAM_DB_NAME, parents: [MERCH_ROOT_ID] }, media });
+            await drive.files.create({ resource: { name: PLANOGRAM_DB_NAME, parents: [clientFolderId] }, media });
         }
     } catch (e) { console.error("Planogram DB Save Error:", e); }
 }
@@ -208,13 +208,13 @@ app.post('/upload-planogram', async (req, res) => {
         } else {
             const f = await drive.files.create({ resource: { name: fileName, parents: [planFolderId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id' });
             fileId = f.data.id;
-            await drive.permissions.create({ fileId, resource: { role: 'reader', type: 'anyone' } });
+            await drive.permissions.create({ fileId: fileId, resource: { role: 'reader', type: 'anyone' } });
         }
 
-        // Обновляем БД планограмм в корневой папке
-        const planDb = await readPlanogramDb();
+        // Обновляем БД планограмм именно в папке конкретного клиента
+        const planDb = await readPlanogramDb(kData.folderId);
         planDb[addr] = true;
-        await savePlanogramDb(planDb);
+        await savePlanogramDb(kData.folderId, planDb);
 
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -543,7 +543,7 @@ app.get('/client-dashboard', (req, res) => {
                             <div style="font-size:14px; font-weight:800">30 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*1500}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90,'\${k.type}')">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}')">
                             <div class="sale-tag">-10%</div>
                             <div style="font-size:14px; font-weight:800">90 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*4050}₽</div>
