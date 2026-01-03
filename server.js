@@ -171,10 +171,11 @@ app.post('/upload-planogram', async (req, res) => {
         const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
         const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
         const existing = await drive.files.list({ q });
+        const media = { mimeType: 'image/jpeg', body: Readable.from(buf) };
         if (existing.data.files.length > 0) {
-            await drive.files.update({ fileId: existing.data.files[0].id, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
+            await drive.files.update({ fileId: existing.data.files[0].id, media });
         } else {
-            const f = await drive.files.create({ resource: { name: fileName, parents: [planFolderId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id' });
+            const f = await drive.files.create({ resource: { name: fileName, parents: [planFolderId] }, media, fields: 'id' });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
         }
         res.json({ success: true });
