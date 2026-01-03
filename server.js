@@ -98,7 +98,7 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// НОВАЯ ФУНКЦИЯ ЧТЕНИЯ БД ПЛАНОГРАММ (С ПРИВЯЗКОЙ К ПАПКЕ КЛИЕНТА)
+// НОВАЯ ФУНКЦИЯ ЧТЕНИЯ БД ПЛАНОГРАММ (ТЕПЕРЬ ИЩЕТ В ПАПКЕ ХОЗЯИНА)
 async function readPlanogramDb(clientFolderId) {
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
@@ -109,7 +109,7 @@ async function readPlanogramDb(clientFolderId) {
     } catch (e) { return {}; }
 }
 
-// НОВАЯ ФУНКЦИЯ СОХРАНЕНИЯ БД ПЛАНОГРАММ (С ПРИВЯЗКОЙ К ПАПКЕ КЛИЕНТА)
+// НОВАЯ ФУНКЦИЯ СОХРАНЕНИЯ БД ПЛАНОГРАММ (ТЕПЕРЬ СОХРАНЯЕТ В ПАПКУ ХОЗЯИНА)
 async function savePlanogramDb(clientFolderId, data) {
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
@@ -211,7 +211,7 @@ app.post('/upload-planogram', async (req, res) => {
             await drive.permissions.create({ fileId: fileId, resource: { role: 'reader', type: 'anyone' } });
         }
 
-        // Обновляем БД планограмм именно в папке конкретного клиента
+        // Обновляем БД планограмм именно в папке конкретного клиента (folderId из базы ключей)
         const planDb = await readPlanogramDb(kData.folderId);
         planDb[addr] = true;
         await savePlanogramDb(kData.folderId, planDb);
