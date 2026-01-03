@@ -98,7 +98,7 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// НОВАЯ ФУНКЦИЯ ЧТЕНИЯ БД ПЛАНОГРАММ (ТЕПЕРЬ ИЩЕТ В ПАПКЕ ХОЗЯИНА)
+// ЧТЕНИЯ БД ПЛАНОГРАММ (ПРИВЯЗКА К ПАПКЕ)
 async function readPlanogramDb(clientFolderId) {
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
@@ -109,7 +109,7 @@ async function readPlanogramDb(clientFolderId) {
     } catch (e) { return {}; }
 }
 
-// НОВАЯ ФУНКЦИЯ СОХРАНЕНИЯ БД ПЛАНОГРАММ (ТЕПЕРЬ СОХРАНЯЕТ В ПАПКУ ХОЗЯИНА)
+// СОХРАНЕНИЯ БД ПЛАНОГРАММ (ПРИВЯЗКА К ПАПКЕ)
 async function savePlanogramDb(clientFolderId, data) {
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
@@ -210,12 +210,9 @@ app.post('/upload-planogram', async (req, res) => {
             fileId = f.data.id;
             await drive.permissions.create({ fileId: fileId, resource: { role: 'reader', type: 'anyone' } });
         }
-
-        // Обновляем БД планограмм именно в папке конкретного клиента (folderId из базы ключей)
         const planDb = await readPlanogramDb(kData.folderId);
         planDb[addr] = true;
         await savePlanogramDb(kData.folderId, planDb);
-
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -241,6 +238,8 @@ app.post('/check-license', async (req, res) => {
     if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
     if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
     const pType = kData.type || 'logist';
+    // ИНИЦИАЛИЗАЦИЯ БАЗЫ ПРИ ВХОДЕ (ЕСЛИ ТИП МЕРЧ)
+    if (pType === 'merch' && kData.folderId) { await readPlanogramDb(kData.folderId); }
     if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry, type: pType });
     if (!kData.workers) kData.workers = [];
     if (!kData.workers.includes(workerName)) {
