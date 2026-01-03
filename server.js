@@ -54,6 +54,7 @@ async function getOrCreateFolder(rawName, parentId) {
         const res = await drive.files.list({ q, fields: 'files(id)' });
         if (res.data.files.length > 0) return res.data.files[0].id;
         const file = await drive.files.create({ resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }, fields: 'id' });
+        await drive.permissions.create({ fileId: file.data.id, resource: { role: 'reader', type: 'anyone' } });
         return file.data.id;
     } catch (e) { return parentId; }
 }
@@ -135,24 +136,15 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
 // Функция поиска папки сотрудника для быстрого открытия из кабинета
 app.get('/api/open-folder', async (req, res) => {
     try {
-        const { objectName, workerName } = req.query;
-        // 1. Ищем папку Объекта на основном диске или в Мерче
-        const qObj = `name = '${objectName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-        const resObj = await drive.files.list({ q: qObj, fields: 'files(id)' });
-        if (resObj.data.files.length === 0) return res.send("Папка объекта не найдена. Возможно, отчеты еще не присылались.");
-        
-        let foundUrl = null;
-        for (let objFolder of resObj.data.files) {
-            const qWorker = `name = '${workerName}' and '${objFolder.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-            const resWorker = await drive.files.list({ q: qWorker, fields: 'files(webViewLink)' });
-            if (resWorker.data.files.length > 0) {
-                foundUrl = resWorker.data.files[0].webViewLink;
-                break;
-            }
+        const { workerName } = req.query;
+        const qWorker = `name = '${workerName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const resWorker = await drive.files.list({ q: qWorker, fields: 'files(id, webViewLink)', orderBy: 'createdTime desc' });
+        if (resWorker.data.files.length > 0) {
+            res.redirect(resWorker.data.files[0].webViewLink);
+        } else {
+            res.send(`Папка сотрудника ${workerName} еще не создана. Отправьте первый отчет.`);
         }
-        if (foundUrl) res.redirect(foundUrl);
-        else res.send(`Папка сотрудника ${workerName} еще не создана.`);
-    } catch (e) { res.send("Ошибка: " + e.message); }
+    } catch (e) { res.send("Ошибка поиска: " + e.message); }
 });
 
 app.post('/check-license', async (req, res) => {
@@ -407,7 +399,7 @@ app.get('/client-dashboard', (req, res) => {
                     workersList.push(\`
                         <div class="worker-item">
                             <span class="worker-name">👤 \${w}</span>
-                            <a href="/api/open-folder?objectName=\${encodeURIComponent(k.name)}&workerName=\${encodeURIComponent(w)}" target="_blank" class="folder-btn">📂 ОТЧЕТЫ</a>
+                            <a href="/api/open-folder?workerName=\${encodeURIComponent(w)}" target="_blank" class="folder-btn">📂 ОТЧЕТЫ</a>
                         </div>
                     \`);
                 });
