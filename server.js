@@ -113,7 +113,7 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS', 'ФОТО']] } });
         }
-        const gpsLink = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
+        const gpsLink = (lat && lon) ? `=HYPERLINK("http://www.google.com/maps/place/${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleTimeString("ru-RU"), address, entrance, client, workType, price, gpsLink, "ЗАГРУЖЕНО"]] } });
     } catch (e) { console.error("Logist Error:", e); }
 }
@@ -135,13 +135,13 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
-        const gps = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
+        const gps = (lat && lon) ? `=HYPERLINK("http://www.google.com/maps/place/${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
         const pdfLink = `=HYPERLINK("${pdfUrl}"; "ОТЧЕТ ФОТО")`;
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// --- НОВЫЕ РОУТЫ ДЛЯ ПЛАНОГРАММ (ИСПРАВЛЕННЫЕ) ---
+// --- НОВЫЕ РОУТЫ ДЛЯ ПЛАНОГРАММ ---
 app.get('/get-planogram', async (req, res) => {
     try {
         const { addr, key } = req.query;
@@ -252,7 +252,8 @@ app.post('/merch-upload', async (req, res) => {
         const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon, city } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
-        const oId = await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
+        if (!kData) throw new Error("Ключ не найден");
+        const oId = await getOrCreateFolder(kData.name || "Merch_Users", MERCH_ROOT_ID);
         const wId = await getOrCreateFolder(worker, oId);
         const cityId = await getOrCreateFolder(city || "Без города", wId);
         const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
@@ -261,12 +262,12 @@ app.post('/merch-upload', async (req, res) => {
             const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
             const buf = Buffer.from(base64Data, 'base64');
             const f = await drive.files.create({ resource: { name: `ОТЧЕТ_${address}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
-            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
+            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
         await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
         res.json({ success: true, url: pUrl });
-    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    } catch (e) { console.error("Upload Error:", e); res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
