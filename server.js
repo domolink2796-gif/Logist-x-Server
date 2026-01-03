@@ -66,7 +66,6 @@ async function getOrCreateFolder(rawName, parentId) {
     } catch (e) { return parentId; }
 }
 
-// ФУНКЦИЯ ДЛЯ ПАПКИ ПЛАНОГРАММ (ПРИВЯЗАНА К КЛИЕНТУ)
 async function getOrCreatePlanogramFolder(parentId) {
     return await getOrCreateFolder("PLANOGRAMS", parentId);
 }
@@ -142,7 +141,7 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// --- ИЗОЛИРОВАННЫЕ РОУТЫ ДЛЯ ПЛАНОГРАММ ---
+// --- НОВЫЕ РОУТЫ ДЛЯ ПЛАНОГРАММ (С ИЗОЛЯЦИЕЙ) ---
 app.get('/get-planogram', async (req, res) => {
     try {
         const { addr, key } = req.query;
