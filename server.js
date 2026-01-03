@@ -156,14 +156,14 @@ app.post('/check-license', async (req, res) => {
     const kData = keys.find(k => k.key === licenseKey);
     if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
     if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
-    if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry });
+    const pType = kData.type || 'logist';
+    if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry, type: pType });
     if (!kData.workers) kData.workers = [];
     if (!kData.workers.includes(workerName)) {
         if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест исчерпан' });
-        kData.workers.push(workerName); 
-        await saveDatabase(keys);
+        kData.workers.push(workerName); await saveDatabase(keys);
     }
-    res.json({ status: 'active', expiry: kData.expiry });
+    res.json({ status: 'active', expiry: kData.expiry, type: pType });
 });
 
 app.post('/upload', async (req, res) => {
@@ -180,7 +180,7 @@ app.post('/upload', async (req, res) => {
                 kData.workers.push(workerName); 
                 await saveDatabase(keys);
             }
-            return res.json({ status: 'active', expiry: kData.expiry });
+            return res.json({ status: 'active', expiry: kData.expiry, type: kData.type || 'logist' });
         }
         const currentWorker = worker || workerName;
         const kData = keys.find(k => k.workers && k.workers.includes(currentWorker)) || keys.find(k => k.key === 'DEV-MASTER-999');
@@ -310,22 +310,22 @@ app.get('/dashboard', (req, res) => {
     <title>ADMIN | LOGIST_X</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { background-color: #010409; color: #e6edf3; font-family: 'Inter', sans-serif; margin: 0; padding: 15px; }
+        body { background-color: #010409; color: #e6edf3; font-family: 'Inter', sans-serif; margin: 0; padding: 15px; font-size: 14px; }
         .card { background: #0d1117; border: 1px solid #30363d; border-radius: 16px; padding: 20px; margin-bottom: 15px; }
         .expired { border-color: #da3633 !important; box-shadow: 0 0 10px rgba(218, 54, 51, 0.2); }
-        .gold-text { color: #f59e0b; }
-        input, select { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #30363d; background: #010409; color: #fff; box-sizing: border-box; }
-        .btn { padding: 12px; border-radius: 8px; border: none; font-weight: 700; cursor: pointer; width: 100%; margin-top: 5px; }
+        .gold-text { color: #f59e0b; font-size: 16px; }
+        input, select { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #30363d; background: #010409; color: #fff; box-sizing: border-box; font-size: 14px; }
+        .btn { padding: 14px; border-radius: 8px; border: none; font-weight: 700; cursor: pointer; width: 100%; margin-top: 5px; font-size: 14px; }
         .btn-gold { background: #f59e0b; color: #000; }
         .btn-red { background: #da3633; color: #fff; }
-        .btn-small { padding: 6px; width: auto; flex: 1; font-size: 11px; }
+        .btn-small { padding: 8px; width: auto; flex: 1; font-size: 12px; }
         .row { display: flex; gap: 5px; }
     </style>
 </head>
 <body>
-    <div style="margin-bottom:20px; font-weight:900">📦 ПАНЕЛЬ УПРАВЛЕНИЯ</div>
+    <div style="margin-bottom:20px; font-weight:900; font-size: 18px;">📦 ПАНЕЛЬ УПРАВЛЕНИЯ</div>
     <div class="card">
-        <b>ДОБАВИТЬ ОБЪЕКТ</b>
+        <b style="font-size: 16px; display: block; margin-bottom: 10px;">ДОБАВИТЬ ОБЪЕКТ</b>
         <input id="n" placeholder="Название объекта">
         <input id="l" type="number" value="5" placeholder="Лимит человек">
         <select id="t"><option value="logist">Логист</option><option value="merch">Мерч</option></select>
@@ -340,12 +340,12 @@ app.get('/dashboard', (req, res) => {
                 const isExp = new Date(k.expiry) < new Date();
                 return \`<div class="card \${isExp ? 'expired' : ''}">
                     <div class="gold-text" style="font-weight:900">\${k.key} [\${k.type || 'logist'}]</div>
-                    <div style="margin:5px 0">\${k.name}</div>
-                    <div style="font-size:11px; opacity:0.6">
-                        Лимит: <input type="number" value="\${k.limit}" style="width:40px; border:none; background:transparent; color:#f59e0b; font-weight:700" onchange="updLimit('\${k.key}', this.value)">
+                    <div style="margin:8px 0; font-size: 15px; font-weight: 600;">\${k.name}</div>
+                    <div style="font-size:13px; opacity:0.8">
+                        Лимит: <input type="number" value="\${k.limit}" style="width:50px; border:none; background:transparent; color:#f59e0b; font-weight:700; padding:0; margin:0;" onchange="updLimit('\${k.key}', this.value)">
                         | До: \${new Date(k.expiry).toLocaleDateString()} \${isExp ? '❌' : '✅'}
                     </div>
-                    <div style="background:rgba(255,255,255,0.03); padding:8px; border-radius:8px; font-size:10px; margin:10px 0; color:#8b949e">
+                    <div style="background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; font-size:12px; margin:10px 0; color:#8b949e">
                         \${k.workers && k.workers.length ? k.workers.join(', ') : 'НЕТ АКТИВНЫХ ПОЛЬЗОВАТЕЛЕЙ'}
                     </div>
                     <div class="row">
@@ -404,6 +404,7 @@ app.get('/client-dashboard', (req, res) => {
         .stat-item { text-align: center; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 12px; flex: 1; margin: 0 4px; }
         .stat-val { display: block; font-weight: 800; font-size: 16px; color: #f59e0b; }
         .stat-lbl { font-size: 9px; opacity: 0.5; text-transform: uppercase; }
+        .warning-box { background: rgba(218, 54, 51, 0.1); border: 1px dashed #da3633; color: #ff7b72; padding: 12px; border-radius: 12px; font-size: 11px; margin-bottom: 20px; text-align: center; line-height: 1.4; }
         .workers-box { background: rgba(0,0,0,0.2); border-radius: 16px; padding: 10px; margin-bottom: 20px; }
         .worker-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
         .folder-btn { text-decoration: none; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 6px 12px; border-radius: 8px; font-size: 11px; font-weight: 800; transition: 0.2s; border: 1px solid rgba(245,158,11,0.2); }
@@ -411,7 +412,6 @@ app.get('/client-dashboard', (req, res) => {
         .price-card { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); text-align: center; cursor: pointer; transition: 0.3s; }
         .price-card:hover { border-color: #f59e0b; background: rgba(245,158,11,0.05); }
         .sale-tag { font-size: 8px; background: #da3633; color: #fff; padding: 2px 5px; border-radius: 4px; display: inline-block; margin-bottom: 4px; }
-        .warning-text { font-size: 10px; text-align: center; color: #8b949e; margin-top: 20px; line-height: 1.4; }
     </style>
 </head>
 <body>
@@ -420,7 +420,6 @@ app.get('/client-dashboard', (req, res) => {
         <div style="font-size: 12px; opacity: 0.6">ЛИЧНЫЙ КАБИНЕТ</div>
     </div>
     <div id="root"></div>
-    <div class="warning-text">⚠️ ФОТО-ОТЧЕТЫ И АРХИВЫ ХРАНЯТСЯ 60 ДНЕЙ.<br>ПОЖАЛУЙСТА, СОХРАНЯЙТЕ ДАННЫЕ ВОВРЕМЯ.</div>
     <script>
         async function load(){
             const params = new URLSearchParams(window.location.search);
@@ -439,7 +438,8 @@ app.get('/client-dashboard', (req, res) => {
                 <div class="card">
                     <div class="status-badge">\${days > 0 ? 'Доступ активен' : 'Срок истек'}</div>
                     <div class="obj-name">\${k.name} (\${k.type || 'logist'})</div>
-                    <div style="font-size: 11px; opacity: 0.4; margin-bottom: 20px;">Ключ: \${k.key}</div>
+                    <div style="font-size: 11px; opacity: 0.4; margin-bottom: 15px;">Ключ: \${k.key}</div>
+                    <div class="warning-box">⚠️ ФОТО-ОТЧЕТЫ И АРХИВЫ ХРАНЯТСЯ 60 ДНЕЙ.<br><b>СОХРАНЯЙТЕ ДАННЫЕ ВОВРЕМЯ!</b></div>
                     <div class="stats">
                         <div class="stat-item"><span class="stat-val">\${days > 0 ? days : 0}</span><span class="stat-lbl">Дней</span></div>
                         <div class="stat-item"><span class="stat-val">\${k.workers.length}/\${k.limit}</span><span class="stat-lbl">Людей</span></div>
@@ -536,7 +536,7 @@ bot.on('text', async (ctx) => {
             body: JSON.stringify({ key: "NEW_USER", name: step.name, days: 30, limit, chatId: cid, type: step.type })
         });
         const res = await r.json();
-        ctx.reply(`💳 К оплате за ${limit} чел.: \${limit * 1500}₽`, {
+        ctx.reply(`💳 К оплате за ${limit} чел.: ${limit * 1500}₽`, {
             reply_markup: { inline_keyboard: [[{ text: "ОПЛАТИТЬ", url: res.payUrl }]] }
         });
         delete userSteps[cid]; return;
