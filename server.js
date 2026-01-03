@@ -66,6 +66,7 @@ async function getOrCreateFolder(rawName, parentId) {
     } catch (e) { return parentId; }
 }
 
+// ФУНКЦИЯ ДЛЯ ПАПКИ ПЛАНОГРАММ (ПРИВЯЗАНА К КЛИЕНТУ)
 async function getOrCreatePlanogramFolder(parentId) {
     return await getOrCreateFolder("PLANOGRAMS", parentId);
 }
@@ -113,7 +114,7 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS', 'ФОТО']] } });
         }
-        const gpsLink = (lat && lon) ? `=HYPERLINK("http://www.google.com/maps/place/${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
+        const gpsLink = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleTimeString("ru-RU"), address, entrance, client, workType, price, gpsLink, "ЗАГРУЖЕНО"]] } });
     } catch (e) { console.error("Logist Error:", e); }
 }
@@ -135,13 +136,13 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
-        const gps = (lat && lon) ? `=HYPERLINK("http://www.google.com/maps/place/${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
+        const gps = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
         const pdfLink = `=HYPERLINK("${pdfUrl}"; "ОТЧЕТ ФОТО")`;
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// --- НОВЫЕ РОУТЫ ДЛЯ ПЛАНОГРАММ ---
+// --- ИЗОЛИРОВАННЫЕ РОУТЫ ДЛЯ ПЛАНОГРАММ ---
 app.get('/get-planogram', async (req, res) => {
     try {
         const { addr, key } = req.query;
@@ -151,7 +152,7 @@ app.get('/get-planogram', async (req, res) => {
         const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
         const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
         const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
-        const search = await drive.files.list({ q, fields: 'files(id, webViewLink, webContentLink)' });
+        const search = await drive.files.list({ q, fields: 'files(id, webViewLink)' });
         if (search.data.files.length > 0) {
             res.json({ exists: true, url: search.data.files[0].webViewLink });
         } else {
@@ -171,13 +172,10 @@ app.post('/upload-planogram', async (req, res) => {
         const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
         const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
         const existing = await drive.files.list({ q });
-        const media = { mimeType: 'image/jpeg', body: Readable.from(buf) };
         if (existing.data.files.length > 0) {
-            const fId = existing.data.files[0].id;
-            await drive.files.update({ fileId: fId, media });
-            await drive.permissions.create({ fileId: fId, resource: { role: 'reader', type: 'anyone' } });
+            await drive.files.update({ fileId: existing.data.files[0].id, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
         } else {
-            const f = await drive.files.create({ resource: { name: fileName, parents: [planFolderId] }, media, fields: 'id' });
+            const f = await drive.files.create({ resource: { name: fileName, parents: [planFolderId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id' });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
         }
         res.json({ success: true });
@@ -252,8 +250,7 @@ app.post('/merch-upload', async (req, res) => {
         const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon, city } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
-        if (!kData) throw new Error("Ключ не найден");
-        const oId = await getOrCreateFolder(kData.name || "Merch_Users", MERCH_ROOT_ID);
+        const oId = await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
         const wId = await getOrCreateFolder(worker, oId);
         const cityId = await getOrCreateFolder(city || "Без города", wId);
         const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
@@ -262,12 +259,12 @@ app.post('/merch-upload', async (req, res) => {
             const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
             const buf = Buffer.from(base64Data, 'base64');
             const f = await drive.files.create({ resource: { name: `ОТЧЕТ_${address}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
-            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
+            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
         await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
         res.json({ success: true, url: pUrl });
-    } catch (e) { console.error("Upload Error:", e); res.status(500).json({ success: false, error: e.message }); }
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
