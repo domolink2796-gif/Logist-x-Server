@@ -84,7 +84,7 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- ОТЧЕТЫ ЛОГИСТИКИ / МЕРЧ --- (Без изменений)
+// --- ОТЧЕТЫ ЛОГИСТИКИ / МЕРЧ ---
 async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
         const reportName = `Отчет ${workerName}`;
@@ -131,6 +131,30 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
 }
 
 // === API ===
+
+// Функция поиска папки сотрудника для быстрого открытия из кабинета
+app.get('/api/open-folder', async (req, res) => {
+    try {
+        const { objectName, workerName } = req.query;
+        // 1. Ищем папку Объекта на основном диске или в Мерче
+        const qObj = `name = '${objectName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const resObj = await drive.files.list({ q: qObj, fields: 'files(id)' });
+        if (resObj.data.files.length === 0) return res.send("Папка объекта не найдена. Возможно, отчеты еще не присылались.");
+        
+        let foundUrl = null;
+        for (let objFolder of resObj.data.files) {
+            const qWorker = `name = '${workerName}' and '${objFolder.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+            const resWorker = await drive.files.list({ q: qWorker, fields: 'files(webViewLink)' });
+            if (resWorker.data.files.length > 0) {
+                foundUrl = resWorker.data.files[0].webViewLink;
+                break;
+            }
+        }
+        if (foundUrl) res.redirect(foundUrl);
+        else res.send(`Папка сотрудника ${workerName} еще не создана.`);
+    } catch (e) { res.send("Ошибка: " + e.message); }
+});
+
 app.post('/check-license', async (req, res) => {
     const { licenseKey, workerName } = req.body;
     const keys = await readDatabase();
@@ -224,7 +248,7 @@ app.post('/api/notify-admin', async (req, res) => {
     res.json({ success: true });
 });
 
-// --- ДИЗАЙН АДМИНКИ --- (Улучшено выделение цветом)
+// --- ДИЗАЙН АДМИНКИ ---
 app.get('/dashboard', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="ru">
@@ -306,7 +330,7 @@ app.get('/dashboard', (req, res) => {
 </html>`);
 });
 
-// --- НОВЫЙ ДИЗАЙН КЛИЕНТА (GLASSMORPHISM) ---
+// --- ДИЗАЙН КЛИЕНТА (ОБНОВЛЕННЫЙ С ПАПКАМИ И СВОБОДНЫМИ МЕСТАМИ) ---
 app.get('/client-dashboard', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="ru">
@@ -327,12 +351,20 @@ app.get('/client-dashboard', (req, res) => {
         .stat-item { text-align: center; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 12px; flex: 1; margin: 0 4px; }
         .stat-val { display: block; font-weight: 800; font-size: 16px; color: #f59e0b; }
         .stat-lbl { font-size: 9px; opacity: 0.5; text-transform: uppercase; }
+        
+        /* Стили для списка сотрудников */
+        .workers-box { background: rgba(0,0,0,0.2); border-radius: 16px; padding: 10px; margin-bottom: 20px; }
+        .worker-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .worker-item:last-child { border-bottom: none; }
+        .worker-name { font-size: 14px; font-weight: 600; }
+        .worker-empty { font-size: 13px; opacity: 0.3; font-style: italic; }
+        .folder-btn { text-decoration: none; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 6px 12px; border-radius: 8px; font-size: 11px; font-weight: 800; transition: 0.2s; border: 1px solid rgba(245,158,11,0.2); }
+        .folder-btn:active { background: #f59e0b; color: #000; }
+
         .btn-main { background: #f59e0b; color: #000; border: none; padding: 15px; border-radius: 14px; font-weight: 800; width: 100%; cursor: pointer; transition: 0.3s; margin-top: 10px; }
-        .btn-main:active { transform: scale(0.98); }
         .selector-box { margin-top: 20px; background: rgba(255,255,255,0.03); padding: 15px; border-radius: 16px; border: 1px dashed rgba(255,255,255,0.1); }
         .grid-prices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
         .price-card { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); text-align: center; cursor: pointer; }
-        .price-card.active { border-color: #f59e0b; background: rgba(245, 158, 11, 0.05); }
         .sale-tag { font-size: 8px; background: #da3633; color: #fff; padding: 2px 5px; border-radius: 4px; display: inline-block; }
     </style>
 </head>
@@ -350,15 +382,42 @@ app.get('/client-dashboard', (req, res) => {
             const keys = await r.json();
             document.getElementById('root').innerHTML = keys.map(k => {
                 const days = Math.ceil((new Date(k.expiry) - new Date()) / (1000*60*60*24));
+                
+                // Формируем список сотрудников + пустые слоты
+                let workersList = [];
+                // Добавляем активных
+                k.workers.forEach(w => {
+                    workersList.push(\`
+                        <div class="worker-item">
+                            <span class="worker-name">👤 \${w}</span>
+                            <a href="/api/open-folder?objectName=\${encodeURIComponent(k.name)}&workerName=\${encodeURIComponent(w)}" target="_blank" class="folder-btn">📂 ОТЧЕТЫ</a>
+                        </div>
+                    \`);
+                });
+                // Добавляем пустые слоты до лимита
+                for(let i = k.workers.length; i < k.limit; i++) {
+                    workersList.push(\`
+                        <div class="worker-item">
+                            <span class="worker-empty">⚪️ Свободное место</span>
+                            <span style="font-size:9px; opacity:0.2">ОЖИДАНИЕ...</span>
+                        </div>
+                    \`);
+                }
+
                 return \`
                 <div class="card">
                     <div class="status-badge">Активный доступ</div>
                     <div class="obj-name">\${k.name}</div>
-                    <div style="font-size: 11px; opacity: 0.5; margin-bottom: 20px;">Ключ: \${k.key}</div>
+                    <div style="font-size: 11px; opacity: 0.4; margin-bottom: 20px;">ID: \${k.key}</div>
                     
                     <div class="stats">
                         <div class="stat-item"><span class="stat-val">\${days > 0 ? days : 0}</span><span class="stat-lbl">Дней осталось</span></div>
                         <div class="stat-item"><span class="stat-val">\${k.workers.length}/\${k.limit}</span><span class="stat-lbl">Мест занято</span></div>
+                    </div>
+
+                    <div style="font-size: 11px; font-weight: 800; color: #8b949e; margin-bottom: 10px; padding-left: 5px;">СОТРУДНИКИ И ПАПКИ:</div>
+                    <div class="workers-box">
+                        \${workersList.join('')}
                     </div>
 
                     <div class="selector-box">
@@ -385,15 +444,13 @@ app.get('/client-dashboard', (req, res) => {
                             </div>
                         </div>
                     </div>
-                    <button class="btn-main" onclick="alert('Выберите тариф выше для оплаты')">ОПЛАТИТЬ ОНЛАЙН</button>
+                    <button class="btn-main" onclick="alert('Выберите период выше!')">ОПЛАТИТЬ ОНЛАЙН</button>
                 </div>\`;
             }).join('');
         }
-
         async function req(key, name, days){
-            // Пока просто уведомляем админа, но уже передаем рассчитанные дни
             await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days})});
-            alert('Запрос на продление на ' + days + ' дн. отправлен администратору!');
+            alert('Запрос на продление отправлен!');
         }
         load();
     </script>
@@ -409,7 +466,6 @@ bot.start(async (ctx) => {
     const ck = keys.find(k => String(k.ownerChatId) === String(cid));
     if (ck) return ctx.reply('🏢 ВАШ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
     
-    // Текст приветствия для новых (как обсуждали)
     const welcomeText = `👋 **Добро пожаловать в систему LOGIST X!**\n\nДля работы вам необходим ключ активации.\n\n📦 **LOGIST X** — отчеты логистики.\n📊 **MERCH** — мерчандайзинг.\n\nВведите ваш ключ ниже или обратитесь к администратору для покупки доступа.`;
     ctx.reply(welcomeText, { parse_mode: 'Markdown' });
 });
