@@ -45,7 +45,7 @@ function getDistance(lat1, lon1, lat2, lon2) {
     const R = 6371e3; 
     const f1 = lat1 * Math.PI/180; const f2 = lat2 * Math.PI/180;
     const df = (lat2-lat1) * Math.PI/180; const dl = (lon2-lon1) * Math.PI/180;
-    const a = Math.sin(df/2) * Math.sin(df/2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) * Math.sin(dl/2);
+    const a = Math.sin(df/2) * Math.sin(df/2) + Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dl/2) * Math.sin(dl/2);
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
@@ -66,9 +66,9 @@ async function getOrCreateFolder(rawName, parentId) {
     } catch (e) { return parentId; }
 }
 
-// ФУНКЦИЯ ДЛЯ ПАПКИ ПЛАНОГРАММ (НОВАЯ)
+// ФУНКЦИЯ ДЛЯ ПАПКИ ПЛАНОГРАММ (ПРИВЯЗАНА К КЛИЕНТУ)
 async function getOrCreatePlanogramFolder(parentId) {
-    return await getOrCreateFolder("PLANOGRAMS_DATABASE", parentId);
+    return await getOrCreateFolder("PLANOGRAMS", parentId);
 }
 
 async function readDatabase() {
@@ -114,7 +114,7 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS', 'ФОТО']] } });
         }
-        const gpsLink = (lat && lon) ? `=HYPERLINK("http://www.google.com/maps/place/${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
+        const gpsLink = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleTimeString("ru-RU"), address, entrance, client, workType, price, gpsLink, "ЗАГРУЖЕНО"]] } });
     } catch (e) { console.error("Logist Error:", e); }
 }
@@ -136,17 +136,20 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
-        const gps = (lat && lon) ? `=HYPERLINK("http://www.google.com/maps/place/${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
+        const gps = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
         const pdfLink = `=HYPERLINK("${pdfUrl}"; "ОТЧЕТ ФОТО")`;
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// --- НОВЫЕ РОУТЫ ДЛЯ ПЛАНОГРАММ ---
+// --- ИЗОЛИРОВАННЫЕ РОУТЫ ДЛЯ ПЛАНОГРАММ ---
 app.get('/get-planogram', async (req, res) => {
     try {
         const { addr, key } = req.query;
-        const planFolderId = await getOrCreatePlanogramFolder(MERCH_ROOT_ID);
+        const keys = await readDatabase();
+        const kData = keys.find(k => k.key === key);
+        if (!kData || !kData.folderId) return res.json({ exists: false });
+        const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
         const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
         const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
         const search = await drive.files.list({ q, fields: 'files(id, webViewLink)' });
@@ -161,13 +164,14 @@ app.get('/get-planogram', async (req, res) => {
 app.post('/upload-planogram', async (req, res) => {
     try {
         const { addr, image, key } = req.body;
-        const planFolderId = await getOrCreatePlanogramFolder(MERCH_ROOT_ID);
+        const keys = await readDatabase();
+        const kData = keys.find(k => k.key === key);
+        if (!kData || !kData.folderId) return res.status(403).json({ error: "Ключ не найден" });
+        const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
         const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
         const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-        
         const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
         const existing = await drive.files.list({ q });
-        
         if (existing.data.files.length > 0) {
             await drive.files.update({ fileId: existing.data.files[0].id, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
         } else {
