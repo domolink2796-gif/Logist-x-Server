@@ -177,36 +177,37 @@ app.post('/upload', async (req, res) => {
             if (!kData.workers) kData.workers = [];
             if (!kData.workers.includes(workerName)) {
                 if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест исчерпан' });
-                kData.workers.push(workerName); 
-                await saveDatabase(keys);
+                kData.workers.push(workerName); await saveDatabase(keys);
             }
             return res.json({ status: 'active', expiry: kData.expiry, type: kData.type || 'logist' });
         }
-        const currentWorker = worker || workerName;
-        const kData = keys.find(k => k.workers && k.workers.includes(currentWorker)) || keys.find(k => k.key === 'DEV-MASTER-999');
-        const projectRoot = (kData && kData.type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
-        const oId = await getOrCreateFolder(kData ? kData.name : "Logist_Users", projectRoot);
-        const wId = await getOrCreateFolder(currentWorker, oId);
-        const cityId = await getOrCreateFolder(city, wId);
-        const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
+        const curW = worker || workerName;
+        const kData = keys.find(k => k.workers && k.workers.includes(curW)) || keys.find(k => k.key === 'DEV-MASTER-999');
+        const projR = (kData && kData.type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
+        const oId = await getOrCreateFolder(kData ? kData.name : "Logist_Users", projR);
+        const wId = await getOrCreateFolder(curW, oId);
+        const folderName = (client && client.trim() !== "") ? client.trim() : "Общее";
+        const finalId = await getOrCreateFolder(folderName, wId);
+        const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], finalId);
         if (image) {
             const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
             const fileName = `${address}_п${entrance}.jpg`;
             await drive.files.create({ resource: { name: fileName, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
         }
-        await appendToReport(wId, currentWorker, city, new Date().toISOString().split('T')[0], address, entrance, client, workType, price, lat, lon);
+        await appendToReport(wId, curW, city, new Date().toISOString().split('T')[0], address, entrance, client, workType, price, lat, lon);
         res.json({ success: true });
     } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
 app.post('/merch-upload', async (req, res) => {
     try {
-        const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon } = req.body;
+        const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon, city } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const oId = await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
         const wId = await getOrCreateFolder(worker, oId);
-        const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], wId);
+        const cityId = await getOrCreateFolder(city || "Без города", wId);
+        const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
         let pUrl = "Нет файла";
         if (pdf) {
             const buf = Buffer.from(pdf.split(',')[1], 'base64');
@@ -232,17 +233,14 @@ app.post('/api/keys/add', async (req, res) => {
     const projectRoot = (type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
     const fId = await getOrCreateFolder(name, projectRoot);
     keys.push({ key: newK, name, limit, expiry: exp.toISOString(), workers: [], ownerChatId: null, folderId: fId, type: type || 'logist' });
-    await saveDatabase(keys); 
-    res.json({ success: true });
+    await saveDatabase(keys); res.json({ success: true });
 });
 
 app.post('/api/keys/extend', async (req, res) => {
     let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === req.body.key);
     if (idx !== -1) { 
-        let d = new Date(keys[idx].expiry); 
-        if (d < new Date()) d = new Date();
-        d.setDate(d.getDate() + parseInt(req.body.days || 30)); 
-        keys[idx].expiry = d.toISOString(); 
+        let d = new Date(keys[idx].expiry); if (d < new Date()) d = new Date();
+        d.setDate(d.getDate() + parseInt(req.body.days || 30)); keys[idx].expiry = d.toISOString(); 
         await saveDatabase(keys); res.json({ success: true }); 
     } else res.json({ success: false });
 });
@@ -271,8 +269,8 @@ app.post('/api/notify-admin', async (req, res) => {
     if (days == 365) price = kData.limit * 15000;
     const invId = Math.floor(Date.now() / 1000);
     const desc = `License ${name}`;
-    const signature = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${key}:Shp_limit=${kData.limit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
-    const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${signature}&Shp_days=${days}&Shp_key=${key}&Shp_chatId=${chatId}&Shp_limit=${kData.limit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}`;
+    const sign = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${key}:Shp_limit=${kData.limit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
+    const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${sign}&Shp_days=${days}&Shp_key=${key}&Shp_chatId=${chatId}&Shp_limit=${kData.limit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}`;
     res.json({ success: true, payUrl });
 });
 
@@ -284,8 +282,8 @@ app.post('/api/payment-result', async (req, res) => {
         if (Shp_key === "NEW_USER") {
             const newK = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
             const exp = new Date(); exp.setDate(exp.getDate() + parseInt(Shp_days));
-            const projectRoot = (Shp_type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
-            const fId = await getOrCreateFolder(Shp_name, projectRoot);
+            const projR = (Shp_type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
+            const fId = await getOrCreateFolder(Shp_name, projR);
             keys.push({ key: newK, name: Shp_name, limit: parseInt(Shp_limit), expiry: exp.toISOString(), workers: [], ownerChatId: Shp_chatId, folderId: fId, type: Shp_type });
             await bot.telegram.sendMessage(Shp_chatId, `🎉 Оплата успешна! Ваш ключ: ${newK}`);
         } else {
@@ -487,10 +485,8 @@ app.get('/client-dashboard', (req, res) => {
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
     if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ПУЛЬТ УПРАВЛЕНИЯ', { reply_markup: { inline_keyboard: [[{ text: "📦 ОБЪЕКТЫ / КЛЮЧИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
-    const keys = await readDatabase(); 
-    const ck = keys.find(k => String(k.ownerChatId) === String(cid));
+    const keys = await readDatabase(); const ck = keys.find(k => String(k.ownerChatId) === String(cid));
     if (ck) return ctx.reply('🏢 ВАШ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
-    
     ctx.reply(`👋 **Добро пожаловать в Logist X!**`, {
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [
