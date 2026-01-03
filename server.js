@@ -16,6 +16,7 @@ const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A';
 const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; 
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
+const PLANOGRAM_DB_NAME = 'planograms_db.json'; // Файл БД планограмм
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
@@ -97,6 +98,31 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
+// НОВАЯ ФУНКЦИЯ ЧТЕНИЯ БД ПЛАНОГРАММ
+async function readPlanogramDb() {
+    try {
+        const q = `name = '${PLANOGRAM_DB_NAME}' and '${MERCH_ROOT_ID}' in parents and trashed = false`;
+        const res = await drive.files.list({ q });
+        if (res.data.files.length === 0) return {};
+        const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
+        return content.data || {};
+    } catch (e) { return {}; }
+}
+
+// НОВАЯ ФУНКЦИЯ СОХРАНЕНИЯ БД ПЛАНОГРАММ
+async function savePlanogramDb(data) {
+    try {
+        const q = `name = '${PLANOGRAM_DB_NAME}' and '${MERCH_ROOT_ID}' in parents and trashed = false`;
+        const res = await drive.files.list({ q });
+        const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
+        if (res.data.files.length > 0) {
+            await drive.files.update({ fileId: res.data.files[0].id, media });
+        } else {
+            await drive.files.create({ resource: { name: PLANOGRAM_DB_NAME, parents: [MERCH_ROOT_ID] }, media });
+        }
+    } catch (e) { console.error("Planogram DB Save Error:", e); }
+}
+
 async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
         const reportName = `Отчет ${workerName}`;
@@ -167,17 +193,29 @@ app.post('/upload-planogram', async (req, res) => {
         const keys = await readDatabase();
         const kData = keys.find(k => k.key === key);
         if (!kData || !kData.folderId || kData.type !== 'merch') return res.status(403).json({ error: "Доступ запрещен" });
+        
         const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
         const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
         const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
+        
         const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
         const existing = await drive.files.list({ q });
+        
+        let fileId;
         if (existing.data.files.length > 0) {
-            await drive.files.update({ fileId: existing.data.files[0].id, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
+            fileId = existing.data.files[0].id;
+            await drive.files.update({ fileId, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
         } else {
             const f = await drive.files.create({ resource: { name: fileName, parents: [planFolderId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id' });
-            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
+            fileId = f.data.id;
+            await drive.permissions.create({ fileId, resource: { role: 'reader', type: 'anyone' } });
         }
+
+        // Обновляем БД планограмм в корневой папке
+        const planDb = await readPlanogramDb();
+        planDb[addr] = true;
+        await savePlanogramDb(planDb);
+
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
