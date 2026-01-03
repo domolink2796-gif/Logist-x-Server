@@ -148,13 +148,13 @@ app.get('/get-planogram', async (req, res) => {
         const { addr, key } = req.query;
         const keys = await readDatabase();
         const kData = keys.find(k => k.key === key);
-        if (!kData || !kData.folderId) return res.json({ exists: false });
+        if (!kData || !kData.folderId || kData.type !== 'merch') return res.json({ exists: false });
         const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
         const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
         const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
-        const search = await drive.files.list({ q, fields: 'files(id, webViewLink)' });
+        const search = await drive.files.list({ q, fields: 'files(id, webViewLink, webContentLink)' });
         if (search.data.files.length > 0) {
-            res.json({ exists: true, url: search.data.files[0].webViewLink });
+            res.json({ exists: true, url: search.data.files[0].webContentLink || search.data.files[0].webViewLink });
         } else {
             res.json({ exists: false });
         }
@@ -166,7 +166,7 @@ app.post('/upload-planogram', async (req, res) => {
         const { addr, image, key } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.key === key);
-        if (!kData || !kData.folderId) return res.status(403).json({ error: "Ключ не найден" });
+        if (!kData || !kData.folderId || kData.type !== 'merch') return res.status(403).json({ error: "Доступ запрещен" });
         const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
         const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
         const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
