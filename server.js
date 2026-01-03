@@ -84,6 +84,29 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
+// Вспомогательный эндпоинт для открытия папки из кабинета
+app.get('/api/open-folder', async (req, res) => {
+    try {
+        const { objectName, workerName } = req.query;
+        // Поиск папки объекта
+        const qObj = `name = '${objectName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const resObj = await drive.files.list({ q: qObj, fields: 'files(id)' });
+        if (resObj.data.files.length === 0) return res.send("Папка объекта еще не создана.");
+        
+        let targetLink = null;
+        for (let obj of resObj.data.files) {
+            const qW = `name = '${workerName}' and '${obj.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+            const resW = await drive.files.list({ q: qW, fields: 'files(webViewLink)' });
+            if (resW.data.files.length > 0) {
+                targetLink = resW.data.files[0].webViewLink;
+                break;
+            }
+        }
+        if (targetLink) res.redirect(targetLink);
+        else res.send("Папка сотрудника пока отсутствует.");
+    } catch (e) { res.send("Ошибка: " + e.message); }
+});
+
 // --- ОТЧЕТЫ ЛОГИСТИКИ / МЕРЧ ---
 async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
@@ -131,30 +154,6 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
 }
 
 // === API ===
-
-// Функция поиска папки сотрудника для быстрого открытия из кабинета
-app.get('/api/open-folder', async (req, res) => {
-    try {
-        const { objectName, workerName } = req.query;
-        // 1. Ищем папку Объекта на основном диске или в Мерче
-        const qObj = `name = '${objectName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-        const resObj = await drive.files.list({ q: qObj, fields: 'files(id)' });
-        if (resObj.data.files.length === 0) return res.send("Папка объекта не найдена. Возможно, отчеты еще не присылались.");
-        
-        let foundUrl = null;
-        for (let objFolder of resObj.data.files) {
-            const qWorker = `name = '${workerName}' and '${objFolder.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-            const resWorker = await drive.files.list({ q: qWorker, fields: 'files(webViewLink)' });
-            if (resWorker.data.files.length > 0) {
-                foundUrl = resWorker.data.files[0].webViewLink;
-                break;
-            }
-        }
-        if (foundUrl) res.redirect(foundUrl);
-        else res.send(`Папка сотрудника ${workerName} еще не создана.`);
-    } catch (e) { res.send("Ошибка: " + e.message); }
-});
-
 app.post('/check-license', async (req, res) => {
     const { licenseKey, workerName } = req.body;
     const keys = await readDatabase();
@@ -330,7 +329,7 @@ app.get('/dashboard', (req, res) => {
 </html>`);
 });
 
-// --- ДИЗАЙН КЛИЕНТА (ОБНОВЛЕННЫЙ С ПАПКАМИ И СВОБОДНЫМИ МЕСТАМИ) ---
+// --- НОВЫЙ ДИЗАЙН КЛИЕНТА (С ПАПКАМИ И ПУСТЫМИ СЛОТАМИ) ---
 app.get('/client-dashboard', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="ru">
@@ -352,14 +351,13 @@ app.get('/client-dashboard', (req, res) => {
         .stat-val { display: block; font-weight: 800; font-size: 16px; color: #f59e0b; }
         .stat-lbl { font-size: 9px; opacity: 0.5; text-transform: uppercase; }
         
-        /* Стили для списка сотрудников */
-        .workers-box { background: rgba(0,0,0,0.2); border-radius: 16px; padding: 10px; margin-bottom: 20px; }
-        .worker-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-        .worker-item:last-child { border-bottom: none; }
-        .worker-name { font-size: 14px; font-weight: 600; }
-        .worker-empty { font-size: 13px; opacity: 0.3; font-style: italic; }
-        .folder-btn { text-decoration: none; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 6px 12px; border-radius: 8px; font-size: 11px; font-weight: 800; transition: 0.2s; border: 1px solid rgba(245,158,11,0.2); }
-        .folder-btn:active { background: #f59e0b; color: #000; }
+        /* Список сотрудников */
+        .workers-box { background: rgba(0,0,0,0.2); border-radius: 16px; padding: 5px; margin-bottom: 20px; }
+        .worker-row { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .worker-row:last-child { border-bottom: none; }
+        .w-name { font-size: 14px; font-weight: 600; }
+        .w-empty { font-size: 13px; opacity: 0.3; font-style: italic; }
+        .btn-folder { text-decoration: none; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 6px 10px; border-radius: 8px; font-size: 10px; font-weight: 800; border: 1px solid rgba(245,158,11,0.2); }
 
         .btn-main { background: #f59e0b; color: #000; border: none; padding: 15px; border-radius: 14px; font-weight: 800; width: 100%; cursor: pointer; transition: 0.3s; margin-top: 10px; }
         .selector-box { margin-top: 20px; background: rgba(255,255,255,0.03); padding: 15px; border-radius: 16px; border: 1px dashed rgba(255,255,255,0.1); }
@@ -383,41 +381,39 @@ app.get('/client-dashboard', (req, res) => {
             document.getElementById('root').innerHTML = keys.map(k => {
                 const days = Math.ceil((new Date(k.expiry) - new Date()) / (1000*60*60*24));
                 
-                // Формируем список сотрудников + пустые слоты
-                let workersList = [];
-                // Добавляем активных
+                // Рендерим сотрудников + пустые слоты до лимита
+                let workersHTML = '';
+                // 1. Те, кто уже работает
                 k.workers.forEach(w => {
-                    workersList.push(\`
-                        <div class="worker-item">
-                            <span class="worker-name">👤 \${w}</span>
-                            <a href="/api/open-folder?objectName=\${encodeURIComponent(k.name)}&workerName=\${encodeURIComponent(w)}" target="_blank" class="folder-btn">📂 ОТЧЕТЫ</a>
-                        </div>
-                    \`);
+                    workersHTML += \`
+                        <div class="worker-row">
+                            <span class="w-name">👤 \${w}</span>
+                            <a href="/api/open-folder?objectName=\${encodeURIComponent(k.name)}&workerName=\${encodeURIComponent(w)}" target="_blank" class="btn-folder">📂 ОТЧЕТЫ</a>
+                        </div>\`;
                 });
-                // Добавляем пустые слоты до лимита
-                for(let i = k.workers.length; i < k.limit; i++) {
-                    workersList.push(\`
-                        <div class="worker-item">
-                            <span class="worker-empty">⚪️ Свободное место</span>
-                            <span style="font-size:9px; opacity:0.2">ОЖИДАНИЕ...</span>
-                        </div>
-                    \`);
+                // 2. Свободные места
+                for(let i = k.workers.length; i < k.limit; i++){
+                    workersHTML += \`
+                        <div class="worker-row">
+                            <span class="w-empty">⚪️ Свободное место</span>
+                            <span style="font-size:9px; opacity:0.1">VACANT</span>
+                        </div>\`;
                 }
 
                 return \`
                 <div class="card">
                     <div class="status-badge">Активный доступ</div>
                     <div class="obj-name">\${k.name}</div>
-                    <div style="font-size: 11px; opacity: 0.4; margin-bottom: 20px;">ID: \${k.key}</div>
+                    <div style="font-size: 11px; opacity: 0.5; margin-bottom: 20px;">Ключ: \${k.key}</div>
                     
                     <div class="stats">
                         <div class="stat-item"><span class="stat-val">\${days > 0 ? days : 0}</span><span class="stat-lbl">Дней осталось</span></div>
                         <div class="stat-item"><span class="stat-val">\${k.workers.length}/\${k.limit}</span><span class="stat-lbl">Мест занято</span></div>
                     </div>
 
-                    <div style="font-size: 11px; font-weight: 800; color: #8b949e; margin-bottom: 10px; padding-left: 5px;">СОТРУДНИКИ И ПАПКИ:</div>
+                    <div style="font-size:10px; font-weight:800; color:#8b949e; margin-bottom:8px; text-transform:uppercase">Команда объекта:</div>
                     <div class="workers-box">
-                        \${workersList.join('')}
+                        \${workersHTML}
                     </div>
 
                     <div class="selector-box">
@@ -444,13 +440,14 @@ app.get('/client-dashboard', (req, res) => {
                             </div>
                         </div>
                     </div>
-                    <button class="btn-main" onclick="alert('Выберите период выше!')">ОПЛАТИТЬ ОНЛАЙН</button>
+                    <button class="btn-main" onclick="alert('Выберите период оплаты выше')">ОПЛАТИТЬ ОНЛАЙН</button>
                 </div>\`;
             }).join('');
         }
+
         async function req(key, name, days){
             await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days})});
-            alert('Запрос на продление отправлен!');
+            alert('Запрос на ' + days + ' дн. отправлен!');
         }
         load();
     </script>
