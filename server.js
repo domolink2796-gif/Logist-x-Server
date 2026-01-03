@@ -141,7 +141,7 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// --- НОВЫЕ РОУТЫ ДЛЯ ПЛАНОГРАММ (С ИЗОЛЯЦИЕЙ) ---
+// --- НОВЫЕ РОУТЫ ДЛЯ ПЛАНОГРАММ (ИСПРАВЛЕННЫЕ) ---
 app.get('/get-planogram', async (req, res) => {
     try {
         const { addr, key } = req.query;
@@ -151,7 +151,7 @@ app.get('/get-planogram', async (req, res) => {
         const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
         const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
         const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
-        const search = await drive.files.list({ q, fields: 'files(id, webViewLink)' });
+        const search = await drive.files.list({ q, fields: 'files(id, webViewLink, webContentLink)' });
         if (search.data.files.length > 0) {
             res.json({ exists: true, url: search.data.files[0].webViewLink });
         } else {
@@ -173,7 +173,9 @@ app.post('/upload-planogram', async (req, res) => {
         const existing = await drive.files.list({ q });
         const media = { mimeType: 'image/jpeg', body: Readable.from(buf) };
         if (existing.data.files.length > 0) {
-            await drive.files.update({ fileId: existing.data.files[0].id, media });
+            const fId = existing.data.files[0].id;
+            await drive.files.update({ fileId: fId, media });
+            await drive.permissions.create({ fileId: fId, resource: { role: 'reader', type: 'anyone' } });
         } else {
             const f = await drive.files.create({ resource: { name: fileName, parents: [planFolderId] }, media, fields: 'id' });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
