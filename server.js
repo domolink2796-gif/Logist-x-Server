@@ -21,7 +21,7 @@ const MY_TELEGRAM_ID = 6846149935;
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
 const MAX_DISTANCE_METERS = 600; 
 
-// --- НАСТРОЙКИ РОБОКАССЫ (ТЕСТОВЫЙ РЕЖИМ) ---
+// --- НАСТРОЙКИ РОБОКАССЫ ---
 const ROBO_LOGIN = 'ВАШ_ЛОГИН'; 
 const ROBO_PASS1 = 'ТЕСТ_ПАРОЛЬ_1'; 
 const ROBO_PASS2 = 'ТЕСТ_ПАРОЛЬ_2'; 
@@ -52,10 +52,16 @@ async function getOrCreateFolder(rawName, parentId) {
         const name = String(rawName).trim(); 
         const q = `name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
         const res = await drive.files.list({ q, fields: 'files(id)' });
-        if (res.data.files.length > 0) return res.data.files[0].id;
-        const file = await drive.files.create({ resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }, fields: 'id' });
-        await drive.permissions.create({ fileId: file.data.id, resource: { role: 'reader', type: 'anyone' } });
-        return file.data.id;
+        let folderId;
+        if (res.data.files.length > 0) {
+            folderId = res.data.files[0].id;
+        } else {
+            const file = await drive.files.create({ resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }, fields: 'id' });
+            folderId = file.data.id;
+            // АВТОМАТИЧЕСКИ ОТКРЫВАЕМ ДОСТУП ПО ССЫЛКЕ
+            await drive.permissions.create({ fileId: folderId, resource: { role: 'reader', type: 'anyone' } });
+        }
+        return folderId;
     } catch (e) { return parentId; }
 }
 
@@ -133,7 +139,6 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
 
 // === API ===
 
-// Функция поиска папки сотрудника для быстрого открытия из кабинета
 app.get('/api/open-folder', async (req, res) => {
     try {
         const { workerName } = req.query;
@@ -168,12 +173,10 @@ app.post('/upload', async (req, res) => {
         const { action, licenseKey, workerName, worker, city, address, entrance, client, image, lat, lon, workType, price } = req.body;
         const keys = await readDatabase();
 
-        // ДОБАВЛЕНО: ОБРАБОТКА ЗАПРОСА АКТИВАЦИИ ИЗ ПРИЛОЖЕНИЯ LOGIST X
         if (action === 'check_license') {
             const kData = keys.find(k => k.key === licenseKey);
             if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
             if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
-            if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry });
             if (!kData.workers) kData.workers = [];
             if (!kData.workers.includes(workerName)) {
                 if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест исчерпан' });
@@ -224,22 +227,33 @@ app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
 app.get('/api/client-keys', async (req, res) => {
     try { const keys = await readDatabase(); res.json(keys.filter(k => String(k.ownerChatId) === String(req.query.chatId))); } catch (e) { res.json([]); }
 });
+
+// ОБНОВЛЕНО: СОЗДАНИЕ КЛЮЧА СРАЗУ СОЗДАЕТ ПАПКУ
 app.post('/api/keys/add', async (req, res) => {
-    const { name, limit, days } = req.body; let keys = await readDatabase();
+    const { name, limit, days } = req.body; 
+    let keys = await readDatabase();
     const newK = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
     const exp = new Date(); exp.setDate(exp.getDate() + parseInt(days));
-    keys.push({ key: newK, name, limit, expiry: exp.toISOString(), workers: [], ownerChatId: null });
-    await saveDatabase(keys); res.json({ success: true });
+    
+    // Авто-создание папки объекта при генерации ключа
+    const fId = await getOrCreateFolder(name, MY_ROOT_ID);
+
+    keys.push({ key: newK, name, limit, expiry: exp.toISOString(), workers: [], ownerChatId: null, folderId: fId });
+    await saveDatabase(keys); 
+    res.json({ success: true });
 });
+
 app.post('/api/keys/extend', async (req, res) => {
     let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === req.body.key);
     if (idx !== -1) { 
         let d = new Date(keys[idx].expiry); 
+        if (d < new Date()) d = new Date();
         d.setDate(d.getDate() + parseInt(req.body.days || 30)); 
         keys[idx].expiry = d.toISOString(); 
         await saveDatabase(keys); res.json({ success: true }); 
     } else res.json({ success: false });
 });
+
 app.post('/api/keys/update', async (req, res) => {
     let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === req.body.key);
     if (idx !== -1) {
@@ -248,13 +262,53 @@ app.post('/api/keys/update', async (req, res) => {
         await saveDatabase(keys); res.json({ success: true });
     } else res.json({ success: false });
 });
+
 app.post('/api/keys/delete', async (req, res) => {
     let keys = await readDatabase(); keys = keys.filter(k => k.key !== req.body.key);
     await saveDatabase(keys); res.json({ success: true });
 });
+
+// ОБНОВЛЕНО: ГЕНЕРАЦИЯ ССЫЛКИ РОБОКАССЫ ПРИ НАЖАТИИ ОПЛАТИТЬ
 app.post('/api/notify-admin', async (req, res) => {
-    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `🔔 **ЗАПРОС ПРОДЛЕНИЯ**\n\nОбъект: ${req.body.name}\nКлюч: \`${req.body.key}\`\nСрок: ${req.body.days} дн.`, { parse_mode: 'Markdown' });
-    res.json({ success: true });
+    const { key, name, days } = req.body;
+    const keys = await readDatabase();
+    const kData = keys.find(k => k.key === key);
+    if (!kData) return res.json({ success: false });
+
+    let price = kData.limit * 1500;
+    if (days == 90) price = kData.limit * 4050;
+    if (days == 180) price = kData.limit * 7650;
+    if (days == 365) price = kData.limit * 15000;
+
+    const invId = Math.floor(Date.now() / 1000);
+    const desc = `Продление ${name} на ${days} дн.`;
+    const signature = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_days=${days}:Shp_key=${key}`).digest('hex');
+
+    const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${signature}&Shp_days=${days}&Shp_key=${key}${IS_TEST ? '&IsTest=1' : ''}`;
+
+    await bot.telegram.sendMessage(MY_TELEGRAM_ID, `💳 **КЛИЕНТ ПЕРЕШЕЛ К ОПЛАТЕ**\n\nОбъект: ${name}\nКлюч: \`${key}\`\nСрок: ${days} дн.\nСумма: ${price} ₽`, { parse_mode: 'Markdown' });
+    res.json({ success: true, payUrl });
+});
+
+// НОВЫЙ МАРШРУТ: ПРИЕМ ОПЛАТЫ ОТ РОБОКАССЫ
+app.post('/api/payment-result', async (req, res) => {
+    const { OutSum, InvId, SignatureValue, Shp_key, Shp_days } = req.body;
+    const mySign = crypto.createHash('md5').update(`${OutSum}:${InvId}:${ROBO_PASS2}:Shp_days=${Shp_days}:Shp_key=${Shp_key}`).digest('hex');
+
+    if (SignatureValue.toLowerCase() === mySign.toLowerCase()) {
+        let keys = await readDatabase();
+        const idx = keys.findIndex(k => k.key === Shp_key);
+        if (idx !== -1) {
+            let d = new Date(keys[idx].expiry);
+            if (d < new Date()) d = new Date();
+            d.setDate(d.getDate() + parseInt(Shp_days));
+            keys[idx].expiry = d.toISOString();
+            await saveDatabase(keys);
+            await bot.telegram.sendMessage(MY_TELEGRAM_ID, `✅ **ОПЛАТА ПРИНЯТА**\n\nОбъект: ${keys[idx].name}\nКлюч: \`${Shp_key}\`\nДобавлено: ${Shp_days} дн.`, { parse_mode: 'Markdown' });
+            return res.send(`OK${InvId}`);
+        }
+    }
+    res.send("error");
 });
 
 // --- ДИЗАЙН АДМИНКИ ---
@@ -339,7 +393,7 @@ app.get('/dashboard', (req, res) => {
 </html>`);
 });
 
-// --- ДИЗАЙН КЛИЕНТА (ОБНОВЛЕННЫЙ С ПАПКАМИ И СВОБОДНЫМИ МЕСТАМИ) ---
+// --- ДИЗАЙН КЛИЕНТА (С КНОПКОЙ ОПЛАТЫ) ---
 app.get('/client-dashboard', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="ru">
@@ -360,18 +414,10 @@ app.get('/client-dashboard', (req, res) => {
         .stat-item { text-align: center; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 12px; flex: 1; margin: 0 4px; }
         .stat-val { display: block; font-weight: 800; font-size: 16px; color: #f59e0b; }
         .stat-lbl { font-size: 9px; opacity: 0.5; text-transform: uppercase; }
-        
-        /* Стили для списка сотрудников */
         .workers-box { background: rgba(0,0,0,0.2); border-radius: 16px; padding: 10px; margin-bottom: 20px; }
         .worker-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-        .worker-item:last-child { border-bottom: none; }
-        .worker-name { font-size: 14px; font-weight: 600; }
-        .worker-empty { font-size: 13px; opacity: 0.3; font-style: italic; }
         .folder-btn { text-decoration: none; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 6px 12px; border-radius: 8px; font-size: 11px; font-weight: 800; transition: 0.2s; border: 1px solid rgba(245,158,11,0.2); }
-        .folder-btn:active { background: #f59e0b; color: #000; }
-
         .btn-main { background: #f59e0b; color: #000; border: none; padding: 15px; border-radius: 14px; font-weight: 800; width: 100%; cursor: pointer; transition: 0.3s; margin-top: 10px; }
-        .selector-box { margin-top: 20px; background: rgba(255,255,255,0.03); padding: 15px; border-radius: 16px; border: 1px dashed rgba(255,255,255,0.1); }
         .grid-prices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
         .price-card { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); text-align: center; cursor: pointer; }
         .sale-tag { font-size: 8px; background: #da3633; color: #fff; padding: 2px 5px; border-radius: 4px; display: inline-block; }
@@ -383,7 +429,6 @@ app.get('/client-dashboard', (req, res) => {
         <div style="font-size: 12px; opacity: 0.6">ЛИЧНЫЙ КАБИНЕТ</div>
     </div>
     <div id="root"></div>
-
     <script>
         async function load(){
             const params = new URLSearchParams(window.location.search);
@@ -391,75 +436,37 @@ app.get('/client-dashboard', (req, res) => {
             const keys = await r.json();
             document.getElementById('root').innerHTML = keys.map(k => {
                 const days = Math.ceil((new Date(k.expiry) - new Date()) / (1000*60*60*24));
-                
-                // Формируем список сотрудников + пустые слоты
                 let workersList = [];
-                // Добавляем активных
                 k.workers.forEach(w => {
-                    workersList.push(\`
-                        <div class="worker-item">
-                            <span class="worker-name">👤 \${w}</span>
-                            <a href="/api/open-folder?workerName=\${encodeURIComponent(w)}" target="_blank" class="folder-btn">📂 ОТЧЕТЫ</a>
-                        </div>
-                    \`);
+                    workersList.push(\`<div class="worker-item"><span class="worker-name">👤 \${w}</span><a href="/api/open-folder?workerName=\${encodeURIComponent(w)}" target="_blank" class="folder-btn">📂 ОТЧЕТЫ</a></div>\`);
                 });
-                // Добавляем пустые слоты до лимита
                 for(let i = k.workers.length; i < k.limit; i++) {
-                    workersList.push(\`
-                        <div class="worker-item">
-                            <span class="worker-empty">⚪️ Свободное место</span>
-                            <span style="font-size:9px; opacity:0.2">ОЖИДАНИЕ...</span>
-                        </div>
-                    \`);
+                    workersList.push(\`<div class="worker-item"><span style="font-size:13px; opacity:0.3">⚪️ Свободное место</span></div>\`);
                 }
-
                 return \`
                 <div class="card">
                     <div class="status-badge">Активный доступ</div>
                     <div class="obj-name">\${k.name}</div>
                     <div style="font-size: 11px; opacity: 0.4; margin-bottom: 20px;">ID: \${k.key}</div>
-                    
                     <div class="stats">
                         <div class="stat-item"><span class="stat-val">\${days > 0 ? days : 0}</span><span class="stat-lbl">Дней осталось</span></div>
                         <div class="stat-item"><span class="stat-val">\${k.workers.length}/\${k.limit}</span><span class="stat-lbl">Мест занято</span></div>
                     </div>
-
-                    <div style="font-size: 11px; font-weight: 800; color: #8b949e; margin-bottom: 10px; padding-left: 5px;">СОТРУДНИКИ И ПАПКИ:</div>
-                    <div class="workers-box">
-                        \${workersList.join('')}
+                    <div class="workers-box">\${workersList.join('')}</div>
+                    <div style="font-size: 12px; font-weight: 700">🚀 КУПИТЬ ИЛИ ПРОДЛИТЬ (\${k.limit} чел.):</div>
+                    <div class="grid-prices">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30)">30 дн.<br><span style="color:#f59e0b">\${k.limit*1500}₽</span></div>
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90)">90 дн.<br><span style="color:#f59e0b">\${k.limit*4050}₽</span></div>
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',180)">180 дн.<br><span style="color:#f59e0b">\${k.limit*7650}₽</span></div>
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',365)">1 ГОД<br><span style="color:#f59e0b">\${k.limit*15000}₽</span></div>
                     </div>
-
-                    <div class="selector-box">
-                        <div style="font-size: 12px; font-weight: 700">🚀 ПРОДЛИТЬ ДОСТУП (\${k.limit} чел.)</div>
-                        <div class="grid-prices">
-                            <div class="price-card" onclick="req('\${k.key}','\${k.name}',30)">
-                                <div style="font-size: 14px; font-weight: 800">30 дн.</div>
-                                <div style="font-size: 10px; color: #f59e0b">\${k.limit * 1500} ₽</div>
-                            </div>
-                            <div class="price-card" onclick="req('\${k.key}','\${k.name}',90)">
-                                <div class="sale-tag">-10%</div>
-                                <div style="font-size: 14px; font-weight: 800">90 дн.</div>
-                                <div style="font-size: 10px; color: #f59e0b">\${k.limit * 4050} ₽</div>
-                            </div>
-                            <div class="price-card" onclick="req('\${k.key}','\${k.name}',180)">
-                                <div class="sale-tag">-15%</div>
-                                <div style="font-size: 14px; font-weight: 800">180 дн.</div>
-                                <div style="font-size: 10px; color: #f59e0b">\${k.limit * 7650} ₽</div>
-                            </div>
-                            <div class="price-card" onclick="req('\${k.key}','\${k.name}',365)">
-                                <div class="sale-tag">+2 МЕС</div>
-                                <div style="font-size: 14px; font-weight: 800">1 ГОД</div>
-                                <div style="font-size: 10px; color: #f59e0b">\${k.limit * 15000} ₽</div>
-                            </div>
-                        </div>
-                    </div>
-                    <button class="btn-main" onclick="alert('Выберите период выше!')">ОПЛАТИТЬ ОНЛАЙН</button>
                 </div>\`;
             }).join('');
         }
         async function req(key, name, days){
-            await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days})});
-            alert('Запрос на продление отправлен!');
+            const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days})});
+            const res = await r.json();
+            if(res.success && res.payUrl) window.location.href = res.payUrl;
         }
         load();
     </script>
@@ -474,9 +481,7 @@ bot.start(async (ctx) => {
     const keys = await readDatabase(); 
     const ck = keys.find(k => String(k.ownerChatId) === String(cid));
     if (ck) return ctx.reply('🏢 ВАШ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
-    
-    const welcomeText = `👋 **Добро пожаловать в систему LOGIST X!**\n\nДля работы вам необходим ключ активации.\n\n📦 **LOGIST X** — отчеты логистики.\n📊 **MERCH** — мерчандайзинг.\n\nВведите ваш ключ ниже или обратитесь к администратору для покупки доступа.`;
-    ctx.reply(welcomeText, { parse_mode: 'Markdown' });
+    ctx.reply(`👋 **Добро пожаловать!**\n\nВведите ваш ключ активации для доступа в кабинет.`, { parse_mode: 'Markdown' });
 });
 
 bot.on('text', async (ctx) => {
@@ -484,10 +489,10 @@ bot.on('text', async (ctx) => {
     const key = ctx.message.text.trim().toUpperCase();
     let keys = await readDatabase(); const idx = keys.findIndex(k => k.key === key);
     if (idx !== -1) { 
-        if(keys[idx].ownerChatId) return ctx.reply('Этот ключ уже активирован другим пользователем.'); 
+        if(keys[idx].ownerChatId && keys[idx].ownerChatId !== ctx.chat.id) return ctx.reply('Этот ключ уже активирован другим.'); 
         keys[idx].ownerChatId = ctx.chat.id; await saveDatabase(keys); 
-        ctx.reply('✅ КЛЮЧ УСПЕШНО АКТИВИРОВАН!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
-    } else ctx.reply('❌ Ключ не найден. Проверьте правильность ввода или свяжитесь с поддержкой.');
+        ctx.reply('✅ КЛЮЧ АКТИВИРОВАН!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + ctx.chat.id } }]] } });
+    } else ctx.reply('❌ Ключ не найден.');
 });
 
 bot.launch().then(() => console.log("READY"));
