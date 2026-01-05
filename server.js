@@ -1,4 +1,4 @@
-Const express = require('express');
+const express = require('express');
 const { google } = require('googleapis');
 const { Telegraf } = require('telegraf');
 const bodyParser = require('body-parser');
@@ -16,7 +16,8 @@ const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A';
 const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; 
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
-const PLANOGRAM_DB_NAME = 'planograms_db.json'; // Файл БД планограмм
+const BARCODE_DB_NAME = 'barcode_database.json'; // БД для штрих-кодов
+const PLANOGRAM_DB_NAME = 'planograms_db.json'; 
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
@@ -67,7 +68,6 @@ async function getOrCreateFolder(rawName, parentId) {
     } catch (e) { return parentId; }
 }
 
-// ФУНКЦИЯ ДЛЯ ПАПКИ ПЛАНОГРАММ (ПРИВЯЗАНА К КЛИЕНТУ)
 async function getOrCreatePlanogramFolder(parentId) {
     return await getOrCreateFolder("PLANOGRAMS", parentId);
 }
@@ -79,7 +79,6 @@ async function readDatabase() {
         if (res.data.files.length === 0) return [];
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
         let data = content.data;
-        // Улучшенная логика распознавания ключей из старого кода
         let keys = Array.isArray(data) ? data : (data.keys || []);
         if (!keys.find(k => k.key === 'DEV-MASTER-999')) {
             keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [] });
@@ -99,7 +98,27 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// ЧТЕНИЯ БД ПЛАНОГРАММ (ПРИВЯЗКА К ПАПКЕ)
+// --- ФУНКЦИИ ДЛЯ ШТРИХ-КОДОВ (МЕРЧ) ---
+async function readBarcodeDb() {
+    try {
+        const q = `name = '${BARCODE_DB_NAME}' and '${MERCH_ROOT_ID}' in parents and trashed = false`;
+        const res = await drive.files.list({ q });
+        if (res.data.files.length === 0) return [];
+        const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
+        return Array.isArray(content.data) ? content.data : [];
+    } catch (e) { return []; }
+}
+
+async function saveBarcodeDb(barcodes) {
+    try {
+        const q = `name = '${BARCODE_DB_NAME}' and '${MERCH_ROOT_ID}' in parents and trashed = false`;
+        const res = await drive.files.list({ q });
+        const media = { mimeType: 'application/json', body: JSON.stringify(barcodes, null, 2) };
+        if (res.data.files.length > 0) { await drive.files.update({ fileId: res.data.files[0].id, media }); } 
+        else { await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [MERCH_ROOT_ID] }, media }); }
+    } catch (e) { console.error("Barcode DB Error:", e); }
+}
+
 async function readPlanogramDb(clientFolderId) {
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
@@ -110,7 +129,6 @@ async function readPlanogramDb(clientFolderId) {
     } catch (e) { return {}; }
 }
 
-// СОХРАНЕНИЯ БД ПЛАНОГРАММ (ПРИВЯЗКА К ПАПКЕ)
 async function savePlanogramDb(clientFolderId, data) {
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
@@ -163,13 +181,36 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
-        const gps = (lat && lon) ? `=HYPERLINK("https://www.google.com/maps/search/?api=1&query=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
+        const gps = (lat && lon) ? `=HYPERLINK("https://www.google.com/maps?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
         const pdfLink = `=HYPERLINK("${pdfUrl}"; "ОТЧЕТ ФОТО")`;
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// --- ИЗОЛИРОВАННЫЕ РОУТЫ ДЛЯ ПЛАНОГРАММ ---
+// --- РОУТЫ ДЛЯ ШТРИХ-КОДОВ (МЕРЧ) ---
+app.get('/check-barcode', async (req, res) => {
+    try {
+        const { code } = req.query;
+        const barcodes = await readBarcodeDb();
+        const item = barcodes.find(b => b.code === code);
+        if (item) res.json({ exists: true, name: item.name });
+        else res.json({ exists: false });
+    } catch (e) { res.json({ exists: false }); }
+});
+
+app.post('/save-barcode', async (req, res) => {
+    try {
+        const { code, name } = req.body;
+        let barcodes = await readBarcodeDb();
+        if (!barcodes.find(b => b.code === code)) {
+            barcodes.push({ code, name });
+            await saveBarcodeDb(barcodes);
+        }
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- РОУТЫ ДЛЯ ПЛАНОГРАММ ---
 app.get('/get-planogram', async (req, res) => {
     try {
         const { addr, key } = req.query;
@@ -239,7 +280,6 @@ app.post('/check-license', async (req, res) => {
     if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
     if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
     const pType = kData.type || 'logist';
-    // ИНИЦИАЛИЗАЦИЯ БАЗЫ ПРИ ВХОДЕ (ЕСЛИ ТИП МЕРЧ)
     if (pType === 'merch' && kData.folderId) { await readPlanogramDb(kData.folderId); }
     if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry, type: pType });
     if (!kData.workers) kData.workers = [];
@@ -274,7 +314,6 @@ app.post('/upload', async (req, res) => {
         const finalId = await getOrCreateFolder(folderName, wId);
         const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], finalId);
         
-        // ОБРАБОТКА ТРЕХ ФОТОГРАФИЙ (ЛОГИСТ)
         const images = [image, image2, image3];
         for(let i=0; i<images.length; i++) {
             if (images[i]) {
@@ -302,11 +341,11 @@ app.post('/merch-upload', async (req, res) => {
         if (pdf) {
             const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
             const buf = Buffer.from(base64Data, 'base64');
-            const f = await drive.files.create({ resource: { name: `ОТЧЕТ_${address}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
-            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
+            const fileName = `ОТЧЕТ_${address}.jpg`.replace(/[^а-яёa-z0-9._-]/gi, '_');
+            const f = await drive.files.create({ resource: { name: fileName, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
+            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
-        // Записываем данные включая stock и faces
         await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
         res.json({ success: true, url: pUrl });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
@@ -550,7 +589,7 @@ app.get('/client-dashboard', (req, res) => {
                             <div style="font-size:14px; font-weight:800">30 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*1500}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}')">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90,'\${k.type}')">
                             <div class="sale-tag">-10%</div>
                             <div style="font-size:14px; font-weight:800">90 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*4050}₽</div>
