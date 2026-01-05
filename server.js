@@ -16,7 +16,8 @@ const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A';
 const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; 
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
-const PLANOGRAM_DB_NAME = 'planograms_db.json'; // Файл БД планограмм
+const PLANOGRAM_DB_NAME = 'planograms_db.json'; 
+const BARCODE_DB_NAME = 'barcodes_db.json'; 
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
@@ -28,12 +29,11 @@ const ROBO_PASS1 = 'P_password1';
 const ROBO_PASS2 = 'P_password2'; 
 const IS_TEST = 1; 
 
-// Auth
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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'
 );
-oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0' });
+oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0' });
 
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
@@ -41,7 +41,29 @@ const bot = new Telegraf(BOT_TOKEN);
 
 const userSteps = {};
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+async function readBarcodeDb() {
+    try {
+        const q = `name = '${BARCODE_DB_NAME}' and '${MY_ROOT_ID}' in parents and trashed = false`;
+        const res = await drive.files.list({ q });
+        if (res.data.files.length === 0) return {};
+        const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
+        return content.data || {};
+    } catch (e) { return {}; }
+}
+
+async function saveBarcodeDb(data) {
+    try {
+        const q = `name = '${BARCODE_DB_NAME}' and '${MY_ROOT_ID}' in parents and trashed = false`;
+        const res = await drive.files.list({ q });
+        const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
+        if (res.data.files.length > 0) {
+            await drive.files.update({ fileId: res.data.files[0].id, media });
+        } else {
+            await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [MY_ROOT_ID] }, media });
+        }
+    } catch (e) { console.error("Barcode DB Save Error:", e); }
+}
+
 function getDistance(lat1, lon1, lat2, lon2) {
     const R = 6371e3; 
     const f1 = lat1 * Math.PI/180; const f2 = lat2 * Math.PI/180;
@@ -67,7 +89,6 @@ async function getOrCreateFolder(rawName, parentId) {
     } catch (e) { return parentId; }
 }
 
-// ФУНКЦИЯ ДЛЯ ПАПКИ ПЛАНОГРАММ (ПРИВЯЗАНА К КЛИЕНТУ)
 async function getOrCreatePlanogramFolder(parentId) {
     return await getOrCreateFolder("PLANOGRAMS", parentId);
 }
@@ -98,7 +119,6 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// ЧТЕНИЯ БД ПЛАНОГРАММ (ПРИВЯЗКА К ПАПКЕ)
 async function readPlanogramDb(clientFolderId) {
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
@@ -109,7 +129,6 @@ async function readPlanogramDb(clientFolderId) {
     } catch (e) { return {}; }
 }
 
-// СОХРАНЕНИЯ БД ПЛАНОГРАММ (ПРИВЯЗКА К ПАПКЕ)
 async function savePlanogramDb(clientFolderId, data) {
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
@@ -140,12 +159,12 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS', 'ФОТО']] } });
         }
-        const gpsLink = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
+        const gpsLink = (lat && lon) ? `=HYPERLINK("http://googleusercontent.com/maps.google.com/maps?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleTimeString("ru-RU"), address, entrance, client, workType, price, gpsLink, "ЗАГРУЖЕНО"]] } });
     } catch (e) { console.error("Logist Error:", e); }
 }
 
-async function appendMerchToReport(workerId, workerName, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfUrl, startTime, endTime, duration, lat, lon) {
+async function appendMerchToReport(workerId, workerName, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfUrl, startTime, endTime, duration, lat, lon, category) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
         const q = `name = '${reportName}' and '${workerId}' in parents and trashed = false`;
@@ -160,15 +179,40 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'КАТЕГОРИЯ', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
-        const gps = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
+        const gps = (lat && lon) ? `=HYPERLINK("http://googleusercontent.com/maps.google.com/maps?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
         const pdfLink = `=HYPERLINK("${pdfUrl}"; "ОТЧЕТ ФОТО")`;
-        await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
+        await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), category || "Общее", startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// --- ИЗОЛИРОВАННЫЕ РОУТЫ ДЛЯ ПЛАНОГРАММ ---
+app.get('/check-barcode', async (req, res) => {
+    try {
+        const { code, category } = req.query;
+        const barcodeDB = await readBarcodeDb();
+        const item = barcodeDB[code];
+        if (item) {
+            const itemName = typeof item === 'object' ? item.name : item;
+            const itemCat = typeof item === 'object' ? item.category : 'general';
+            if (!category || itemCat === category || itemCat === 'general') {
+                return res.json({ exists: true, name: itemName });
+            }
+        }
+        res.json({ exists: false });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/save-barcode', async (req, res) => {
+    try {
+        const { code, name, category } = req.body;
+        const barcodeDB = await readBarcodeDb();
+        barcodeDB[code] = { name, category: category || 'general' };
+        await saveBarcodeDb(barcodeDB);
+        res.json({ status: 'ok' });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/get-planogram', async (req, res) => {
     try {
         const { addr, key } = req.query;
@@ -193,14 +237,11 @@ app.post('/upload-planogram', async (req, res) => {
         const keys = await readDatabase();
         const kData = keys.find(k => k.key === key);
         if (!kData || !kData.folderId || kData.type !== 'merch') return res.status(403).json({ error: "Доступ запрещен" });
-        
         const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
         const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
         const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-        
         const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
         const existing = await drive.files.list({ q });
-        
         let fileId;
         if (existing.data.files.length > 0) {
             fileId = existing.data.files[0].id;
@@ -238,32 +279,21 @@ app.post('/check-license', async (req, res) => {
     if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
     if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
     const pType = kData.type || 'logist';
-    // ИНИЦИАЛИЗАЦИЯ БАЗЫ ПРИ ВХОДЕ (ЕСЛИ ТИП МЕРЧ)
+    const category = kData.name || 'Общее';
     if (pType === 'merch' && kData.folderId) { await readPlanogramDb(kData.folderId); }
-    if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry, type: pType });
+    if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry, type: pType, category: 'ADMIN' });
     if (!kData.workers) kData.workers = [];
     if (!kData.workers.includes(workerName)) {
         if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест исчерпан' });
         kData.workers.push(workerName); await saveDatabase(keys);
     }
-    res.json({ status: 'active', expiry: kData.expiry, type: pType });
+    res.json({ status: 'active', expiry: kData.expiry, type: pType, category: category });
 });
 
 app.post('/upload', async (req, res) => {
     try {
-        const { action, licenseKey, workerName, worker, city, address, entrance, client, image, lat, lon, workType, price } = req.body;
+        const { action, licenseKey, workerName, worker, city, address, entrance, client, image, images, lat, lon, workType, price } = req.body;
         const keys = await readDatabase();
-        if (action === 'check_license') {
-            const kData = keys.find(k => k.key === licenseKey);
-            if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
-            if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
-            if (!kData.workers) kData.workers = [];
-            if (!kData.workers.includes(workerName)) {
-                if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест исчерпан' });
-                kData.workers.push(workerName); await saveDatabase(keys);
-            }
-            return res.json({ status: 'active', expiry: kData.expiry, type: kData.type || 'logist' });
-        }
         const curW = worker || workerName;
         const kData = keys.find(k => k.workers && k.workers.includes(curW)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const projR = (kData && kData.type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
@@ -272,9 +302,10 @@ app.post('/upload', async (req, res) => {
         const folderName = (client && client.trim() !== "") ? client.trim() : "Общее";
         const finalId = await getOrCreateFolder(folderName, wId);
         const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], finalId);
-        if (image) {
-            const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-            const fileName = `${address}_п${entrance}.jpg`;
+        const photoList = images || (image ? [image] : []);
+        for (let i = 0; i < photoList.length; i++) {
+            const buf = Buffer.from(photoList[i].replace(/^data:image\/\w+;base64,/, ""), 'base64');
+            const fileName = `${address}_п${entrance}_${i+1}.jpg`;
             await drive.files.create({ resource: { name: fileName, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
         }
         await appendToReport(wId, curW, city, new Date().toISOString().split('T')[0], address, entrance, client, workType, price, lat, lon);
@@ -284,22 +315,28 @@ app.post('/upload', async (req, res) => {
 
 app.post('/merch-upload', async (req, res) => {
     try {
-        const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon, city } = req.body;
+        const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, images, startTime, endTime, duration, lat, lon, city } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
+        const category = kData ? kData.name : "Общее";
         const oId = await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
         const wId = await getOrCreateFolder(worker, oId);
         const cityId = await getOrCreateFolder(city || "Без города", wId);
         const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
+        if (images && images.length > 0) {
+            for (let i = 0; i < images.length; i++) {
+                const buf = Buffer.from(images[i].replace(/^data:image\/\w+;base64,/, ""), 'base64');
+                await drive.files.create({ resource: { name: `ФОТО_${address}_${i+1}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
+            }
+        }
         let pUrl = "Нет файла";
         if (pdf) {
-            const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
-            const buf = Buffer.from(base64Data, 'base64');
+            const buf = Buffer.from(pdf.includes(',') ? pdf.split(',')[1] : pdf, 'base64');
             const f = await drive.files.create({ resource: { name: `ОТЧЕТ_${address}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
-        await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
+        await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon, category);
         res.json({ success: true, url: pUrl });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
@@ -394,6 +431,8 @@ app.get('/dashboard', (req, res) => {
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
         body { background-color: #010409; color: #e6edf3; font-family: 'Inter', sans-serif; margin: 0; padding: 15px; font-size: 14px; }
         .card { background: #0d1117; border: 1px solid #30363d; border-radius: 16px; padding: 20px; margin-bottom: 15px; }
+        .card.type-merch { border-left: 5px solid #f59e0b; }
+        .card.type-logist { border-left: 5px solid #238636; }
         .expired { border-color: #da3633 !important; box-shadow: 0 0 10px rgba(218, 54, 51, 0.2); }
         .gold-text { color: #f59e0b; font-size: 16px; }
         input, select { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #30363d; background: #010409; color: #fff; box-sizing: border-box; font-size: 14px; }
@@ -402,13 +441,16 @@ app.get('/dashboard', (req, res) => {
         .btn-red { background: #da3633; color: #fff; }
         .btn-small { padding: 8px; width: auto; flex: 1; font-size: 12px; }
         .row { display: flex; gap: 5px; }
+        .badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; margin-left: 5px; }
+        .badge-merch { background: #f59e0b; color: #000; }
+        .badge-logist { background: #238636; color: #fff; }
     </style>
 </head>
 <body>
     <div style="margin-bottom:20px; font-weight:900; font-size: 18px;">📦 ПАНЕЛЬ УПРАВЛЕНИЯ</div>
     <div class="card">
-        <b style="font-size: 16px; display: block; margin-bottom: 10px;">ДОБАВИТЬ ОБЪЕКТ</b>
-        <input id="n" placeholder="Название объекта">
+        <b style="font-size: 16px; display: block; margin-bottom: 10px;">ДОБАВИТЬ ОБЪЕКТ / КАТЕГОРИЮ</b>
+        <input id="n" placeholder="Название (например: Соки или Бакалея)">
         <input id="l" type="number" value="5" placeholder="Лимит человек">
         <select id="t"><option value="logist">Логист</option><option value="merch">Мерч</option></select>
         <button class="btn btn-gold" onclick="add()">СОЗДАТЬ КЛЮЧ</button>
@@ -420,8 +462,9 @@ app.get('/dashboard', (req, res) => {
             const keys = await r.json();
             document.getElementById('list').innerHTML = keys.map(k => {
                 const isExp = new Date(k.expiry) < new Date();
-                return \`<div class="card \${isExp ? 'expired' : ''}">
-                    <div class="gold-text" style="font-weight:900">\${k.key} [\${k.type || 'logist'}]</div>
+                const typeClass = k.type === 'merch' ? 'type-merch' : 'type-logist';
+                return \`<div class="card \${typeClass} \${isExp ? 'expired' : ''}">
+                    <div class="gold-text" style="font-weight:900">\${k.key} <span class="badge badge-\${k.type || 'logist'}">\${k.type || 'logist'}</span></div>
                     <div style="margin:8px 0; font-size: 15px; font-weight: 600;">\${k.name}</div>
                     <div style="font-size:13px; opacity:0.8">
                         Лимит: <input type="number" value="\${k.limit}" style="width:50px; border:none; background:transparent; color:#f59e0b; font-weight:700; padding:0; margin:0;" onchange="updLimit('\${k.key}', this.value)">
@@ -542,7 +585,7 @@ app.get('/client-dashboard', (req, res) => {
                             <div style="font-size:14px; font-weight:800">30 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*1500}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}')">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90,'\${k.type}')">
                             <div class="sale-tag">-10%</div>
                             <div style="font-size:14px; font-weight:800">90 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*4050}₽</div>
@@ -601,7 +644,7 @@ bot.action('buy_new', (ctx) => {
 bot.action(/set_type_(.+)/, (ctx) => {
     const type = ctx.match[1];
     userSteps[ctx.chat.id] = { type, step: 'name' };
-    ctx.reply("Введите название вашего объекта (например: Склад Север):");
+    ctx.reply("Введите название или категорию (например: Соки):");
 });
 
 bot.action('have_key', (ctx) => {
