@@ -78,7 +78,7 @@ async function readDatabase() {
         const res = await drive.files.list({ q });
         if (res.data.files.length === 0) return [];
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
-        let data = content.data;
+        let data = (typeof content.data === 'string') ? JSON.parse(content.data) : content.data;
         let keys = Array.isArray(data) ? data : (data.keys || []);
         if (!keys.find(k => k.key === 'DEV-MASTER-999')) {
             keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [] });
@@ -98,18 +98,20 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- НОВЫЕ ФУНКЦИИ ДЛЯ РАЗДЕЛЬНЫХ БАЗ ШТРИХ-КОДОВ (ИНДИВИДУАЛЬНО ДЛЯ КЛИЕНТА) ---
+// --- УЛУЧШЕННЫЕ ФУНКЦИИ БАЗ ДАННЫХ КЛИЕНТОВ ---
 async function readBarcodeDb(clientFolderId) {
+    if (!clientFolderId) return {};
     try {
         const q = `name = '${BARCODE_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         if (res.data.files.length === 0) return {};
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
-        return content.data || {};
+        return (typeof content.data === 'string') ? JSON.parse(content.data) : content.data || {};
     } catch (e) { return {}; }
 }
 
 async function saveBarcodeDb(clientFolderId, data) {
+    if (!clientFolderId || clientFolderId === MY_ROOT_ID) return console.error("Security Block: Root protection");
     try {
         const q = `name = '${BARCODE_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
@@ -117,22 +119,25 @@ async function saveBarcodeDb(clientFolderId, data) {
         if (res.data.files.length > 0) {
             await drive.files.update({ fileId: res.data.files[0].id, media });
         } else {
-            await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [clientFolderId] }, media });
+            const f = await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [clientFolderId] }, media, fields: 'id' });
+            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
         }
     } catch (e) { console.error("Barcode DB Save Error:", e); }
 }
 
 async function readPlanogramDb(clientFolderId) {
+    if (!clientFolderId) return {};
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         if (res.data.files.length === 0) return {};
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
-        return content.data || {};
+        return (typeof content.data === 'string') ? JSON.parse(content.data) : content.data || {};
     } catch (e) { return {}; }
 }
 
 async function savePlanogramDb(clientFolderId, data) {
+    if (!clientFolderId || clientFolderId === MY_ROOT_ID) return console.error("Security Block: Root protection");
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
@@ -140,7 +145,8 @@ async function savePlanogramDb(clientFolderId, data) {
         if (res.data.files.length > 0) {
             await drive.files.update({ fileId: res.data.files[0].id, media });
         } else {
-            await drive.files.create({ resource: { name: PLANOGRAM_DB_NAME, parents: [clientFolderId] }, media });
+            const f = await drive.files.create({ resource: { name: PLANOGRAM_DB_NAME, parents: [clientFolderId] }, media, fields: 'id' });
+            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
         }
     } catch (e) { console.error("Planogram DB Save Error:", e); }
 }
@@ -190,7 +196,7 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// --- РОУТЫ ДЛЯ ШТРИХ-КОДОВ (ТЕПЕРЬ С ИЗОЛЯЦИЕЙ ПО КЛЮЧУ) ---
+// --- РОУТЫ ДЛЯ ШТРИХ-КОДОВ (ИЗОЛЯЦИЯ ПО КЛЮЧУ) ---
 app.get('/check-barcode', async (req, res) => {
     try {
         const { code, licenseKey } = req.query;
@@ -246,14 +252,11 @@ app.post('/upload-planogram', async (req, res) => {
         const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
         const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
         const existing = await drive.files.list({ q });
-        let fileId;
         if (existing.data.files.length > 0) {
-            fileId = existing.data.files[0].id;
-            await drive.files.update({ fileId, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
+            await drive.files.update({ fileId: existing.data.files[0].id, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
         } else {
             const f = await drive.files.create({ resource: { name: fileName, parents: [planFolderId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id' });
-            fileId = f.data.id;
-            await drive.permissions.create({ fileId: fileId, resource: { role: 'reader', type: 'anyone' } });
+            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
         }
         const planDb = await readPlanogramDb(kData.folderId);
         planDb[addr] = true;
