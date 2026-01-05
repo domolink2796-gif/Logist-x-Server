@@ -17,7 +17,7 @@ const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p';
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
 const PLANOGRAM_DB_NAME = 'planograms_db.json'; 
-const BARCODE_DB_NAME = 'barcodes_db.json'; // НОВОЕ: БД Штрих-кодов
+const BARCODE_DB_NAME = 'barcodes_db.json'; 
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
@@ -98,10 +98,10 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- НОВЫЕ ФУНКЦИИ ДЛЯ ШТРИХ-КОДОВ ---
-async function readBarcodeDb() {
+// --- НОВЫЕ ФУНКЦИИ ДЛЯ РАЗДЕЛЬНЫХ БАЗ ШТРИХ-КОДОВ (ИНДИВИДУАЛЬНО ДЛЯ КЛИЕНТА) ---
+async function readBarcodeDb(clientFolderId) {
     try {
-        const q = `name = '${BARCODE_DB_NAME}' and '${MERCH_ROOT_ID}' in parents and trashed = false`;
+        const q = `name = '${BARCODE_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         if (res.data.files.length === 0) return {};
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
@@ -109,15 +109,15 @@ async function readBarcodeDb() {
     } catch (e) { return {}; }
 }
 
-async function saveBarcodeDb(data) {
+async function saveBarcodeDb(clientFolderId, data) {
     try {
-        const q = `name = '${BARCODE_DB_NAME}' and '${MERCH_ROOT_ID}' in parents and trashed = false`;
+        const q = `name = '${BARCODE_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
         if (res.data.files.length > 0) {
             await drive.files.update({ fileId: res.data.files[0].id, media });
         } else {
-            await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [MERCH_ROOT_ID] }, media });
+            await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [clientFolderId] }, media });
         }
     } catch (e) { console.error("Barcode DB Save Error:", e); }
 }
@@ -190,11 +190,14 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// --- РОУТЫ ДЛЯ ШТРИХ-КОДОВ (МЕРЧ) ---
+// --- РОУТЫ ДЛЯ ШТРИХ-КОДОВ (ТЕПЕРЬ С ИЗОЛЯЦИЕЙ ПО КЛЮЧУ) ---
 app.get('/check-barcode', async (req, res) => {
     try {
-        const { code } = req.query;
-        const db = await readBarcodeDb();
+        const { code, licenseKey } = req.query;
+        const keys = await readDatabase();
+        const kData = keys.find(k => k.key === licenseKey);
+        if (!kData || !kData.folderId) return res.json({ success: false });
+        const db = await readBarcodeDb(kData.folderId);
         if (db[code]) res.json({ success: true, name: db[code] });
         else res.json({ success: false });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -202,10 +205,13 @@ app.get('/check-barcode', async (req, res) => {
 
 app.post('/save-barcode', async (req, res) => {
     try {
-        const { code, name } = req.body;
-        const db = await readBarcodeDb();
+        const { code, name, licenseKey } = req.body;
+        const keys = await readDatabase();
+        const kData = keys.find(k => k.key === licenseKey);
+        if (!kData || !kData.folderId) return res.status(403).json({ error: "Ключ не найден" });
+        const db = await readBarcodeDb(kData.folderId);
         db[code] = name;
-        await saveBarcodeDb(db);
+        await saveBarcodeDb(kData.folderId, db);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -235,14 +241,11 @@ app.post('/upload-planogram', async (req, res) => {
         const keys = await readDatabase();
         const kData = keys.find(k => k.key === key);
         if (!kData || !kData.folderId || kData.type !== 'merch') return res.status(403).json({ error: "Доступ запрещен" });
-        
         const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
         const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
         const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-        
         const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
         const existing = await drive.files.list({ q });
-        
         let fileId;
         if (existing.data.files.length > 0) {
             fileId = existing.data.files[0].id;
