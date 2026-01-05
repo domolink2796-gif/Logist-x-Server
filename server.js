@@ -99,17 +99,30 @@ async function readDatabase() {
     try {
         const q = `name = '${DB_FILE_NAME}' and '${MY_ROOT_ID}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
-        if (res.data.files.length === 0) return [];
+        if (res.data.files.length === 0) {
+            console.log("DB File not found, creating new with Admin key");
+            const initialKeys = [{ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [], type: 'logist' }];
+            await saveDatabase(initialKeys);
+            return initialKeys;
+        }
         const fileId = res.data.files[0].id;
         const content = await drive.files.get({ fileId: fileId, alt: 'media' });
         let data = content.data;
-        let keys = Array.isArray(data) ? data : (data.keys || []);
+        let keys = [];
+        if (Array.isArray(data)) {
+            keys = data;
+        } else if (data && data.keys) {
+            keys = data.keys;
+        }
         if (!keys.find(k => k.key === 'DEV-MASTER-999')) {
-            keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [] });
+            keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [], type: 'logist' });
             await saveDatabase(keys);
         }
         return keys;
-    } catch (e) { console.error("READ DB ERROR:", e.message); return []; }
+    } catch (e) { 
+        console.error("CRITICAL READ DB ERROR:", e.message); 
+        return []; 
+    }
 }
 
 async function saveDatabase(keys) {
@@ -117,8 +130,12 @@ async function saveDatabase(keys) {
         const q = `name = '${DB_FILE_NAME}' and '${MY_ROOT_ID}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         const media = { mimeType: 'application/json', body: JSON.stringify({ keys }, null, 2) };
-        if (res.data.files.length > 0) { await drive.files.update({ fileId: res.data.files[0].id, media }); } 
-        else { await drive.files.create({ resource: { name: DB_FILE_NAME, parents: [MY_ROOT_ID] }, media }); }
+        if (res.data.files.length > 0) { 
+            await drive.files.update({ fileId: res.data.files[0].id, media }); 
+        } else { 
+            await drive.files.create({ resource: { name: DB_FILE_NAME, parents: [MY_ROOT_ID] }, media }); 
+        }
+        console.log("Database saved successfully");
     } catch (e) { console.error("SAVE DB ERROR:", e.message); }
 }
 
