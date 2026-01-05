@@ -16,8 +16,8 @@ const MY_ROOT_ID = '1Q0NHwF4xhODJXAT0U7HUWMNNXhdNGf2A';
 const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p'; 
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
-const BARCODE_DB_NAME = 'barcode_database.json'; // БД для штрих-кодов
 const PLANOGRAM_DB_NAME = 'planograms_db.json'; 
+const BARCODE_DB_NAME = 'barcodes_db.json'; // НОВОЕ: БД Штрих-кодов
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
@@ -98,25 +98,28 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- ФУНКЦИИ ДЛЯ ШТРИХ-КОДОВ (МЕРЧ) ---
+// --- НОВЫЕ ФУНКЦИИ ДЛЯ ШТРИХ-КОДОВ ---
 async function readBarcodeDb() {
     try {
         const q = `name = '${BARCODE_DB_NAME}' and '${MERCH_ROOT_ID}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
-        if (res.data.files.length === 0) return [];
+        if (res.data.files.length === 0) return {};
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
-        return Array.isArray(content.data) ? content.data : [];
-    } catch (e) { return []; }
+        return content.data || {};
+    } catch (e) { return {}; }
 }
 
-async function saveBarcodeDb(barcodes) {
+async function saveBarcodeDb(data) {
     try {
         const q = `name = '${BARCODE_DB_NAME}' and '${MERCH_ROOT_ID}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
-        const media = { mimeType: 'application/json', body: JSON.stringify(barcodes, null, 2) };
-        if (res.data.files.length > 0) { await drive.files.update({ fileId: res.data.files[0].id, media }); } 
-        else { await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [MERCH_ROOT_ID] }, media }); }
-    } catch (e) { console.error("Barcode DB Error:", e); }
+        const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
+        if (res.data.files.length > 0) {
+            await drive.files.update({ fileId: res.data.files[0].id, media });
+        } else {
+            await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [MERCH_ROOT_ID] }, media });
+        }
+    } catch (e) { console.error("Barcode DB Save Error:", e); }
 }
 
 async function readPlanogramDb(clientFolderId) {
@@ -159,7 +162,7 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS', 'ФОТО']] } });
         }
-        const gpsLink = (lat && lon) ? `=HYPERLINK("https://www.google.com/maps/search/?api=1&query=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
+        const gpsLink = (lat && lon) ? `=HYPERLINK("https://www.google.com/maps?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleTimeString("ru-RU"), address, entrance, client, workType, price, gpsLink, "ЗАГРУЖЕНО"]] } });
     } catch (e) { console.error("Logist Error:", e); }
 }
@@ -191,26 +194,23 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
 app.get('/check-barcode', async (req, res) => {
     try {
         const { code } = req.query;
-        const barcodes = await readBarcodeDb();
-        const item = barcodes.find(b => b.code === code);
-        if (item) res.json({ exists: true, name: item.name });
-        else res.json({ exists: false });
-    } catch (e) { res.json({ exists: false }); }
+        const db = await readBarcodeDb();
+        if (db[code]) res.json({ success: true, name: db[code] });
+        else res.json({ success: false });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/save-barcode', async (req, res) => {
     try {
         const { code, name } = req.body;
-        let barcodes = await readBarcodeDb();
-        if (!barcodes.find(b => b.code === code)) {
-            barcodes.push({ code, name });
-            await saveBarcodeDb(barcodes);
-        }
+        const db = await readBarcodeDb();
+        db[code] = name;
+        await saveBarcodeDb(db);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// --- РОУТЫ ДЛЯ ПЛАНОГРАММ ---
+// --- РОУТЫ ПЛАНОГРАММ ---
 app.get('/get-planogram', async (req, res) => {
     try {
         const { addr, key } = req.query;
@@ -292,7 +292,7 @@ app.post('/check-license', async (req, res) => {
 
 app.post('/upload', async (req, res) => {
     try {
-        const { action, licenseKey, workerName, worker, city, address, entrance, client, image, image2, image3, lat, lon, workType, price } = req.body;
+        const { action, licenseKey, workerName, worker, city, address, entrance, client, image, lat, lon, workType, price } = req.body;
         const keys = await readDatabase();
         if (action === 'check_license') {
             const kData = keys.find(k => k.key === licenseKey);
@@ -313,16 +313,11 @@ app.post('/upload', async (req, res) => {
         const folderName = (client && client.trim() !== "") ? client.trim() : "Общее";
         const finalId = await getOrCreateFolder(folderName, wId);
         const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], finalId);
-        
-        const images = [image, image2, image3];
-        for(let i=0; i<images.length; i++) {
-            if (images[i]) {
-                const buf = Buffer.from(images[i].replace(/^data:image\/\w+;base64,/, ""), 'base64');
-                const fileName = `${address}_п${entrance}_фото${i+1}.jpg`;
-                await drive.files.create({ resource: { name: fileName, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
-            }
+        if (image) {
+            const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
+            const fileName = `${address}_п${entrance}.jpg`;
+            await drive.files.create({ resource: { name: fileName, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
         }
-        
         await appendToReport(wId, curW, city, new Date().toISOString().split('T')[0], address, entrance, client, workType, price, lat, lon);
         res.json({ success: true });
     } catch (e) { res.json({ success: false, error: e.message }); }
@@ -341,9 +336,8 @@ app.post('/merch-upload', async (req, res) => {
         if (pdf) {
             const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
             const buf = Buffer.from(base64Data, 'base64');
-            const fileName = `ОТЧЕТ_${address}.jpg`.replace(/[^а-яёa-z0-9._-]/gi, '_');
-            const f = await drive.files.create({ resource: { name: fileName, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
-            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
+            const f = await drive.files.create({ resource: { name: `ОТЧЕТ_${address}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
+            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
         await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
