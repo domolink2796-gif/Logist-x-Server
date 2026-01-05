@@ -98,16 +98,24 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- УЛУЧШЕННЫЕ ФУНКЦИИ БАЗ ДАННЫХ КЛИЕНТОВ ---
+// --- УЛУЧШЕННЫЕ ФУНКЦИИ БАЗ ДАННЫХ КЛИЕНТОВ (ИСПРАВЛЕНО) ---
 async function readBarcodeDb(clientFolderId) {
     if (!clientFolderId) return {};
     try {
         const q = `name = '${BARCODE_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         if (res.data.files.length === 0) return {};
-        const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
-        return (typeof content.data === 'string') ? JSON.parse(content.data) : content.data || {};
-    } catch (e) { return {}; }
+        const fileId = res.data.files[0].id;
+        const content = await drive.files.get({ fileId: fileId, alt: 'media' });
+        let data = content.data;
+        if (typeof data === 'string') {
+            try { data = JSON.parse(data); } catch(e) { data = {}; }
+        }
+        return data || {};
+    } catch (e) { 
+        console.error("Ошибка чтения Barcode DB:", e.message);
+        return {}; 
+    }
 }
 
 async function saveBarcodeDb(clientFolderId, data) {
@@ -115,14 +123,23 @@ async function saveBarcodeDb(clientFolderId, data) {
     try {
         const q = `name = '${BARCODE_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
-        const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
+        const jsonContent = JSON.stringify(data, null, 2);
+        const media = { 
+            mimeType: 'application/json', 
+            body: Readable.from([jsonContent]) 
+        };
         if (res.data.files.length > 0) {
-            await drive.files.update({ fileId: res.data.files[0].id, media });
+            const fileId = res.data.files[0].id;
+            await drive.files.update({ fileId, media });
         } else {
-            const f = await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [clientFolderId] }, media, fields: 'id' });
+            const f = await drive.files.create({ 
+                resource: { name: BARCODE_DB_NAME, parents: [clientFolderId] }, 
+                media: { mimeType: 'application/json', body: jsonContent }, 
+                fields: 'id' 
+            });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
         }
-    } catch (e) { console.error("Barcode DB Save Error:", e); }
+    } catch (e) { console.error("Barcode DB Save Error:", e.message); }
 }
 
 async function readPlanogramDb(clientFolderId) {
@@ -132,7 +149,11 @@ async function readPlanogramDb(clientFolderId) {
         const res = await drive.files.list({ q });
         if (res.data.files.length === 0) return {};
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
-        return (typeof content.data === 'string') ? JSON.parse(content.data) : content.data || {};
+        let data = content.data;
+        if (typeof data === 'string') {
+            try { data = JSON.parse(data); } catch(e) { data = {}; }
+        }
+        return data || {};
     } catch (e) { return {}; }
 }
 
@@ -141,11 +162,12 @@ async function savePlanogramDb(clientFolderId, data) {
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
-        const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
+        const jsonContent = JSON.stringify(data, null, 2);
+        const media = { mimeType: 'application/json', body: Readable.from([jsonContent]) };
         if (res.data.files.length > 0) {
             await drive.files.update({ fileId: res.data.files[0].id, media });
         } else {
-            const f = await drive.files.create({ resource: { name: PLANOGRAM_DB_NAME, parents: [clientFolderId] }, media, fields: 'id' });
+            const f = await drive.files.create({ resource: { name: PLANOGRAM_DB_NAME, parents: [clientFolderId] }, media: { mimeType: 'application/json', body: jsonContent }, fields: 'id' });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
         }
     } catch (e) { console.error("Planogram DB Save Error:", e); }
