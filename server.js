@@ -135,8 +135,10 @@ async function savePlanogramDb(clientFolderId, data) {
         else { await drive.files.create({ resource: { name: PLANOGRAM_DB_NAME, parents: [clientFolderId] }, media }); }
     } catch (e) { console.error("Planogram DB Save Error:", e); }
 }
+
 // --- ЗАПИСЬ В ТАБЛИЦЫ ---
 
+// LOGIST X REPORT
 async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
         const reportName = `Отчет ${workerName}`;
@@ -159,7 +161,8 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
     } catch (e) { console.error("Logist Error:", e); }
 }
 
-async function appendMerchToReport(workerId, workerName, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfUrl, startTime, endTime, duration, lat, lon) {
+// MERCH X REPORT (ОБНОВЛЕННАЯ: С РАЗДЕЛЕНИЕМ ПОЛКА/СКЛАД)
+async function appendMerchToReport(workerId, workerName, net, address, stockShelf, stockWh, faces, share, ourPrice, compPrice, expDate, pdfUrl, startTime, endTime, duration, lat, lon) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
         const q = `name = '${reportName}' and '${workerId}' in parents and trashed = false`;
@@ -172,14 +175,77 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
         }
         const sheetTitle = "ОТЧЕТЫ_МЕРЧ";
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
+        
+        // Создаем заголовки, если листа нет (ТЕПЕРЬ С РАЗДЕЛЕНИЕМ ПОЛКА/СКЛАД)
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
+            await sheets.spreadsheets.values.update({ 
+                spreadsheetId, 
+                range: `${sheetTitle}!A1`, 
+                valueInputOption: 'USER_ENTERED', 
+                resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ВРЕМЯ В ТТ', 'СЕТЬ', 'АДРЕС', 'ПОЛКА', 'СКЛАД', 'СУММА', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } 
+            });
         }
+        
         const gps = (lat && lon) ? `=HYPERLINK("http://maps.google.com/?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
         const pdfLink = `=HYPERLINK("${pdfUrl}"; "ОТЧЕТ ФОТО")`;
-        await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
+        const total = parseInt(stockShelf) + parseInt(stockWh);
+
+        await sheets.spreadsheets.values.append({ 
+            spreadsheetId, 
+            range: `${sheetTitle}!A1`, 
+            valueInputOption: 'USER_ENTERED', 
+            resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stockShelf, stockWh, total, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } 
+        });
     } catch (e) { console.error("Merch Error:", e); }
+}
+
+// --- НОВАЯ ФУНКЦИЯ: ЕДИНАЯ БАЗА ОСТАТКОВ СЕТИ (ПО ЛИСТАМ МАГАЗИНОВ) ---
+async function updateGlobalStockDb(clientFolderId, workerName, net, address, stockShelf, stockWh, faces, share, ourPrice, compPrice, expDate) {
+    try {
+        const dbName = "БАЗА_ОСТАТКОВ_СЕТЬ";
+        const q = `name = '${dbName}' and '${clientFolderId}' in parents and trashed = false`;
+        const res = await drive.files.list({ q });
+        let spreadsheetId = res.data.files.length > 0 ? res.data.files[0].id : null;
+
+        if (!spreadsheetId) {
+            const cr = await sheets.spreadsheets.create({ resource: { properties: { title: dbName } } });
+            spreadsheetId = cr.data.spreadsheetId;
+            await drive.files.update({ fileId: spreadsheetId, addParents: clientFolderId, removeParents: 'root' });
+        }
+
+        // Формируем имя вкладки: СЕТЬ_АДРЕС
+        let sheetTitle = `${net}_${address}`.replace(/[^а-яёa-z0-9]/gi, '_');
+        if (sheetTitle.length > 99) sheetTitle = sheetTitle.substring(0, 99); 
+
+        const meta = await sheets.spreadsheets.get({ spreadsheetId });
+        
+        // Если листа магазина нет — создаем
+        if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
+            await sheets.spreadsheets.batchUpdate({ 
+                spreadsheetId, 
+                resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } 
+            });
+            await sheets.spreadsheets.values.update({ 
+                spreadsheetId, 
+                range: `${sheetTitle}!A1`, 
+                valueInputOption: 'USER_ENTERED', 
+                resource: { values: [['ДАТА ВИЗИТА', 'СОТРУДНИК', 'ПОЛКА (ШТ)', 'СКЛАД (ШТ)', 'ИТОГО', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА НАША', 'ЦЕНА КОНК.', 'СРОК ГОДНОСТИ']] } 
+            });
+        }
+
+        const total = parseInt(stockShelf) + parseInt(stockWh);
+        const dateStr = new Date().toLocaleString("ru-RU");
+
+        // Пишем данные
+        await sheets.spreadsheets.values.append({ 
+            spreadsheetId, 
+            range: `${sheetTitle}!A1`, 
+            valueInputOption: 'USER_ENTERED', 
+            resource: { values: [[dateStr, workerName, stockShelf, stockWh, total, faces, share, ourPrice, compPrice, expDate]] } 
+        });
+
+    } catch (e) { console.error("Global Stock DB Error:", e); }
 }
 
 // --- РОУТЫ: ПЛАНОГРАММЫ ---
@@ -191,7 +257,6 @@ app.get('/get-planogram', async (req, res) => {
         const kData = keys.find(k => k.key === key);
         if (!kData || !kData.folderId || kData.type !== 'merch') return res.json({ exists: false });
         
-        // Создаем папку планограмм, если её нет
         const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
         
         const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
@@ -232,17 +297,16 @@ app.post('/upload-planogram', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// --- РОУТЫ: ШТРИХ-КОДЫ (Связь с папкой клиента) ---
+// --- РОУТЫ: ШТРИХ-КОДЫ ---
 
 app.get('/check-barcode', async (req, res) => {
     try {
-        const { code, licenseKey } = req.query; // licenseKey из старого, или key из нового
+        const { code, licenseKey } = req.query; 
         const key = licenseKey || req.query.key;
         let keys = await readDatabase();
         const kIdx = keys.findIndex(k => k.key === key);
         if (kIdx === -1) return res.json({ exists: false });
 
-        // Если папки еще нет в базе, создаем её и сохраняем ID
         if (!keys[kIdx].folderId) {
             const projectRoot = (keys[kIdx].type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
             keys[kIdx].folderId = await getOrCreateFolder(keys[kIdx].name, projectRoot);
@@ -278,7 +342,8 @@ app.post('/save-barcode', async (req, res) => {
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
-// --- ОСНОВНЫЕ ФУНКЦИИ ---
+
+// --- ОСНОВНЫЕ API ---
 
 app.get('/api/open-folder', async (req, res) => {
     try {
@@ -301,12 +366,9 @@ app.post('/check-license', async (req, res) => {
     if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
     if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
     
-    // При проверке лицензии сразу убеждаемся, что папка клиента существует
     if (!kData.folderId) {
         const projectRoot = (kData.type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
         kData.folderId = await getOrCreateFolder(kData.name, projectRoot);
-        // Нужно обновить базу, чтобы запомнить folderId, но это долгая операция, пока пропустим или обновим в фоне
-        // Лучше обновить:
         const kIdx = keys.findIndex(k => k.key === licenseKey);
         keys[kIdx].folderId = kData.folderId;
         await saveDatabase(keys);
@@ -328,7 +390,6 @@ app.post('/upload', async (req, res) => {
         const { action, licenseKey, workerName, worker, city, address, entrance, client, image, lat, lon, workType, price } = req.body;
         const keys = await readDatabase();
         
-        // Быстрая проверка лицензии внутри upload (для совместимости)
         if (action === 'check_license') {
             const kData = keys.find(k => k.key === licenseKey);
             if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
@@ -345,7 +406,6 @@ app.post('/upload', async (req, res) => {
         const kData = keys.find(k => k.workers && k.workers.includes(curW)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const projR = (kData && kData.type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
         
-        // Папка клиента (или Logist_Users по умолчанию)
         const oId = kData.folderId || await getOrCreateFolder(kData ? kData.name : "Logist_Users", projR);
         const wId = await getOrCreateFolder(curW, oId);
         const folderName = (client && client.trim() !== "") ? client.trim() : "Общее";
@@ -362,18 +422,16 @@ app.post('/upload', async (req, res) => {
     } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// MERCH X UPLOAD (С ОБНОВЛЕНИЕМ ИМЕНИ PDF)
+// MERCH X UPLOAD (ОБНОВЛЕННЫЙ: ПОЛКА+СКЛАД И ОБЩАЯ БАЗА)
 app.post('/merch-upload', async (req, res) => {
     try {
         const { worker, net, address, stock, stock_shelf, stock_wh, faces, share, ourPrice, compPrice, expDate, pdf, pdfName, startTime, endTime, duration, lat, lon, city } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
         
-        // Гарантируем папку клиента
         let oId = kData.folderId;
         if (!oId) {
             oId = await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
-            // Если ID не было, сохраним его на будущее (опционально, здесь не блочим)
         }
 
         const wId = await getOrCreateFolder(worker, oId);
@@ -384,23 +442,22 @@ app.post('/merch-upload', async (req, res) => {
         if (pdf) {
             const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
             const buf = Buffer.from(base64Data, 'base64');
-            // НОВОЕ: Имя файла из параметра pdfName (СЕТЬ_Адрес) или формируем сами
             const finalName = pdfName ? `${pdfName}.pdf` : `${net}_${address}.pdf`;
-            // Очищаем имя от недопустимых символов
             const safeName = finalName.replace(/[/\\?%*:|"<>]/g, '-');
-            
             const f = await drive.files.create({ resource: { name: safeName, parents: [dId] }, media: { mimeType: 'application/pdf', body: Readable.from(buf) }, fields: 'id, webViewLink' });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
         
-        // Суммируем остаток, если пришли раздельные данные
-        let totalStock = stock;
-        if (stock_shelf !== undefined && stock_wh !== undefined) {
-            totalStock = parseInt(stock_shelf) + parseInt(stock_wh);
-        }
+        const s_shelf = stock_shelf || 0;
+        const s_wh = stock_wh || 0;
 
-        await appendMerchToReport(wId, worker, net, address, totalStock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
+        // 1. Пишем в отчет сотрудника
+        await appendMerchToReport(wId, worker, net, address, s_shelf, s_wh, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
+
+        // 2. Пишем в ОБЩУЮ БАЗУ ОСТАТКОВ (вкладки по магазинам)
+        await updateGlobalStockDb(oId, worker, net, address, s_shelf, s_wh, faces, share, ourPrice, compPrice, expDate);
+
         res.json({ success: true, url: pUrl });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
@@ -484,7 +541,6 @@ app.get('/dashboard', (req, res) => {
     res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>ADMIN</title></head><body>Admin Dashboard (Use Bot)</body></html>`);
 });
 
-// ОБНОВЛЕННЫЙ КАБИНЕТ КЛИЕНТА (С КРУПНОЙ ДАТОЙ)
 app.get('/client-dashboard', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="ru">
