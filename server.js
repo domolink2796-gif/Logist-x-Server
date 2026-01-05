@@ -100,7 +100,8 @@ async function readDatabase() {
         const q = `name = '${DB_FILE_NAME}' and '${MY_ROOT_ID}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         if (res.data.files.length === 0) return [];
-        const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
+        const fileId = res.data.files[0].id;
+        const content = await drive.files.get({ fileId: fileId, alt: 'media' });
         let data = content.data;
         let keys = Array.isArray(data) ? data : (data.keys || []);
         if (!keys.find(k => k.key === 'DEV-MASTER-999')) {
@@ -108,7 +109,7 @@ async function readDatabase() {
             await saveDatabase(keys);
         }
         return keys;
-    } catch (e) { return []; }
+    } catch (e) { console.error("READ DB ERROR:", e.message); return []; }
 }
 
 async function saveDatabase(keys) {
@@ -118,7 +119,7 @@ async function saveDatabase(keys) {
         const media = { mimeType: 'application/json', body: JSON.stringify({ keys }, null, 2) };
         if (res.data.files.length > 0) { await drive.files.update({ fileId: res.data.files[0].id, media }); } 
         else { await drive.files.create({ resource: { name: DB_FILE_NAME, parents: [MY_ROOT_ID] }, media }); }
-    } catch (e) { console.error("DB Error:", e); }
+    } catch (e) { console.error("SAVE DB ERROR:", e.message); }
 }
 
 async function readPlanogramDb(clientFolderId) {
