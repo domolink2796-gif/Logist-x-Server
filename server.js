@@ -1,4 +1,4 @@
-const express = require('express');
+Const express = require('express');
 const { google } = require('googleapis');
 const { Telegraf } = require('telegraf');
 const bodyParser = require('body-parser');
@@ -41,9 +41,10 @@ const bot = new Telegraf(BOT_TOKEN);
 
 const userSteps = {};
 
-async function readBarcodeDb() {
+async function readBarcodeDb(clientFolderId) {
     try {
-        const q = `name = '${BARCODE_DB_NAME}' and '${MY_ROOT_ID}' in parents and trashed = false`;
+        const parent = clientFolderId || MY_ROOT_ID;
+        const q = `name = '${BARCODE_DB_NAME}' and '${parent}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         if (res.data.files.length === 0) return {};
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
@@ -51,15 +52,16 @@ async function readBarcodeDb() {
     } catch (e) { return {}; }
 }
 
-async function saveBarcodeDb(data) {
+async function saveBarcodeDb(clientFolderId, data) {
     try {
-        const q = `name = '${BARCODE_DB_NAME}' and '${MY_ROOT_ID}' in parents and trashed = false`;
+        const parent = clientFolderId || MY_ROOT_ID;
+        const q = `name = '${BARCODE_DB_NAME}' and '${parent}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
         if (res.data.files.length > 0) {
             await drive.files.update({ fileId: res.data.files[0].id, media });
         } else {
-            await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [MY_ROOT_ID] }, media });
+            await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [parent] }, media });
         }
     } catch (e) { console.error("Barcode DB Save Error:", e); }
 }
@@ -179,7 +181,7 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'КАТЕГОРИЯ', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'КАТЕГОРИЯ', 'НАЧАЛО', 'КОНЕЦ', 'ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
         const gps = (lat && lon) ? `=HYPERLINK("http://googleusercontent.com/maps.google.com/maps?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
         const pdfLink = `=HYPERLINK("${pdfUrl}"; "ОТЧЕТ ФОТО")`;
@@ -189,15 +191,15 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
 
 app.get('/check-barcode', async (req, res) => {
     try {
-        const { code, category } = req.query;
-        const barcodeDB = await readBarcodeDb();
+        const { code, licenseKey } = req.query;
+        const keys = await readDatabase();
+        const kData = keys.find(k => k.key === licenseKey);
+        const folderId = (kData && kData.folderId) ? kData.folderId : MY_ROOT_ID;
+        const barcodeDB = await readBarcodeDb(folderId);
         const item = barcodeDB[code];
         if (item) {
             const itemName = typeof item === 'object' ? item.name : item;
-            const itemCat = typeof item === 'object' ? item.category : 'general';
-            if (!category || itemCat === category || itemCat === 'general') {
-                return res.json({ exists: true, name: itemName });
-            }
+            return res.json({ exists: true, name: itemName });
         }
         res.json({ exists: false });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -205,10 +207,13 @@ app.get('/check-barcode', async (req, res) => {
 
 app.post('/save-barcode', async (req, res) => {
     try {
-        const { code, name, category } = req.body;
-        const barcodeDB = await readBarcodeDb();
-        barcodeDB[code] = { name, category: category || 'general' };
-        await saveBarcodeDb(barcodeDB);
+        const { code, name, licenseKey } = req.body;
+        const keys = await readDatabase();
+        const kData = keys.find(k => k.key === licenseKey);
+        const folderId = (kData && kData.folderId) ? kData.folderId : MY_ROOT_ID;
+        const barcodeDB = await readBarcodeDb(folderId);
+        barcodeDB[code] = { name, timestamp: new Date().toISOString() };
+        await saveBarcodeDb(folderId, barcodeDB);
         res.json({ status: 'ok' });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -279,7 +284,7 @@ app.post('/check-license', async (req, res) => {
     if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
     if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
     const pType = kData.type || 'logist';
-    const category = kData.name || 'Общее';
+    const category = kData.category || 'Общее';
     if (pType === 'merch' && kData.folderId) { await readPlanogramDb(kData.folderId); }
     if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry, type: pType, category: 'ADMIN' });
     if (!kData.workers) kData.workers = [];
@@ -318,7 +323,7 @@ app.post('/merch-upload', async (req, res) => {
         const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, images, startTime, endTime, duration, lat, lon, city } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
-        const category = kData ? kData.name : "Общее";
+        const category = kData ? kData.category : "Общее";
         const oId = await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
         const wId = await getOrCreateFolder(worker, oId);
         const cityId = await getOrCreateFolder(city || "Без города", wId);
@@ -347,13 +352,13 @@ app.get('/api/client-keys', async (req, res) => {
 });
 
 app.post('/api/keys/add', async (req, res) => {
-    const { name, limit, days, type } = req.body; 
+    const { name, limit, days, type, category } = req.body; 
     let keys = await readDatabase();
     const newK = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
     const exp = new Date(); exp.setDate(exp.getDate() + parseInt(days));
     const projectRoot = (type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
     const fId = await getOrCreateFolder(name, projectRoot);
-    keys.push({ key: newK, name, limit, expiry: exp.toISOString(), workers: [], ownerChatId: null, folderId: fId, type: type || 'logist' });
+    keys.push({ key: newK, name, limit, expiry: exp.toISOString(), workers: [], ownerChatId: null, folderId: fId, type: type || 'logist', category: category || 'Общее' });
     await saveDatabase(keys); res.json({ success: true });
 });
 
@@ -381,7 +386,7 @@ app.post('/api/keys/delete', async (req, res) => {
 });
 
 app.post('/api/notify-admin', async (req, res) => {
-    const { key, name, days, chatId, limit, type } = req.body;
+    const { key, name, days, chatId, limit, type, category } = req.body;
     const keys = await readDatabase();
     const kData = keys.find(k => k.key === key) || { limit: limit || 1 };
     let price = kData.limit * 1500;
@@ -390,14 +395,14 @@ app.post('/api/notify-admin', async (req, res) => {
     if (days == 365) price = kData.limit * 15000;
     const invId = Math.floor(Date.now() / 1000);
     const desc = `License ${name}`;
-    const sign = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${key}:Shp_limit=${kData.limit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
-    const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${sign}&Shp_days=${days}&Shp_key=${key}&Shp_chatId=${chatId}&Shp_limit=${kData.limit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}`;
+    const sign = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_cat=${category}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${key}:Shp_limit=${kData.limit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
+    const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${sign}&Shp_days=${days}&Shp_key=${key}&Shp_chatId=${chatId}&Shp_limit=${kData.limit}&Shp_name=${encodeURIComponent(name)}&Shp_cat=${encodeURIComponent(category || 'Общее')}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}`;
     res.json({ success: true, payUrl });
 });
 
 app.post('/api/payment-result', async (req, res) => {
-    const { OutSum, InvId, SignatureValue, Shp_key, Shp_days, Shp_chatId, Shp_limit, Shp_name, Shp_type } = req.body;
-    const mySign = crypto.createHash('md5').update(`${OutSum}:${InvId}:${ROBO_PASS2}:Shp_chatId=${Shp_chatId}:Shp_days=${Shp_days}:Shp_key=${Shp_key}:Shp_limit=${Shp_limit}:Shp_name=${Shp_name}:Shp_type=${Shp_type}`).digest('hex');
+    const { OutSum, InvId, SignatureValue, Shp_key, Shp_days, Shp_chatId, Shp_limit, Shp_name, Shp_type, Shp_cat } = req.body;
+    const mySign = crypto.createHash('md5').update(`${OutSum}:${InvId}:${ROBO_PASS2}:Shp_cat=${Shp_cat}:Shp_chatId=${Shp_chatId}:Shp_days=${Shp_days}:Shp_key=${Shp_key}:Shp_limit=${Shp_limit}:Shp_name=${Shp_name}:Shp_type=${Shp_type}`).digest('hex');
     if (SignatureValue.toLowerCase() === mySign.toLowerCase()) {
         let keys = await readDatabase();
         if (Shp_key === "NEW_USER") {
@@ -405,7 +410,7 @@ app.post('/api/payment-result', async (req, res) => {
             const exp = new Date(); exp.setDate(exp.getDate() + parseInt(Shp_days));
             const projR = (Shp_type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
             const fId = await getOrCreateFolder(Shp_name, projR);
-            keys.push({ key: newK, name: Shp_name, limit: parseInt(Shp_limit), expiry: exp.toISOString(), workers: [], ownerChatId: Shp_chatId, folderId: fId, type: Shp_type });
+            keys.push({ key: newK, name: Shp_name, limit: parseInt(Shp_limit), expiry: exp.toISOString(), workers: [], ownerChatId: Shp_chatId, folderId: fId, type: Shp_type, category: Shp_cat });
             await bot.telegram.sendMessage(Shp_chatId, `🎉 Оплата успешна! Ваш ключ: ${newK}`);
         } else {
             const idx = keys.findIndex(k => k.key === Shp_key);
@@ -450,7 +455,8 @@ app.get('/dashboard', (req, res) => {
     <div style="margin-bottom:20px; font-weight:900; font-size: 18px;">📦 ПАНЕЛЬ УПРАВЛЕНИЯ</div>
     <div class="card">
         <b style="font-size: 16px; display: block; margin-bottom: 10px;">ДОБАВИТЬ ОБЪЕКТ / КАТЕГОРИЮ</b>
-        <input id="n" placeholder="Название (например: Соки или Бакалея)">
+        <input id="n" placeholder="Название фирмы">
+        <input id="cat" placeholder="Категория (например: Соки)">
         <input id="l" type="number" value="5" placeholder="Лимит человек">
         <select id="t"><option value="logist">Логист</option><option value="merch">Мерч</option></select>
         <button class="btn btn-gold" onclick="add()">СОЗДАТЬ КЛЮЧ</button>
@@ -465,10 +471,9 @@ app.get('/dashboard', (req, res) => {
                 const typeClass = k.type === 'merch' ? 'type-merch' : 'type-logist';
                 return \`<div class="card \${typeClass} \${isExp ? 'expired' : ''}">
                     <div class="gold-text" style="font-weight:900">\${k.key} <span class="badge badge-\${k.type || 'logist'}">\${k.type || 'logist'}</span></div>
-                    <div style="margin:8px 0; font-size: 15px; font-weight: 600;">\${k.name}</div>
+                    <div style="margin:8px 0; font-size: 15px; font-weight: 600;">\${k.name} | \${k.category || 'Общее'}</div>
                     <div style="font-size:13px; opacity:0.8">
-                        Лимит: <input type="number" value="\${k.limit}" style="width:50px; border:none; background:transparent; color:#f59e0b; font-weight:700; padding:0; margin:0;" onchange="updLimit('\${k.key}', this.value)">
-                        | До: \${new Date(k.expiry).toLocaleDateString()} \${isExp ? '❌' : '✅'}
+                        Лимит: \${k.limit} | До: \${new Date(k.expiry).toLocaleDateString()} \${isExp ? '❌' : '✅'}
                     </div>
                     <div style="background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; font-size:12px; margin:10px 0; color:#8b949e">
                         \${k.workers && k.workers.length ? k.workers.join(', ') : 'НЕТ АКТИВНЫХ ПОЛЬЗОВАТЕЛЕЙ'}
@@ -480,22 +485,20 @@ app.get('/dashboard', (req, res) => {
                     </div>
                     <button class="btn btn-red btn-small" style="width:100%; margin-top:10px; opacity:0.5" onclick="del('\${k.key}')">УДАЛИТЬ КЛЮЧ</button>
                 </div>\`;
-            }).join('');
+            }).reverse().join('');
         }
         async function add(){
             const n = document.getElementById('n').value;
+            const c = document.getElementById('cat').value;
             const l = document.getElementById('l').value;
             const t = document.getElementById('t').value;
             if(!n) return alert('Введите имя');
-            await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,limit:l,days:30,type:t})});
+            await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,category:c,limit:l,days:30,type:t})});
             load();
         }
         async function ext(key, days){
             await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key, days})});
             load();
-        }
-        async function updLimit(key, limit){
-            await fetch('/api/keys/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key, limit})});
         }
         async function del(key){
             if(confirm('Удалить?')){
@@ -570,7 +573,7 @@ app.get('/client-dashboard', (req, res) => {
                 return \`
                 <div class="card">
                     <div class="status-badge">\${days > 0 ? 'Доступ активен' : 'Срок истек'}</div>
-                    <div class="obj-name">\${k.name} (\${k.type || 'logist'})</div>
+                    <div class="obj-name">\${k.name} | \${k.category || 'Общее'} (\${k.type || 'logist'})</div>
                     <div style="font-size: 11px; opacity: 0.4; margin-bottom: 15px;">Ключ: \${k.key}</div>
                     <div class="warning-box">⚠️ ФОТО-ОТЧЕТЫ И АРХИВЫ ХРАНЯТСЯ 60 ДНЕЙ.<br><b>СОХРАНЯЙТЕ ДАННЫЕ ВОВРЕМЯ!</b></div>
                     <div class="stats">
@@ -581,21 +584,21 @@ app.get('/client-dashboard', (req, res) => {
                     <div class="workers-box">\${workersList.join('')}</div>
                     <div style="font-size: 12px; font-weight: 700">💳 ПРОДЛИТЬ ЛИЦЕНЗИЮ (\${k.limit} чел.):</div>
                     <div class="grid-prices">
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}')">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}','\${k.category}')">
                             <div style="font-size:14px; font-weight:800">30 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*1500}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90,'\${k.type}')">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90,'\${k.type}','\${k.category}')">
                             <div class="sale-tag">-10%</div>
                             <div style="font-size:14px; font-weight:800">90 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*4050}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',180,'\${k.type}')">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',180,'\${k.type}','\${k.category}')">
                             <div class="sale-tag">-15%</div>
                             <div style="font-size:14px; font-weight:800">180 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*7650}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',365,'\${k.type}')">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',365,'\${k.type}','\${k.category}')">
                             <div class="sale-tag">+2 МЕС</div>
                             <div style="font-size:14px; font-weight:800">1 ГОД</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*15000}₽</div>
@@ -604,9 +607,9 @@ app.get('/client-dashboard', (req, res) => {
                 </div>\`;
             }).join('');
         }
-        async function req(key, name, days, type){
+        async function req(key, name, days, type, category){
             const cid = new URLSearchParams(window.location.search).get('chatId');
-            const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days,chatId:cid,type})});
+            const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days,chatId:cid,type,category})});
             const res = await r.json();
             if(res.success && res.payUrl) window.location.href = res.payUrl;
             else alert('Ошибка платежа');
@@ -644,7 +647,7 @@ bot.action('buy_new', (ctx) => {
 bot.action(/set_type_(.+)/, (ctx) => {
     const type = ctx.match[1];
     userSteps[ctx.chat.id] = { type, step: 'name' };
-    ctx.reply("Введите название или категорию (например: Соки):");
+    ctx.reply("Введите название вашей фирмы:");
 });
 
 bot.action('have_key', (ctx) => {
@@ -657,14 +660,18 @@ bot.on('text', async (ctx) => {
     const step = userSteps[cid];
 
     if (step && step.step === 'name') {
-        step.name = txt; step.step = 'limit';
+        step.name = txt; step.step = 'category';
+        return ctx.reply("Введите категорию (например: Соки, Молочка или Бакалея):");
+    }
+    if (step && step.step === 'category') {
+        step.category = txt; step.step = 'limit';
         return ctx.reply("Сколько сотрудников будет работать? (введите число)");
     }
     if (step && step.step === 'limit') {
         const limit = parseInt(txt); if(isNaN(limit)) return ctx.reply("Введите число!");
         const r = await fetch(SERVER_URL + '/api/notify-admin', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ key: "NEW_USER", name: step.name, days: 30, limit, chatId: cid, type: step.type })
+            body: JSON.stringify({ key: "NEW_USER", name: step.name, category: step.category, days: 30, limit, chatId: cid, type: step.type })
         });
         const res = await r.json();
         ctx.reply(`💳 К оплате за ${limit} чел.: ${limit * 1500}₽`, {
