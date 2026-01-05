@@ -29,7 +29,6 @@ const ROBO_PASS1 = 'P_password1';
 const ROBO_PASS2 = 'P_password2'; 
 const IS_TEST = 1; 
 
-// Auth
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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'
@@ -43,6 +42,7 @@ const bot = new Telegraf(BOT_TOKEN);
 const userSteps = {};
 
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+
 function getDistance(lat1, lon1, lat2, lon2) {
     const R = 6371e3; 
     const f1 = lat1 * Math.PI/180; const f2 = lat2 * Math.PI/180;
@@ -56,15 +56,10 @@ async function getOrCreateFolder(rawName, parentId) {
         const name = String(rawName).trim(); 
         const q = `name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
         const res = await drive.files.list({ q, fields: 'files(id)' });
-        let folderId;
-        if (res.data.files.length > 0) {
-            folderId = res.data.files[0].id;
-        } else {
-            const file = await drive.files.create({ resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }, fields: 'id' });
-            folderId = file.data.id;
-            await drive.permissions.create({ fileId: folderId, resource: { role: 'writer', type: 'anyone' } });
-        }
-        return folderId;
+        if (res.data.files.length > 0) return res.data.files[0].id;
+        const file = await drive.files.create({ resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }, fields: 'id' });
+        await drive.permissions.create({ fileId: file.data.id, resource: { role: 'writer', type: 'anyone' } });
+        return file.data.id;
     } catch (e) { return parentId; }
 }
 
@@ -98,7 +93,7 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- НОВОЕ: РАБОТА СО ШТРИХ-КОДАМИ (QR) ---
+// --- НОВОЕ: БД Штрих-кодов (Локальная для каждого ключа) ---
 
 async function readBarcodeDb(clientFolderId) {
     try {
@@ -115,11 +110,8 @@ async function saveBarcodeDb(clientFolderId, data) {
         const q = `name = '${BARCODE_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
-        if (res.data.files.length > 0) {
-            await drive.files.update({ fileId: res.data.files[0].id, media });
-        } else {
-            await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [clientFolderId] }, media });
-        }
+        if (res.data.files.length > 0) { await drive.files.update({ fileId: res.data.files[0].id, media }); } 
+        else { await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [clientFolderId] }, media }); }
     } catch (e) { console.error("Barcode Save Error:", e); }
 }
 
@@ -140,11 +132,8 @@ async function savePlanogramDb(clientFolderId, data) {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
-        if (res.data.files.length > 0) {
-            await drive.files.update({ fileId: res.data.files[0].id, media });
-        } else {
-            await drive.files.create({ resource: { name: PLANOGRAM_DB_NAME, parents: [clientFolderId] }, media });
-        }
+        if (res.data.files.length > 0) { await drive.files.update({ fileId: res.data.files[0].id, media }); } 
+        else { await drive.files.create({ resource: { name: PLANOGRAM_DB_NAME, parents: [clientFolderId] }, media }); }
     } catch (e) { console.error("Planogram DB Save Error:", e); }
 }
 
@@ -221,14 +210,11 @@ app.post('/upload-planogram', async (req, res) => {
         const keys = await readDatabase();
         const kData = keys.find(k => k.key === key);
         if (!kData || !kData.folderId || kData.type !== 'merch') return res.status(403).json({ error: "Доступ запрещен" });
-        
         const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
         const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
         const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-        
         const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
         const existing = await drive.files.list({ q });
-        
         let fileId;
         if (existing.data.files.length > 0) {
             fileId = existing.data.files[0].id;
@@ -250,11 +236,18 @@ app.post('/upload-planogram', async (req, res) => {
 app.get('/check-barcode', async (req, res) => {
     try {
         const { code, licenseKey } = req.query;
-        const keys = await readDatabase();
-        const kData = keys.find(k => k.key === licenseKey);
-        if (!kData || !kData.folderId) return res.json({ exists: false });
+        let keys = await readDatabase();
+        const kIdx = keys.findIndex(k => k.key === licenseKey);
+        if (kIdx === -1) return res.json({ exists: false });
 
-        const barcodeDb = await readBarcodeDb(kData.folderId);
+        // ПРИНУДИТЕЛЬНОЕ СОЗДАНИЕ ПАПКИ ЕСЛИ ЕЁ НЕТ (для запоминания штрих-кодов)
+        if (!keys[kIdx].folderId) {
+            const projectRoot = (keys[kIdx].type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
+            keys[kIdx].folderId = await getOrCreateFolder(keys[kIdx].name, projectRoot);
+            await saveDatabase(keys);
+        }
+
+        const barcodeDb = await readBarcodeDb(keys[kIdx].folderId);
         if (barcodeDb[code]) {
             res.json({ exists: true, name: barcodeDb[code].name || barcodeDb[code] });
         } else {
@@ -266,13 +259,20 @@ app.get('/check-barcode', async (req, res) => {
 app.post('/save-barcode', async (req, res) => {
     try {
         const { code, name, licenseKey } = req.body;
-        const keys = await readDatabase();
-        const kData = keys.find(k => k.key === licenseKey);
-        if (!kData || !kData.folderId) return res.status(403).send("Forbidden");
+        let keys = await readDatabase();
+        const kIdx = keys.findIndex(k => k.key === licenseKey);
+        if (kIdx === -1) return res.status(403).send("Forbidden");
 
-        const barcodeDb = await readBarcodeDb(kData.folderId);
+        // ПРИНУДИТЕЛЬНОЕ СОЗДАНИЕ ПАПКИ ЕСЛИ ЕЁ НЕТ
+        if (!keys[kIdx].folderId) {
+            const projectRoot = (keys[kIdx].type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
+            keys[kIdx].folderId = await getOrCreateFolder(keys[kIdx].name, projectRoot);
+            await saveDatabase(keys);
+        }
+
+        const barcodeDb = await readBarcodeDb(keys[kIdx].folderId);
         barcodeDb[code] = { name: name, date: new Date().toISOString() };
-        await saveBarcodeDb(kData.folderId, barcodeDb);
+        await saveBarcodeDb(keys[kIdx].folderId, barcodeDb);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -300,12 +300,10 @@ app.post('/check-license', async (req, res) => {
     if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
     if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
     const pType = kData.type || 'logist';
-    
     if (kData.folderId) { 
         await readPlanogramDb(kData.folderId); 
-        await readBarcodeDb(kData.folderId); // Инициализация базы штрих-кодов
+        await readBarcodeDb(kData.folderId); 
     }
-    
     if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry, type: pType });
     if (!kData.workers) kData.workers = [];
     if (!kData.workers.includes(workerName)) {
@@ -333,7 +331,7 @@ app.post('/upload', async (req, res) => {
         const curW = worker || workerName;
         const kData = keys.find(k => k.workers && k.workers.includes(curW)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const projR = (kData && kData.type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
-        const oId = await getOrCreateFolder(kData ? kData.name : "Logist_Users", projR);
+        const oId = kData.folderId || await getOrCreateFolder(kData ? kData.name : "Logist_Users", projR);
         const wId = await getOrCreateFolder(curW, oId);
         const folderName = (client && client.trim() !== "") ? client.trim() : "Общее";
         const finalId = await getOrCreateFolder(folderName, wId);
@@ -353,7 +351,7 @@ app.post('/merch-upload', async (req, res) => {
         const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon, city } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
-        const oId = await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
+        const oId = kData.folderId || await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
         const wId = await getOrCreateFolder(worker, oId);
         const cityId = await getOrCreateFolder(city || "Без города", wId);
         const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
@@ -361,7 +359,6 @@ app.post('/merch-upload', async (req, res) => {
         if (pdf) {
             const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
             const buf = Buffer.from(base64Data, 'base64');
-            // СОБЛЮДЕНО ПРАВИЛО: Название PDF "ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ"
             const f = await drive.files.create({ resource: { name: `ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
             pUrl = f.data.webViewLink;
@@ -573,9 +570,7 @@ app.get('/client-dashboard', (req, res) => {
         function openExternal(url) {
             const absoluteUrl = url.startsWith('http') ? url : window.location.origin + url;
             const a = document.createElement('a');
-            a.href = absoluteUrl;
-            a.target = '_blank';
-            a.rel = 'noopener noreferrer';
+            a.href = absoluteUrl; a.target = '_blank'; a.rel = 'noopener noreferrer';
             a.click();
         }
         async function load(){
@@ -601,28 +596,16 @@ app.get('/client-dashboard', (req, res) => {
                         <div class="stat-item"><span class="stat-val">\${days > 0 ? days : 0}</span><span class="stat-lbl">Дней</span></div>
                         <div class="stat-item"><span class="stat-val">\${k.workers.length}/\${k.limit}</span><span class="stat-lbl">Людей</span></div>
                     </div>
-                    <div style="font-size: 11px; font-weight: 800; color: #8b949e; margin-bottom: 10px;">ОТЧЕТЫ СОТРУДНИКОВ:</div>
                     <div class="workers-box">\${workersList.join('')}</div>
-                    <div style="font-size: 12px; font-weight: 700">💳 ПРОДЛИТЬ ЛИЦЕНЗИЮ (\${k.limit} чел.):</div>
                     <div class="grid-prices">
                         <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}')">
                             <div style="font-size:14px; font-weight:800">30 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*1500}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}')">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90,'\${k.type}')">
                             <div class="sale-tag">-10%</div>
                             <div style="font-size:14px; font-weight:800">90 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*4050}₽</div>
-                        </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',180,'\${k.type}')">
-                            <div class="sale-tag">-15%</div>
-                            <div style="font-size:14px; font-weight:800">180 дн.</div>
-                            <div style="font-size:10px; color:#f59e0b">\${k.limit*7650}₽</div>
-                        </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',365,'\${k.type}')">
-                            <div class="sale-tag">+2 МЕС</div>
-                            <div style="font-size:14px; font-weight:800">1 ГОД</div>
-                            <div style="font-size:10px; color:#f59e0b">\${k.limit*15000}₽</div>
                         </div>
                     </div>
                 </div>\`;
@@ -646,64 +629,41 @@ bot.start(async (ctx) => {
     if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ПУЛЬТ УПРАВЛЕНИЯ', { reply_markup: { inline_keyboard: [[{ text: "📦 ОБЪЕКТЫ / КЛЮЧИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
     const keys = await readDatabase(); const ck = keys.find(k => String(k.ownerChatId) === String(cid));
     if (ck) return ctx.reply('🏢 ВАШ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
-    ctx.reply(`👋 **Добро пожаловать в Logist X!**`, {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [
-            [{ text: "💳 КУПИТЬ НОВЫЙ ДОСТУП", callback_data: "buy_new" }],
-            [{ text: "🔑 У МЕНЯ ЕСТЬ КЛЮЧ", callback_data: "have_key" }]
-        ]}
-    });
+    ctx.reply(`👋 **Добро пожаловать в Logist X!**`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: "💳 КУПИТЬ НОВЫЙ ДОСТУП", callback_data: "buy_new" }], [{ text: "🔑 У МЕНЯ ЕСТЬ КЛЮЧ", callback_data: "have_key" }]] } });
 });
 
 bot.action('buy_new', (ctx) => {
     userSteps[ctx.chat.id] = { step: 'type' };
-    ctx.reply("Выберите тип проекта:", {
-        reply_markup: { inline_keyboard: [
-            [{ text: "📦 ЛОГИСТ X", callback_data: "set_type_logist" }],
-            [{ text: "🛒 МЕРЧЕНДАЙЗИНГ", callback_data: "set_type_merch" }]
-        ]}
-    });
+    ctx.reply("Выберите тип проекта:", { reply_markup: { inline_keyboard: [[{ text: "📦 ЛОГИСТ X", callback_data: "set_type_logist" }], [{ text: "🛒 МЕРЧЕНДАЙЗИНГ", callback_data: "set_type_merch" }]] } });
 });
 
 bot.action(/set_type_(.+)/, (ctx) => {
-    const type = ctx.match[1];
-    userSteps[ctx.chat.id] = { type, step: 'name' };
-    ctx.reply("Введите название вашего объекта (например: Склад Север):");
-});
-
-bot.action('have_key', (ctx) => {
-    ctx.reply("Введите ваш 8-значный ключ активации:");
+    const type = ctx.match[1]; userSteps[ctx.chat.id] = { type, step: 'name' };
+    ctx.reply("Введите название вашего объекта:");
 });
 
 bot.on('text', async (ctx) => {
     const cid = ctx.chat.id; if (cid === MY_TELEGRAM_ID) return; 
     const txt = ctx.message.text.trim();
     const step = userSteps[cid];
-
     if (step && step.step === 'name') {
         step.name = txt; step.step = 'limit';
         return ctx.reply("Сколько сотрудников будет работать? (введите число)");
     }
     if (step && step.step === 'limit') {
         const limit = parseInt(txt); if(isNaN(limit)) return ctx.reply("Введите число!");
-        const r = await fetch(SERVER_URL + '/api/notify-admin', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ key: "NEW_USER", name: step.name, days: 30, limit, chatId: cid, type: step.type })
-        });
+        const r = await fetch(SERVER_URL + '/api/notify-admin', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ key: "NEW_USER", name: step.name, days: 30, limit, chatId: cid, type: step.type }) });
         const res = await r.json();
-        ctx.reply(`💳 К оплате за ${limit} чел.: ${limit * 1500}₽`, {
-            reply_markup: { inline_keyboard: [[{ text: "ОПЛАТИТЬ", url: res.payUrl }]] }
-        });
+        ctx.reply(`💳 К оплате за ${limit} чел.: ${limit * 1500}₽`, { reply_markup: { inline_keyboard: [[{ text: "ОПЛАТИТЬ", url: res.payUrl }]] } });
         delete userSteps[cid]; return;
     }
-
     const key = txt.toUpperCase(); let keys = await readDatabase(); 
     const idx = keys.findIndex(k => k.key === key);
     if (idx !== -1) { 
         if(keys[idx].ownerChatId && keys[idx].ownerChatId !== cid) return ctx.reply('Этот ключ уже активирован.'); 
         keys[idx].ownerChatId = cid; await saveDatabase(keys); 
         ctx.reply('✅ КЛЮЧ АКТИВИРОВАН!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
-    } else if (!step) ctx.reply('❌ Ключ не найден.');
+    } else ctx.reply('❌ Ключ не найден.');
 });
 
 bot.launch().then(() => console.log("READY"));
