@@ -29,6 +29,7 @@ const ROBO_PASS1 = 'P_password1';
 const ROBO_PASS2 = 'P_password2'; 
 const IS_TEST = 1; 
 
+// Auth
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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'
@@ -41,7 +42,7 @@ const bot = new Telegraf(BOT_TOKEN);
 
 const userSteps = {};
 
-// --- НОВАЯ ЛОГИКА ШТРИХ-КОДОВ (С УЧЕТОМ ПАПКИ КЛИЕНТА) ---
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ БАЗ ДАННЫХ ---
 async function readBarcodeDb(clientFolderId) {
     try {
         const q = `name = '${BARCODE_DB_NAME}' and '${clientFolderId || MY_ROOT_ID}' in parents and trashed = false`;
@@ -103,9 +104,7 @@ async function readDatabase() {
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
         let data = content.data;
         let keys = Array.isArray(data) ? data : (data.keys || []);
-        
         let changed = false;
-        // Авто-исправитель папок
         for (let k of keys) {
             if (!k.folderId && k.key !== 'DEV-MASTER-999') {
                 const projectRoot = (k.type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
@@ -113,7 +112,6 @@ async function readDatabase() {
                 changed = true;
             }
         }
-
         if (!keys.find(k => k.key === 'DEV-MASTER-999')) {
             keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [] });
             changed = true;
@@ -156,6 +154,7 @@ async function savePlanogramDb(clientFolderId, data) {
     } catch (e) { console.error("Planogram DB Save Error:", e); }
 }
 
+// --- ОТЧЕТНОСТЬ ---
 async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
         const reportName = `Отчет ${workerName}`;
@@ -193,7 +192,7 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'КАТЕГОРИЯ', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'КАТЕГОРИЯ', 'НАЧАЛО', 'КОНЕЦ', 'ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
         const gps = (lat && lon) ? `=HYPERLINK("http://googleusercontent.com/maps.google.com/maps?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
         const pdfLink = `=HYPERLINK("${pdfUrl}"; "ОТЧЕТ ФОТО")`;
@@ -201,6 +200,7 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
     } catch (e) { console.error("Merch Error:", e); }
 }
 
+// --- РОУТЫ QR / ШТРИХ-КОДОВ ---
 app.get('/check-barcode', async (req, res) => {
     try {
         const { code, licenseKey } = req.query;
@@ -230,6 +230,7 @@ app.post('/save-barcode', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// --- ПЛАНОГРАММЫ ---
 app.get('/get-planogram', async (req, res) => {
     try {
         const { addr, key } = req.query;
@@ -270,6 +271,7 @@ app.post('/upload-planogram', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// --- API И ЗАГРУЗКА ---
 app.get('/api/open-folder', async (req, res) => {
     try {
         const { workerName } = req.query;
@@ -332,7 +334,7 @@ app.post('/merch-upload', async (req, res) => {
         if (images && images.length > 0) {
             for (let i = 0; i < images.length; i++) {
                 const buf = Buffer.from(images[i].replace(/^data:image\/\w+;base64,/, ""), 'base64');
-                await drive.files.create({ resource: { name: `ФОТО_${address}_${i+1}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
+                await drive.files.create({ resource: { name: `${address}_п${i+1}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
             }
         }
         let pUrl = "Нет файла";
@@ -347,6 +349,7 @@ app.post('/merch-upload', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+// --- АДМИН-ФУНКЦИИ КЛЮЧЕЙ ---
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
 app.get('/api/client-keys', async (req, res) => {
     try { const keys = await readDatabase(); res.json(keys.filter(k => String(k.ownerChatId) === String(req.query.chatId))); } catch (e) { res.json([]); }
@@ -425,7 +428,7 @@ app.post('/api/payment-result', async (req, res) => {
     res.send("error");
 });
 
-// --- ТВОЯ АДМИНКА (ДИЗАЙН СОХРАНЕН) ---
+// --- ИНТЕРФЕЙСЫ (DASHBOARD) ---
 app.get('/dashboard', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="ru">
@@ -515,7 +518,6 @@ app.get('/dashboard', (req, res) => {
 </html>`);
 });
 
-// --- ТВОЙ КАБИНЕТ КЛИЕНТА (ДИЗАЙН СОХРАНЕН) ---
 app.get('/client-dashboard', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="ru">
@@ -624,6 +626,7 @@ app.get('/client-dashboard', (req, res) => {
 </html>`);
 });
 
+// --- TELEGRAM BOT ---
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
     if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ПУЛЬТ УПРАВЛЕНИЯ', { reply_markup: { inline_keyboard: [[{ text: "📦 ОБЪЕКТЫ / КЛЮЧИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
@@ -662,7 +665,6 @@ bot.on('text', async (ctx) => {
     const cid = ctx.chat.id; if (cid === MY_TELEGRAM_ID) return; 
     const txt = ctx.message.text.trim();
     const step = userSteps[cid];
-
     if (step && step.step === 'name') {
         step.name = txt; step.step = 'limit';
         return ctx.reply("Сколько сотрудников будет работать? (введите число)");
@@ -679,7 +681,6 @@ bot.on('text', async (ctx) => {
         });
         delete userSteps[cid]; return;
     }
-
     const key = txt.toUpperCase(); let keys = await readDatabase(); 
     const idx = keys.findIndex(k => k.key === key);
     if (idx !== -1) { 
