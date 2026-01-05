@@ -29,12 +29,11 @@ const ROBO_PASS1 = 'P_password1';
 const ROBO_PASS2 = 'P_password2'; 
 const IS_TEST = 1; 
 
-// Auth
 const oauth2Client = new google.auth.OAuth2(
     '355201275272-14gol1u31gr3qlan5236v241jbe13r0a.apps.googleusercontent.com',
     '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'
 );
-oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgYIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0' });
+oauth2Client.setCredentials({ refresh_token: '1//04Xx4TeSGvK3OCgIARAAGAQSNwF-L9Irgd6A14PB5ziFVjs-PftE7jdGY0KoRJnXeVlDuD1eU2ws6Kc1gdlmSYz99MlOQvSeLZ0' });
 
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
@@ -42,7 +41,31 @@ const bot = new Telegraf(BOT_TOKEN);
 
 const userSteps = {};
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+// --- НОВАЯ ЛОГИКА ШТРИХ-КОДОВ (С УЧЕТОМ ПАПКИ КЛИЕНТА) ---
+async function readBarcodeDb(clientFolderId) {
+    try {
+        const q = `name = '${BARCODE_DB_NAME}' and '${clientFolderId || MY_ROOT_ID}' in parents and trashed = false`;
+        const res = await drive.files.list({ q });
+        if (res.data.files.length === 0) return {};
+        const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
+        return (typeof content.data === 'string') ? JSON.parse(content.data) : content.data;
+    } catch (e) { return {}; }
+}
+
+async function saveBarcodeDb(clientFolderId, data) {
+    try {
+        const targetId = clientFolderId || MY_ROOT_ID;
+        const q = `name = '${BARCODE_DB_NAME}' and '${targetId}' in parents and trashed = false`;
+        const res = await drive.files.list({ q });
+        const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
+        if (res.data.files.length > 0) {
+            await drive.files.update({ fileId: res.data.files[0].id, media });
+        } else {
+            await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [targetId] }, media });
+        }
+    } catch (e) { console.error("Barcode DB Save Error:", e); }
+}
+
 function getDistance(lat1, lon1, lat2, lon2) {
     const R = 6371e3; 
     const f1 = lat1 * Math.PI/180; const f2 = lat2 * Math.PI/180;
@@ -78,11 +101,11 @@ async function readDatabase() {
         const res = await drive.files.list({ q });
         if (res.data.files.length === 0) return [];
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
-        let data = (typeof content.data === 'string') ? JSON.parse(content.data) : content.data;
+        let data = content.data;
         let keys = Array.isArray(data) ? data : (data.keys || []);
         
         let changed = false;
-        // --- ПРОВЕРКА И СОЗДАНИЕ ПАПОК ДЛЯ СТАРЫХ КЛЮЧЕЙ ---
+        // Авто-исправитель папок
         for (let k of keys) {
             if (!k.folderId && k.key !== 'DEV-MASTER-999') {
                 const projectRoot = (k.type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
@@ -95,7 +118,6 @@ async function readDatabase() {
             keys.push({ key: 'DEV-MASTER-999', name: 'SYSTEM_ADMIN', limit: 999, expiry: '2099-12-31T23:59:59.000Z', workers: [] });
             changed = true;
         }
-        
         if (changed) await saveDatabase(keys);
         return keys;
     } catch (e) { return []; }
@@ -111,62 +133,27 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-async function readBarcodeDb(clientFolderId) {
-    if (!clientFolderId) return {};
-    try {
-        const q = `name = '${BARCODE_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
-        const res = await drive.files.list({ q });
-        if (res.data.files.length === 0) return {};
-        const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
-        let data = content.data;
-        if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e) { data = {}; } }
-        return data || {};
-    } catch (e) { return {}; }
-}
-
-async function saveBarcodeDb(clientFolderId, data) {
-    if (!clientFolderId || clientFolderId === MY_ROOT_ID) return console.error("Security Block");
-    try {
-        const q = `name = '${BARCODE_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
-        const res = await drive.files.list({ q });
-        const jsonContent = JSON.stringify(data, null, 2);
-        const media = { mimeType: 'application/json', body: Readable.from([jsonContent]) };
-        if (res.data.files.length > 0) {
-            await drive.files.update({ fileId: res.data.files[0].id, media });
-        } else {
-            const f = await drive.files.create({ resource: { name: BARCODE_DB_NAME, parents: [clientFolderId] }, media: { mimeType: 'application/json', body: jsonContent }, fields: 'id' });
-            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
-        }
-    } catch (e) { console.error("Barcode Save Error:", e); }
-}
-
 async function readPlanogramDb(clientFolderId) {
-    if (!clientFolderId) return {};
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
         if (res.data.files.length === 0) return {};
         const content = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
-        let data = content.data;
-        if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e) { data = {}; } }
-        return data || {};
+        return content.data || {};
     } catch (e) { return {}; }
 }
 
 async function savePlanogramDb(clientFolderId, data) {
-    if (!clientFolderId || clientFolderId === MY_ROOT_ID) return;
     try {
         const q = `name = '${PLANOGRAM_DB_NAME}' and '${clientFolderId}' in parents and trashed = false`;
         const res = await drive.files.list({ q });
-        const jsonContent = JSON.stringify(data, null, 2);
-        const media = { mimeType: 'application/json', body: Readable.from([jsonContent]) };
+        const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
         if (res.data.files.length > 0) {
             await drive.files.update({ fileId: res.data.files[0].id, media });
         } else {
-            const f = await drive.files.create({ resource: { name: PLANOGRAM_DB_NAME, parents: [clientFolderId] }, media: { mimeType: 'application/json', body: jsonContent }, fields: 'id' });
-            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
+            await drive.files.create({ resource: { name: PLANOGRAM_DB_NAME, parents: [clientFolderId] }, media });
         }
-    } catch (e) { console.error("Planogram Save Error:", e); }
+    } catch (e) { console.error("Planogram DB Save Error:", e); }
 }
 
 async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
@@ -186,12 +173,12 @@ async function appendToReport(workerId, workerName, city, dateStr, address, entr
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
             await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ВРЕМЯ', 'АДРЕС', 'ПОДЪЕЗД', 'КЛИЕНТ', 'ВИД РАБОТЫ', 'СУММА', 'GPS', 'ФОТО']] } });
         }
-        const gpsLink = (lat && lon) ? `=HYPERLINK("https://www.google.com/maps?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
+        const gpsLink = (lat && lon) ? `=HYPERLINK("http://googleusercontent.com/maps.google.com/maps?q=${lat},${lon}"; "СМОТРЕТЬ")` : "Нет GPS";
         await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleTimeString("ru-RU"), address, entrance, client, workType, price, gpsLink, "ЗАГРУЖЕНО"]] } });
-    } catch (e) { console.error("Logist Report Error:", e); }
+    } catch (e) { console.error("Logist Error:", e); }
 }
 
-async function appendMerchToReport(workerId, workerName, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfUrl, startTime, endTime, duration, lat, lon) {
+async function appendMerchToReport(workerId, workerName, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfUrl, startTime, endTime, duration, lat, lon, category) {
     try {
         const reportName = `Мерч_Аналитика_${workerName}`;
         const q = `name = '${reportName}' and '${workerId}' in parents and trashed = false`;
@@ -206,12 +193,12 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         if (!meta.data.sheets.find(s => s.properties.title === sheetTitle)) {
             await sheets.spreadsheets.batchUpdate({ spreadsheetId, resource: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] } });
-            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [['ДАТА', 'КАТЕГОРИЯ', 'НАЧАЛО', 'КОНЕЦ', 'ДЛИТЕЛЬНОСТЬ', 'СЕТЬ', 'АДРЕС', 'ОСТАТОК', 'ФЕЙСИНГ', 'ДОЛЯ %', 'ЦЕНА МЫ', 'ЦЕНА КОНК', 'СРОК', 'PDF ОТЧЕТ', 'GPS']] } });
         }
-        const gps = (lat && lon) ? `=HYPERLINK("https://www.google.com/maps?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
+        const gps = (lat && lon) ? `=HYPERLINK("http://googleusercontent.com/maps.google.com/maps?q=${lat},${lon}"; "ПОСМОТРЕТЬ")` : "Нет";
         const pdfLink = `=HYPERLINK("${pdfUrl}"; "ОТЧЕТ ФОТО")`;
-        await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
-    } catch (e) { console.error("Merch Report Error:", e); }
+        await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetTitle}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: [[new Date().toLocaleDateString("ru-RU"), category || "Общее", startTime, endTime, duration, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdfLink, gps]] } });
+    } catch (e) { console.error("Merch Error:", e); }
 }
 
 app.get('/check-barcode', async (req, res) => {
@@ -219,10 +206,14 @@ app.get('/check-barcode', async (req, res) => {
         const { code, licenseKey } = req.query;
         const keys = await readDatabase();
         const kData = keys.find(k => k.key === licenseKey);
-        if (!kData || !kData.folderId) return res.json({ success: false });
-        const db = await readBarcodeDb(kData.folderId);
-        if (db[code]) res.json({ success: true, name: db[code] });
-        else res.json({ success: false });
+        if(!kData || !kData.folderId) return res.json({ exists: false });
+        const barcodeDB = await readBarcodeDb(kData.folderId);
+        const item = barcodeDB[code];
+        if (item) {
+            const itemName = typeof item === 'object' ? item.name : item;
+            return res.json({ exists: true, name: itemName });
+        }
+        res.json({ exists: false });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -231,11 +222,11 @@ app.post('/save-barcode', async (req, res) => {
         const { code, name, licenseKey } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.key === licenseKey);
-        if (!kData || !kData.folderId) return res.status(403).json({ error: "Ключ не найден" });
-        const db = await readBarcodeDb(kData.folderId);
-        db[code] = name;
-        await saveBarcodeDb(kData.folderId, db);
-        res.json({ success: true });
+        if(!kData || !kData.folderId) return res.status(403).json({ error: "Ключ не найден" });
+        const barcodeDB = await readBarcodeDb(kData.folderId);
+        barcodeDB[code] = { name };
+        await saveBarcodeDb(kData.folderId, barcodeDB);
+        res.json({ status: 'ok' });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -303,12 +294,12 @@ app.post('/check-license', async (req, res) => {
         if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест исчерпан' });
         kData.workers.push(workerName); await saveDatabase(keys);
     }
-    res.json({ status: 'active', expiry: kData.expiry, type: pType });
+    res.json({ status: 'active', expiry: kData.expiry, type: pType, category: kData.name || 'Общее' });
 });
 
 app.post('/upload', async (req, res) => {
     try {
-        const { action, licenseKey, workerName, worker, city, address, entrance, client, image, lat, lon, workType, price } = req.body;
+        const { action, licenseKey, workerName, worker, city, address, entrance, client, image, images, lat, lon, workType, price } = req.body;
         const keys = await readDatabase();
         const curW = worker || workerName;
         const kData = keys.find(k => k.workers && k.workers.includes(curW)) || keys.find(k => k.key === licenseKey);
@@ -318,9 +309,10 @@ app.post('/upload', async (req, res) => {
         const folderName = (client && client.trim() !== "") ? client.trim() : "Общее";
         const finalId = await getOrCreateFolder(folderName, wId);
         const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], finalId);
-        if (image) {
-            const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-            const fileName = `${address}_п${entrance}.jpg`;
+        const photoList = images || (image ? [image] : []);
+        for (let i = 0; i < photoList.length; i++) {
+            const buf = Buffer.from(photoList[i].replace(/^data:image\/\w+;base64,/, ""), 'base64');
+            const fileName = `${address}_п${entrance}_${i+1}.jpg`;
             await drive.files.create({ resource: { name: fileName, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
         }
         await appendToReport(wId, curW, city, new Date().toISOString().split('T')[0], address, entrance, client, workType, price, lat, lon);
@@ -330,22 +322,27 @@ app.post('/upload', async (req, res) => {
 
 app.post('/merch-upload', async (req, res) => {
     try {
-        const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon, city } = req.body;
+        const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, images, startTime, endTime, duration, lat, lon, city } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
         const oId = kData ? kData.folderId : await getOrCreateFolder("Merch_Users", MERCH_ROOT_ID);
         const wId = await getOrCreateFolder(worker, oId);
         const cityId = await getOrCreateFolder(city || "Без города", wId);
         const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
+        if (images && images.length > 0) {
+            for (let i = 0; i < images.length; i++) {
+                const buf = Buffer.from(images[i].replace(/^data:image\/\w+;base64,/, ""), 'base64');
+                await drive.files.create({ resource: { name: `ФОТО_${address}_${i+1}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
+            }
+        }
         let pUrl = "Нет файла";
         if (pdf) {
-            const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
-            const buf = Buffer.from(base64Data, 'base64');
+            const buf = Buffer.from(pdf.includes(',') ? pdf.split(',')[1] : pdf, 'base64');
             const f = await drive.files.create({ resource: { name: `ОТЧЕТ_${address}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
-        await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
+        await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon, kData ? kData.name : "Общее");
         res.json({ success: true, url: pUrl });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
@@ -428,37 +425,269 @@ app.post('/api/payment-result', async (req, res) => {
     res.send("error");
 });
 
+// --- ТВОЯ АДМИНКА (ДИЗАЙН СОХРАНЕН) ---
 app.get('/dashboard', (req, res) => {
-    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ADMIN</title><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');body{background-color:#010409;color:#e6edf3;font-family:'Inter',sans-serif;margin:0;padding:15px;}.card{background:#0d1117;border:1px solid #30363d;border-radius:16px;padding:20px;margin-bottom:15px;}.btn{padding:14px;border-radius:8px;border:none;font-weight:700;cursor:pointer;width:100%;margin-top:5px;}</style></head><body><div id="list">Загрузка...</div><script>async function load(){const r=await fetch('/api/keys');const keys=await r.json();document.getElementById('list').innerHTML=keys.map(k=>'<div class="card">'+k.name+' ('+k.key+')</div>').join('');}load();</script></body></html>`);
+    res.send(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADMIN | LOGIST_X</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { background-color: #010409; color: #e6edf3; font-family: 'Inter', sans-serif; margin: 0; padding: 15px; font-size: 14px; }
+        .card { background: #0d1117; border: 1px solid #30363d; border-radius: 16px; padding: 20px; margin-bottom: 15px; }
+        .card.type-merch { border-left: 5px solid #f59e0b; }
+        .card.type-logist { border-left: 5px solid #238636; }
+        .expired { border-color: #da3633 !important; box-shadow: 0 0 10px rgba(218, 54, 51, 0.2); }
+        .gold-text { color: #f59e0b; font-size: 16px; }
+        input, select { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #30363d; background: #010409; color: #fff; box-sizing: border-box; font-size: 14px; }
+        .btn { padding: 14px; border-radius: 8px; border: none; font-weight: 700; cursor: pointer; width: 100%; margin-top: 5px; font-size: 14px; }
+        .btn-gold { background: #f59e0b; color: #000; }
+        .btn-red { background: #da3633; color: #fff; }
+        .btn-small { padding: 8px; width: auto; flex: 1; font-size: 12px; }
+        .row { display: flex; gap: 5px; }
+        .badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; margin-left: 5px; }
+        .badge-merch { background: #f59e0b; color: #000; }
+        .badge-logist { background: #238636; color: #fff; }
+    </style>
+</head>
+<body>
+    <div style="margin-bottom:20px; font-weight:900; font-size: 18px;">📦 ПАНЕЛЬ УПРАВЛЕНИЯ</div>
+    <div class="card">
+        <b style="font-size: 16px; display: block; margin-bottom: 10px;">ДОБАВИТЬ ОБЪЕКТ / КАТЕГОРИЮ</b>
+        <input id="n" placeholder="Название (например: Соки или Бакалея)">
+        <input id="l" type="number" value="5" placeholder="Лимит человек">
+        <select id="t"><option value="logist">Логист</option><option value="merch">Мерч</option></select>
+        <button class="btn btn-gold" onclick="add()">СОЗДАТЬ КЛЮЧ</button>
+    </div>
+    <div id="list"></div>
+    <script>
+        async function load(){
+            const r = await fetch('/api/keys');
+            const keys = await r.json();
+            document.getElementById('list').innerHTML = keys.map(k => {
+                const isExp = new Date(k.expiry) < new Date();
+                const typeClass = k.type === 'merch' ? 'type-merch' : 'type-logist';
+                return \`<div class="card \${typeClass} \${isExp ? 'expired' : ''}">
+                    <div class="gold-text" style="font-weight:900">\${k.key} <span class="badge badge-\${k.type || 'logist'}">\${k.type || 'logist'}</span></div>
+                    <div style="margin:8px 0; font-size: 15px; font-weight: 600;">\${k.name}</div>
+                    <div style="font-size:13px; opacity:0.8">
+                        Лимит: <input type="number" value="\${k.limit}" style="width:50px; border:none; background:transparent; color:#f59e0b; font-weight:700; padding:0; margin:0;" onchange="updLimit('\${k.key}', this.value)">
+                        | До: \${new Date(k.expiry).toLocaleDateString()} \${isExp ? '❌' : '✅'}
+                    </div>
+                    <div style="background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; font-size:12px; margin:10px 0; color:#8b949e">
+                        \${k.workers && k.workers.length ? k.workers.join(', ') : 'НЕТ АКТИВНЫХ ПОЛЬЗОВАТЕЛЕЙ'}
+                    </div>
+                    <div class="row">
+                        <button class="btn btn-gold btn-small" onclick="ext('\${k.key}', 30)">+30д</button>
+                        <button class="btn btn-gold btn-small" onclick="ext('\${k.key}', 90)">+90д</button>
+                        <button class="btn btn-gold btn-small" onclick="ext('\${k.key}', 180)">+180д</button>
+                    </div>
+                    <button class="btn btn-red btn-small" style="width:100%; margin-top:10px; opacity:0.5" onclick="del('\${k.key}')">УДАЛИТЬ КЛЮЧ</button>
+                </div>\`;
+            }).join('');
+        }
+        async function add(){
+            const n = document.getElementById('n').value;
+            const l = document.getElementById('l').value;
+            const t = document.getElementById('t').value;
+            if(!n) return alert('Введите имя');
+            await fetch('/api/keys/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,limit:l,days:30,type:t})});
+            load();
+        }
+        async function ext(key, days){
+            await fetch('/api/keys/extend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key, days})});
+            load();
+        }
+        async function updLimit(key, limit){
+            await fetch('/api/keys/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key, limit})});
+        }
+        async function del(key){
+            if(confirm('Удалить?')){
+                await fetch('/api/keys/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});
+                load();
+            }
+        }
+        load();
+    </script>
+</body>
+</html>`);
 });
 
+// --- ТВОЙ КАБИНЕТ КЛИЕНТА (ДИЗАЙН СОХРАНЕН) ---
 app.get('/client-dashboard', (req, res) => {
-    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>КАБИНЕТ</title></head><body>Личный кабинет загружается...</body></html>`);
+    res.send(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>КАБИНЕТ | LOGIST_X</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        body { background: radial-gradient(circle at top right, #1a1c2c, #010409); color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; min-height: 100vh; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        .logo-box { background: #f59e0b; color: #000; padding: 5px 10px; border-radius: 8px; font-weight: 800; font-size: 18px; }
+        .card { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 24px; padding: 25px; margin-bottom: 20px; position: relative; overflow: hidden; }
+        .card::before { content: ""; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: #f59e0b; }
+        .obj-name { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 5px; }
+        .status-badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 700; text-transform: uppercase; background: rgba(245, 158, 11, 0.1); color: #f59e0b; margin-bottom: 15px; }
+        .stats { display: flex; justify-content: space-between; margin-bottom: 20px; }
+        .stat-item { text-align: center; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 12px; flex: 1; margin: 0 4px; }
+        .stat-val { display: block; font-weight: 800; font-size: 16px; color: #f59e0b; }
+        .stat-lbl { font-size: 9px; opacity: 0.5; text-transform: uppercase; }
+        .warning-box { background: rgba(218, 54, 51, 0.1); border: 1px dashed #da3633; color: #ff7b72; padding: 12px; border-radius: 12px; font-size: 11px; margin-bottom: 20px; text-align: center; line-height: 1.4; }
+        .workers-box { background: rgba(0,0,0,0.2); border-radius: 16px; padding: 10px; margin-bottom: 20px; }
+        .worker-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .folder-btn { text-decoration: none; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 6px 12px; border-radius: 8px; font-size: 11px; font-weight: 800; transition: 0.2s; border: 1px solid rgba(245,158,11,0.2); cursor: pointer; }
+        .grid-prices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+        .price-card { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); text-align: center; cursor: pointer; transition: 0.3s; }
+        .price-card:hover { border-color: #f59e0b; background: rgba(245,158,11,0.05); }
+        .sale-tag { font-size: 8px; background: #da3633; color: #fff; padding: 2px 5px; border-radius: 4px; display: inline-block; margin-bottom: 4px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo-box">LOGIST X</div>
+        <div style="font-size: 12px; opacity: 0.6">ЛИЧНЫЙ КАБИНЕТ</div>
+    </div>
+    <div id="root"></div>
+    <script>
+        function openExternal(url) {
+            const absoluteUrl = url.startsWith('http') ? url : window.location.origin + url;
+            const a = document.createElement('a');
+            a.href = absoluteUrl;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.click();
+        }
+        async function load(){
+            const params = new URLSearchParams(window.location.search);
+            const r = await fetch('/api/client-keys?chatId=' + params.get('chatId'));
+            const keys = await r.json();
+            document.getElementById('root').innerHTML = keys.map(k => {
+                const days = Math.ceil((new Date(k.expiry) - new Date()) / (1000*60*60*24));
+                let workersList = [];
+                k.workers.forEach(w => {
+                    workersList.push(\`<div class="worker-item"><span class="worker-name">👤 \${w}</span><div onclick="openExternal('/api/open-folder?workerName=\${encodeURIComponent(w)}')" class="folder-btn">📂 ОТЧЕТЫ</div></div>\`);
+                });
+                for(let i = k.workers.length; i < k.limit; i++) {
+                    workersList.push(\`<div class="worker-item"><span style="font-size:13px; opacity:0.3; font-style:italic">⚪️ Свободное место</span></div>\`);
+                }
+                return \`
+                <div class="card">
+                    <div class="status-badge">\${days > 0 ? 'Доступ активен' : 'Срок истек'}</div>
+                    <div class="obj-name">\${k.name} (\${k.type || 'logist'})</div>
+                    <div style="font-size: 11px; opacity: 0.4; margin-bottom: 15px;">Ключ: \${k.key}</div>
+                    <div class="warning-box">⚠️ ФОТО-ОТЧЕТЫ И АРХИВЫ ХРАНЯТСЯ 60 ДНЕЙ.<br><b>СОХРАНЯЙТЕ ДАННЫЕ ВОВРЕМЯ!</b></div>
+                    <div class="stats">
+                        <div class="stat-item"><span class="stat-val">\${days > 0 ? days : 0}</span><span class="stat-lbl">Дней</span></div>
+                        <div class="stat-item"><span class="stat-val">\${k.workers.length}/\${k.limit}</span><span class="stat-lbl">Людей</span></div>
+                    </div>
+                    <div style="font-size: 11px; font-weight: 800; color: #8b949e; margin-bottom: 10px;">ОТЧЕТЫ СОТРУДНИКОВ:</div>
+                    <div class="workers-box">\${workersList.join('')}</div>
+                    <div style="font-size: 12px; font-weight: 700">💳 ПРОДЛИТЬ ЛИЦЕНЗИЮ (\${k.limit} чел.):</div>
+                    <div class="grid-prices">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}')">
+                            <div style="font-size:14px; font-weight:800">30 дн.</div>
+                            <div style="font-size:10px; color:#f59e0b">\${k.limit*1500}₽</div>
+                        </div>
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90,'\${k.type}')">
+                            <div class="sale-tag">-10%</div>
+                            <div style="font-size:14px; font-weight:800">90 дн.</div>
+                            <div style="font-size:10px; color:#f59e0b">\${k.limit*4050}₽</div>
+                        </div>
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',180,'\${k.type}')">
+                            <div class="sale-tag">-15%</div>
+                            <div style="font-size:14px; font-weight:800">180 дн.</div>
+                            <div style="font-size:10px; color:#f59e0b">\${k.limit*7650}₽</div>
+                        </div>
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',365,'\${k.type}')">
+                            <div class="sale-tag">+2 МЕС</div>
+                            <div style="font-size:14px; font-weight:800">1 ГОД</div>
+                            <div style="font-size:10px; color:#f59e0b">\${k.limit*15000}₽</div>
+                        </div>
+                    </div>
+                </div>\`;
+            }).join('');
+        }
+        async function req(key, name, days, type){
+            const cid = new URLSearchParams(window.location.search).get('chatId');
+            const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days,chatId:cid,type})});
+            const res = await r.json();
+            if(res.success && res.payUrl) window.location.href = res.payUrl;
+            else alert('Ошибка платежа');
+        }
+        load();
+    </script>
+</body>
+</html>`);
 });
 
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
-    if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ПУЛЬТ', { reply_markup: { inline_keyboard: [[{ text: "📦 ОБЪЕКТЫ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
-    const keys = await readDatabase(); 
-    const ck = keys.find(k => String(k.ownerChatId) === String(cid));
-    if (ck) return ctx.reply('🏢 КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
-    ctx.reply('👋 Logist X!', { reply_markup: { inline_keyboard: [[{ text: "💳 КУПИТЬ", callback_data: "buy_new" }], [{ text: "🔑 КЛЮЧ", callback_data: "have_key" }]] } });
+    if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ПУЛЬТ УПРАВЛЕНИЯ', { reply_markup: { inline_keyboard: [[{ text: "📦 ОБЪЕКТЫ / КЛЮЧИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
+    const keys = await readDatabase(); const ck = keys.find(k => String(k.ownerChatId) === String(cid));
+    if (ck) return ctx.reply('🏢 ВАШ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
+    ctx.reply(`👋 **Добро пожаловать в Logist X!**`, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [
+            [{ text: "💳 КУПИТЬ НОВЫЙ ДОСТУП", callback_data: "buy_new" }],
+            [{ text: "🔑 У МЕНЯ ЕСТЬ КЛЮЧ", callback_data: "have_key" }]
+        ]}
+    });
 });
 
 bot.action('buy_new', (ctx) => {
     userSteps[ctx.chat.id] = { step: 'type' };
-    ctx.reply("Тип проекта:", { inline_keyboard: [[{ text: "📦 ЛОГИСТ", callback_data: "set_type_logist" }, { text: "🛒 МЕРЧ", callback_data: "set_type_merch" }]] });
+    ctx.reply("Выберите тип проекта:", {
+        reply_markup: { inline_keyboard: [
+            [{ text: "📦 ЛОГИСТ X", callback_data: "set_type_logist" }],
+            [{ text: "🛒 МЕРЧЕНДАЙЗИНГ", callback_data: "set_type_merch" }]
+        ]}
+    });
+});
+
+bot.action(/set_type_(.+)/, (ctx) => {
+    const type = ctx.match[1];
+    userSteps[ctx.chat.id] = { type, step: 'name' };
+    ctx.reply("Введите название или категорию (например: Соки):");
+});
+
+bot.action('have_key', (ctx) => {
+    ctx.reply("Введите ваш 8-значный ключ активации:");
 });
 
 bot.on('text', async (ctx) => {
-    const cid = ctx.chat.id; const txt = ctx.message.text.trim();
+    const cid = ctx.chat.id; if (cid === MY_TELEGRAM_ID) return; 
+    const txt = ctx.message.text.trim();
+    const step = userSteps[cid];
+
+    if (step && step.step === 'name') {
+        step.name = txt; step.step = 'limit';
+        return ctx.reply("Сколько сотрудников будет работать? (введите число)");
+    }
+    if (step && step.step === 'limit') {
+        const limit = parseInt(txt); if(isNaN(limit)) return ctx.reply("Введите число!");
+        const r = await fetch(SERVER_URL + '/api/notify-admin', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ key: "NEW_USER", name: step.name, days: 30, limit, chatId: cid, type: step.type })
+        });
+        const res = await r.json();
+        ctx.reply(`💳 К оплате за ${limit} чел.: ${limit * 1500}₽`, {
+            reply_markup: { inline_keyboard: [[{ text: "ОПЛАТИТЬ", url: res.payUrl }]] }
+        });
+        delete userSteps[cid]; return;
+    }
+
     const key = txt.toUpperCase(); let keys = await readDatabase(); 
     const idx = keys.findIndex(k => k.key === key);
     if (idx !== -1) { 
+        if(keys[idx].ownerChatId && keys[idx].ownerChatId !== cid) return ctx.reply('Этот ключ уже активирован.'); 
         keys[idx].ownerChatId = cid; await saveDatabase(keys); 
-        ctx.reply('✅ АКТИВИРОВАНО');
-    }
+        ctx.reply('✅ КЛЮЧ АКТИВИРОВАН!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
+    } else if (!step) ctx.reply('❌ Ключ не найден.');
 });
 
-bot.launch();
+bot.launch().then(() => console.log("READY"));
 app.listen(process.env.PORT || 3000);
