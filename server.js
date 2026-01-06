@@ -5,6 +5,8 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const { Readable } = require('stream');
 const crypto = require('crypto');
+
+// Подключаем fetch для работы с картами (Geocoding)
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const app = express();
@@ -18,8 +20,8 @@ const MERCH_ROOT_ID = '1CuCMuvL3-tUDoE8UtlJyWRyqSjS3Za9p';
 const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
 const PLANOGRAM_DB_NAME = 'planograms_db.json'; 
-const BARCODE_DB_NAME = 'barcodes_db.json';
-const SHOP_ITEMS_DB = 'shop_items_db.json'; 
+const BARCODE_DB_NAME = 'barcodes_db.json'; 
+const SHOP_ITEMS_DB = 'shop_items_db.json'; // База товаров в магазинах
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
@@ -53,17 +55,23 @@ function getDistance(lat1, lon1, lat2, lon2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// НОВЫЙ РОУТ ДЛЯ ГЕОКОДИРОВАНИЯ (ПОИСК МАГАЗИНА НА КАРТЕ)
+// НОВЫЙ РОУТ: Поиск координат по адресу (Nominatim OpenStreetMap)
 app.get('/get-coords', async (req, res) => {
     try {
         const { addr } = req.query;
+        // Запрос к бесплатному API карт
         const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}&limit=1`;
-        const response = await fetch(url, { headers: { 'User-Agent': 'LogistX_Agent' } });
+        const response = await fetch(url, { headers: { 'User-Agent': 'LogistX_App_Server' } });
         const data = await response.json();
+        
         if (data && data.length > 0) {
             res.json({ lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) });
-        } else { res.status(404).json({ error: "Адрес не найден на карте" }); }
-    } catch (e) { res.status(500).json({ error: e.message }); }
+        } else {
+            res.status(404).json({ error: "Адрес не найден" });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 async function getOrCreateFolder(rawName, parentId) {
@@ -108,7 +116,8 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// Функции для работы с JSON файлами в папке клиента на Drive
+// --- УНИВЕРСАЛЬНЫЕ ФУНКЦИИ ЧТЕНИЯ/ЗАПИСИ (ЧТОБЫ НЕ ДУБЛИРОВАТЬ КОД, НО СОХРАНИТЬ ФУНКЦИОНАЛ) ---
+
 async function readJsonFromDrive(folderId, fileName) {
     try {
         const q = `name = '${fileName}' and '${folderId}' in parents and trashed = false`;
@@ -126,13 +135,21 @@ async function saveJsonToDrive(folderId, fileName, data) {
         const media = { mimeType: 'application/json', body: JSON.stringify(data, null, 2) };
         if (res.data.files.length > 0) { await drive.files.update({ fileId: res.data.files[0].id, media }); } 
         else { await drive.files.create({ resource: { name: fileName, parents: [folderId] }, media }); }
-    } catch (e) { console.error("Save Error:", e); }
+    } catch (e) { console.error("Save JSON Error:", e); }
 }
 
+// БД Штрих-кодов
 async function readBarcodeDb(clientFolderId) { return await readJsonFromDrive(clientFolderId, BARCODE_DB_NAME); }
 async function saveBarcodeDb(clientFolderId, data) { return await saveJsonToDrive(clientFolderId, BARCODE_DB_NAME, data); }
+
+// БД Планограмм
 async function readPlanogramDb(clientFolderId) { return await readJsonFromDrive(clientFolderId, PLANOGRAM_DB_NAME); }
 async function savePlanogramDb(clientFolderId, data) { return await saveJsonToDrive(clientFolderId, PLANOGRAM_DB_NAME, data); }
+
+// БД Товаров на точках (НОВОЕ)
+async function readShopItemsDb(clientFolderId) { return await readJsonFromDrive(clientFolderId, SHOP_ITEMS_DB); }
+async function saveShopItemsDb(clientFolderId, data) { return await saveJsonToDrive(clientFolderId, SHOP_ITEMS_DB, data); }
+
 
 // --- ОТЧЕТЫ ---
 
@@ -195,7 +212,9 @@ app.get('/get-planogram', async (req, res) => {
         const search = await drive.files.list({ q, fields: 'files(id, webViewLink, webContentLink)' });
         if (search.data.files.length > 0) {
             res.json({ exists: true, url: search.data.files[0].webContentLink || search.data.files[0].webViewLink });
-        } else { res.json({ exists: false }); }
+        } else {
+            res.json({ exists: false });
+        }
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -226,12 +245,12 @@ app.post('/upload-planogram', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// --- РОУТЫ ДЛЯ МЕРЧА (КАТАЛОГ И ОСТАТКИ) ---
+// --- РОУТЫ ДЛЯ ШТРИХ-КОДОВ И ТОВАРОВ ---
 
 app.get('/get-catalog', async (req, res) => {
     try {
         const { key } = req.query;
-        const keys = await readDatabase();
+        let keys = await readDatabase();
         const kData = keys.find(k => k.key === key);
         if (!kData || !kData.folderId) return res.json({});
         const catalog = await readBarcodeDb(kData.folderId);
@@ -242,12 +261,34 @@ app.get('/get-catalog', async (req, res) => {
 app.get('/get-shop-stock', async (req, res) => {
     try {
         const { key, addr } = req.query;
-        const keys = await readDatabase();
+        let keys = await readDatabase();
         const kData = keys.find(k => k.key === key);
         if (!kData || !kData.folderId) return res.json([]);
-        const shopDb = await readJsonFromDrive(kData.folderId, SHOP_ITEMS_DB);
+        const shopDb = await readShopItemsDb(kData.folderId);
         res.json(shopDb[addr] || []);
     } catch (e) { res.json([]); }
+});
+
+app.get('/check-barcode', async (req, res) => {
+    try {
+        const { code, licenseKey } = req.query;
+        let keys = await readDatabase();
+        const kIdx = keys.findIndex(k => k.key === licenseKey);
+        if (kIdx === -1) return res.json({ exists: false });
+
+        if (!keys[kIdx].folderId) {
+            const projectRoot = (keys[kIdx].type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
+            keys[kIdx].folderId = await getOrCreateFolder(keys[kIdx].name, projectRoot);
+            await saveDatabase(keys);
+        }
+
+        const barcodeDb = await readBarcodeDb(keys[kIdx].folderId);
+        if (barcodeDb[code]) {
+            res.json({ exists: true, name: barcodeDb[code].name || barcodeDb[code] });
+        } else {
+            res.json({ exists: false });
+        }
+    } catch (e) { res.json({ exists: false }); }
 });
 
 app.post('/save-product', async (req, res) => {
@@ -256,6 +297,13 @@ app.post('/save-product', async (req, res) => {
         let keys = await readDatabase();
         const kIdx = keys.findIndex(k => k.key === key);
         if (kIdx === -1) return res.status(403).send("Forbidden");
+
+        if (!keys[kIdx].folderId) {
+            const projectRoot = (keys[kIdx].type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
+            keys[kIdx].folderId = await getOrCreateFolder(keys[kIdx].name, projectRoot);
+            await saveDatabase(keys);
+        }
+
         const barcodeDb = await readBarcodeDb(keys[kIdx].folderId);
         barcodeDb[barcode] = { name: name, date: new Date().toISOString() };
         await saveBarcodeDb(keys[kIdx].folderId, barcodeDb);
@@ -263,35 +311,60 @@ app.post('/save-product', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// --- ГЛАВНЫЕ РОУТЫ ЗАГРУЗКИ ---
-
-app.post('/merch-upload', async (req, res) => {
+app.post('/save-barcode', async (req, res) => {
     try {
-        const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon, city, items, key } = req.body;
-        const keys = await readDatabase();
-        const kData = keys.find(k => k.key === key) || keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
-        
-        if (kData && kData.folderId && items) {
-            const shopDb = await readJsonFromDrive(kData.folderId, SHOP_ITEMS_DB);
-            shopDb[address] = items.map(i => ({ bc: i.bc, name: i.name }));
-            await saveJsonToDrive(kData.folderId, SHOP_ITEMS_DB, shopDb);
+        const { code, name, licenseKey } = req.body;
+        let keys = await readDatabase();
+        const kIdx = keys.findIndex(k => k.key === licenseKey);
+        if (kIdx === -1) return res.status(403).send("Forbidden");
+
+        if (!keys[kIdx].folderId) {
+            const projectRoot = (keys[kIdx].type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
+            keys[kIdx].folderId = await getOrCreateFolder(keys[kIdx].name, projectRoot);
+            await saveDatabase(keys);
         }
 
-        const oId = kData.folderId || await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
-        const wId = await getOrCreateFolder(worker, oId);
-        const cityId = await getOrCreateFolder(city || "Без города", wId);
-        const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
-        let pUrl = "Нет файла";
-        if (pdf) {
-            const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
-            const buf = Buffer.from(base64Data, 'base64');
-            const f = await drive.files.create({ resource: { name: `ОТЧЕТ_${address}.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
-            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
-            pUrl = f.data.webViewLink;
+        const barcodeDb = await readBarcodeDb(keys[kIdx].folderId);
+        barcodeDb[code] = { name: name, date: new Date().toISOString() };
+        await saveBarcodeDb(keys[kIdx].folderId, barcodeDb);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- УПРАВЛЕНИЕ ---
+
+app.get('/api/open-folder', async (req, res) => {
+    try {
+        const { workerName } = req.query;
+        const qWorker = `name = '${workerName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const resWorker = await drive.files.list({ q: qWorker, fields: 'files(id, webViewLink)', orderBy: 'createdTime desc' });
+        if (resWorker.data.files.length > 0) {
+            res.setHeader('Content-Type', 'text/html');
+            res.send(`<html><script>window.location.href="${resWorker.data.files[0].webViewLink}";</script></html>`);
+        } else {
+            res.send(`Папка сотрудника ${workerName} еще не создана. Отправьте первый отчет.`);
         }
-        await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
-        res.json({ success: true, url: pUrl });
-    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    } catch (e) { res.send("Ошибка поиска: " + e.message); }
+});
+
+app.post('/check-license', async (req, res) => {
+    const { licenseKey, workerName } = req.body;
+    const keys = await readDatabase();
+    const kData = keys.find(k => k.key === licenseKey);
+    if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
+    if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
+    const pType = kData.type || 'logist';
+    if (kData.folderId) { 
+        await readPlanogramDb(kData.folderId); 
+        await readBarcodeDb(kData.folderId); 
+    }
+    if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry, type: pType });
+    if (!kData.workers) kData.workers = [];
+    if (!kData.workers.includes(workerName)) {
+        if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест исчерпан' });
+        kData.workers.push(workerName); await saveDatabase(keys);
+    }
+    res.json({ status: 'active', expiry: kData.expiry, type: pType });
 });
 
 app.post('/upload', async (req, res) => {
@@ -327,40 +400,34 @@ app.post('/upload', async (req, res) => {
     } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// --- УПРАВЛЕНИЕ И АДМИНКА ---
-
-app.get('/api/open-folder', async (req, res) => {
+app.post('/merch-upload', async (req, res) => {
     try {
-        const { workerName } = req.query;
-        const qWorker = `name = '${workerName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-        const resWorker = await drive.files.list({ q: qWorker, fields: 'files(id, webViewLink)', orderBy: 'createdTime desc' });
-        if (resWorker.data.files.length > 0) {
-            res.setHeader('Content-Type', 'text/html');
-            res.send(`<html><script>window.location.href="${resWorker.data.files[0].webViewLink}";</script></html>`);
-        } else {
-            res.send(`Папка сотрудника ${workerName} еще не создана. Отправьте первый отчет.`);
+        const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon, city, items, key } = req.body;
+        const keys = await readDatabase();
+        const kData = keys.find(k => k.key === key) || keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
+        
+        // СОХРАНЕНИЕ АССОРТИМЕНТА ДЛЯ КОЛЛЕГ
+        if (kData && kData.folderId && items) {
+            const shopDb = await readShopItemsDb(kData.folderId);
+            shopDb[address] = items.map(i => ({ bc: i.bc, name: i.name }));
+            await saveShopItemsDb(kData.folderId, shopDb);
         }
-    } catch (e) { res.send("Ошибка поиска: " + e.message); }
-});
 
-app.post('/check-license', async (req, res) => {
-    const { licenseKey, workerName } = req.body;
-    const keys = await readDatabase();
-    const kData = keys.find(k => k.key === licenseKey);
-    if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
-    if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
-    const pType = kData.type || 'logist';
-    if (kData.folderId) { 
-        await readPlanogramDb(kData.folderId); 
-        await readBarcodeDb(kData.folderId); 
-    }
-    if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry, type: pType });
-    if (!kData.workers) kData.workers = [];
-    if (!kData.workers.includes(workerName)) {
-        if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест исчерпан' });
-        kData.workers.push(workerName); await saveDatabase(keys);
-    }
-    res.json({ status: 'active', expiry: kData.expiry, type: pType });
+        const oId = kData.folderId || await getOrCreateFolder(kData ? kData.name : "Merch_Users", MERCH_ROOT_ID);
+        const wId = await getOrCreateFolder(worker, oId);
+        const cityId = await getOrCreateFolder(city || "Без города", wId);
+        const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
+        let pUrl = "Нет файла";
+        if (pdf) {
+            const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
+            const buf = Buffer.from(base64Data, 'base64');
+            const f = await drive.files.create({ resource: { name: `ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
+            await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
+            pUrl = f.data.webViewLink;
+        }
+        await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
+        res.json({ success: true, url: pUrl });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
@@ -402,14 +469,17 @@ app.post('/api/keys/delete', async (req, res) => {
     await saveDatabase(keys); res.json({ success: true });
 });
 
+// --- ОПЛАТА С 4-МЯ ВАРИАНТАМИ СРОКОВ ---
 app.post('/api/notify-admin', async (req, res) => {
     const { key, name, days, chatId, limit, type } = req.body;
     const keys = await readDatabase();
     const kData = keys.find(k => k.key === key) || { limit: limit || 1 };
+    
     let price = kData.limit * 1500;
-    if (days == 90) price = kData.limit * 4050;
-    if (days == 180) price = kData.limit * 7650;
-    if (days == 365) price = kData.limit * 15000;
+    if (days == 90) price = kData.limit * 4050; // -10%
+    if (days == 180) price = kData.limit * 7650; // -15%
+    if (days == 365) price = kData.limit * 15000; // -20%
+
     const invId = Math.floor(Date.now() / 1000);
     const desc = `License ${name}`;
     const sign = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${key}:Shp_limit=${kData.limit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
@@ -601,6 +671,16 @@ app.get('/client-dashboard', (req, res) => {
                             <div class="sale-tag">-10%</div>
                             <div style="font-size:14px; font-weight:800">90 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*4050}₽</div>
+                        </div>
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',180,'\${k.type}')">
+                            <div class="sale-tag">-15%</div>
+                            <div style="font-size:14px; font-weight:800">180 дн.</div>
+                            <div style="font-size:10px; color:#f59e0b">\${k.limit*7650}₽</div>
+                        </div>
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',365,'\${k.type}')">
+                            <div class="sale-tag">-20%</div>
+                            <div style="font-size:14px; font-weight:800">365 дн.</div>
+                            <div style="font-size:10px; color:#f59e0b">\${k.limit*15000}₽</div>
                         </div>
                     </div>
                 </div>\`;
