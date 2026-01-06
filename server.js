@@ -5,6 +5,7 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const { Readable } = require('stream');
 const crypto = require('crypto');
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const app = express();
 app.use(cors());
@@ -18,7 +19,7 @@ const BOT_TOKEN = '8295294099:AAGw16RvHpQyClz-f_LGGdJvQtu4ePG6-lg';
 const DB_FILE_NAME = 'keys_database.json';
 const PLANOGRAM_DB_NAME = 'planograms_db.json'; 
 const BARCODE_DB_NAME = 'barcodes_db.json';
-const SHOP_ITEMS_DB = 'shop_items_db.json'; // Память товаров на точках
+const SHOP_ITEMS_DB = 'shop_items_db.json'; 
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
 const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
@@ -51,6 +52,19 @@ function getDistance(lat1, lon1, lat2, lon2) {
     const a = Math.sin(df/2) * Math.sin(df/2) + Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dl/2) * Math.sin(dl/2);
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
+
+// НОВЫЙ РОУТ ДЛЯ ГЕОКОДИРОВАНИЯ (ПОИСК МАГАЗИНА НА КАРТЕ)
+app.get('/get-coords', async (req, res) => {
+    try {
+        const { addr } = req.query;
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}&limit=1`;
+        const response = await fetch(url, { headers: { 'User-Agent': 'LogistX_Agent' } });
+        const data = await response.json();
+        if (data && data.length > 0) {
+            res.json({ lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) });
+        } else { res.status(404).json({ error: "Адрес не найден на карте" }); }
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 async function getOrCreateFolder(rawName, parentId) {
     try {
@@ -94,7 +108,7 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ДЛЯ ЧТЕНИЯ БД ИЗ DRIVE
+// Функции для работы с JSON файлами в папке клиента на Drive
 async function readJsonFromDrive(folderId, fileName) {
     try {
         const q = `name = '${fileName}' and '${folderId}' in parents and trashed = false`;
@@ -105,7 +119,6 @@ async function readJsonFromDrive(folderId, fileName) {
     } catch (e) { return {}; }
 }
 
-// УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ БД В DRIVE
 async function saveJsonToDrive(folderId, fileName, data) {
     try {
         const q = `name = '${fileName}' and '${folderId}' in parents and trashed = false`;
@@ -116,11 +129,8 @@ async function saveJsonToDrive(folderId, fileName, data) {
     } catch (e) { console.error("Save Error:", e); }
 }
 
-// ОРИГИНАЛЬНЫЕ ФУНКЦИИ ШТРИХ-КОДОВ
 async function readBarcodeDb(clientFolderId) { return await readJsonFromDrive(clientFolderId, BARCODE_DB_NAME); }
 async function saveBarcodeDb(clientFolderId, data) { return await saveJsonToDrive(clientFolderId, BARCODE_DB_NAME, data); }
-
-// ОРИГИНАЛЬНЫЕ ФУНКЦИИ ПЛАНОГРАММ
 async function readPlanogramDb(clientFolderId) { return await readJsonFromDrive(clientFolderId, PLANOGRAM_DB_NAME); }
 async function savePlanogramDb(clientFolderId, data) { return await saveJsonToDrive(clientFolderId, PLANOGRAM_DB_NAME, data); }
 
@@ -171,7 +181,52 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// --- РОУТЫ СИСТЕМЫ ---
+// --- РОУТЫ ДЛЯ ПЛАНОГРАММ ---
+
+app.get('/get-planogram', async (req, res) => {
+    try {
+        const { addr, key } = req.query;
+        const keys = await readDatabase();
+        const kData = keys.find(k => k.key === key);
+        if (!kData || !kData.folderId || kData.type !== 'merch') return res.json({ exists: false });
+        const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
+        const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
+        const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
+        const search = await drive.files.list({ q, fields: 'files(id, webViewLink, webContentLink)' });
+        if (search.data.files.length > 0) {
+            res.json({ exists: true, url: search.data.files[0].webContentLink || search.data.files[0].webViewLink });
+        } else { res.json({ exists: false }); }
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/upload-planogram', async (req, res) => {
+    try {
+        const { addr, image, key } = req.body;
+        const keys = await readDatabase();
+        const kData = keys.find(k => k.key === key);
+        if (!kData || !kData.folderId || kData.type !== 'merch') return res.status(403).json({ error: "Доступ запрещен" });
+        const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
+        const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
+        const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
+        const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
+        const existing = await drive.files.list({ q });
+        let fileId;
+        if (existing.data.files.length > 0) {
+            fileId = existing.data.files[0].id;
+            await drive.files.update({ fileId, media: { mimeType: 'image/jpeg', body: Readable.from(buf) } });
+        } else {
+            const f = await drive.files.create({ resource: { name: fileName, parents: [planFolderId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id' });
+            fileId = f.data.id;
+            await drive.permissions.create({ fileId: fileId, resource: { role: 'reader', type: 'anyone' } });
+        }
+        const planDb = await readPlanogramDb(kData.folderId);
+        planDb[addr] = true;
+        await savePlanogramDb(kData.folderId, planDb);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- РОУТЫ ДЛЯ МЕРЧА (КАТАЛОГ И ОСТАТКИ) ---
 
 app.get('/get-catalog', async (req, res) => {
     try {
@@ -195,48 +250,12 @@ app.get('/get-shop-stock', async (req, res) => {
     } catch (e) { res.json([]); }
 });
 
-app.get('/get-planogram', async (req, res) => {
-    try {
-        const { addr, key } = req.query;
-        const keys = await readDatabase();
-        const kData = keys.find(k => k.key === key);
-        if (!kData || !kData.folderId || kData.type !== 'merch') return res.json({ exists: false });
-        const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
-        const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
-        const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
-        const search = await drive.files.list({ q, fields: 'files(id, webViewLink, webContentLink)' });
-        if (search.data.files.length > 0) {
-            res.json({ exists: true, url: search.data.files[0].webContentLink || search.data.files[0].webViewLink });
-        } else res.json({ exists: false });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/upload-planogram', async (req, res) => {
-    try {
-        const { addr, image, key } = req.body;
-        const keys = await readDatabase();
-        const kData = keys.find(k => k.key === key);
-        if (!kData || !kData.folderId || kData.type !== 'merch') return res.status(403).json({ error: "Доступ запрещен" });
-        const planFolderId = await getOrCreatePlanogramFolder(kData.folderId);
-        const fileName = `${addr.replace(/[^а-яёa-z0-9]/gi, '_')}.jpg`;
-        const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-        const f = await drive.files.create({ resource: { name: fileName, parents: [planFolderId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id' });
-        await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/save-product', async (req, res) => { // Псевдоним для совместимости
+app.post('/save-product', async (req, res) => {
     try {
         const { barcode, name, key } = req.body;
         let keys = await readDatabase();
         const kIdx = keys.findIndex(k => k.key === key);
         if (kIdx === -1) return res.status(403).send("Forbidden");
-        if (!keys[kIdx].folderId) {
-            const projectRoot = (keys[kIdx].type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
-            keys[kIdx].folderId = await getOrCreateFolder(keys[kIdx].name, projectRoot);
-            await saveDatabase(keys);
-        }
         const barcodeDb = await readBarcodeDb(keys[kIdx].folderId);
         barcodeDb[barcode] = { name: name, date: new Date().toISOString() };
         await saveBarcodeDb(keys[kIdx].folderId, barcodeDb);
@@ -244,42 +263,8 @@ app.post('/save-product', async (req, res) => { // Псевдоним для с�
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/check-barcode', async (req, res) => {
-    try {
-        const { code, licenseKey } = req.query;
-        let keys = await readDatabase();
-        const kIdx = keys.findIndex(k => k.key === licenseKey);
-        if (kIdx === -1) return res.json({ exists: false });
-        if (!keys[kIdx].folderId) {
-            const projectRoot = (keys[kIdx].type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
-            keys[kIdx].folderId = await getOrCreateFolder(keys[kIdx].name, projectRoot);
-            await saveDatabase(keys);
-        }
-        const barcodeDb = await readBarcodeDb(keys[kIdx].folderId);
-        if (barcodeDb[code]) { res.json({ exists: true, name: barcodeDb[code].name || barcodeDb[code] }); } 
-        else { res.json({ exists: false }); }
-    } catch (e) { res.json({ exists: false }); }
-});
+// --- ГЛАВНЫЕ РОУТЫ ЗАГРУЗКИ ---
 
-app.post('/save-barcode', async (req, res) => {
-    try {
-        const { code, name, licenseKey } = req.body;
-        let keys = await readDatabase();
-        const kIdx = keys.findIndex(k => k.key === licenseKey);
-        if (kIdx === -1) return res.status(403).send("Forbidden");
-        if (!keys[kIdx].folderId) {
-            const projectRoot = (keys[kIdx].type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
-            keys[kIdx].folderId = await getOrCreateFolder(keys[kIdx].name, projectRoot);
-            await saveDatabase(keys);
-        }
-        const barcodeDb = await readBarcodeDb(keys[kIdx].folderId);
-        barcodeDb[code] = { name: name, date: new Date().toISOString() };
-        await saveBarcodeDb(keys[kIdx].folderId, barcodeDb);
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// МОДИФИЦИРОВАННЫЙ MERCH-UPLOAD (С ПАМЯТЬЮ ТОВАРОВ)
 app.post('/merch-upload', async (req, res) => {
     try {
         const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon, city, items, key } = req.body;
@@ -307,39 +292,6 @@ app.post('/merch-upload', async (req, res) => {
         await appendMerchToReport(wId, worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pUrl, startTime, endTime, duration, lat, lon);
         res.json({ success: true, url: pUrl });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
-});
-
-// --- ВСЁ ОСТАЛЬНОЕ: ТЕЛЕГРАМ, АДМИНКА, КАБИНЕТ (БЕЗ ИЗМЕНЕНИЙ) ---
-
-app.get('/api/open-folder', async (req, res) => {
-    try {
-        const { workerName } = req.query;
-        const qWorker = `name = '${workerName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-        const resWorker = await drive.files.list({ q: qWorker, fields: 'files(id, webViewLink)', orderBy: 'createdTime desc' });
-        if (resWorker.data.files.length > 0) {
-            res.setHeader('Content-Type', 'text/html');
-            res.send(`<html><script>window.location.href="${resWorker.data.files[0].webViewLink}";</script></html>`);
-        } else {
-            res.send(`Папка сотрудника ${workerName} еще не создана. Отправьте первый отчет.`);
-        }
-    } catch (e) { res.send("Ошибка поиска: " + e.message); }
-});
-
-app.post('/check-license', async (req, res) => {
-    const { licenseKey, workerName } = req.body;
-    const keys = await readDatabase();
-    const kData = keys.find(k => k.key === licenseKey);
-    if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
-    if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
-    const pType = kData.type || 'logist';
-    if (kData.folderId) { await readPlanogramDb(kData.folderId); await readBarcodeDb(kData.folderId); }
-    if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry, type: pType });
-    if (!kData.workers) kData.workers = [];
-    if (!kData.workers.includes(workerName)) {
-        if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест исчерпан' });
-        kData.workers.push(workerName); await saveDatabase(keys);
-    }
-    res.json({ status: 'active', expiry: kData.expiry, type: pType });
 });
 
 app.post('/upload', async (req, res) => {
@@ -373,6 +325,42 @@ app.post('/upload', async (req, res) => {
         await appendToReport(wId, curW, city, new Date().toISOString().split('T')[0], address, entrance, client, workType, price, lat, lon);
         res.json({ success: true });
     } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// --- УПРАВЛЕНИЕ И АДМИНКА ---
+
+app.get('/api/open-folder', async (req, res) => {
+    try {
+        const { workerName } = req.query;
+        const qWorker = `name = '${workerName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const resWorker = await drive.files.list({ q: qWorker, fields: 'files(id, webViewLink)', orderBy: 'createdTime desc' });
+        if (resWorker.data.files.length > 0) {
+            res.setHeader('Content-Type', 'text/html');
+            res.send(`<html><script>window.location.href="${resWorker.data.files[0].webViewLink}";</script></html>`);
+        } else {
+            res.send(`Папка сотрудника ${workerName} еще не создана. Отправьте первый отчет.`);
+        }
+    } catch (e) { res.send("Ошибка поиска: " + e.message); }
+});
+
+app.post('/check-license', async (req, res) => {
+    const { licenseKey, workerName } = req.body;
+    const keys = await readDatabase();
+    const kData = keys.find(k => k.key === licenseKey);
+    if (!kData) return res.json({ status: 'error', message: 'Ключ не найден' });
+    if (new Date(kData.expiry) < new Date()) return res.json({ status: 'error', message: 'Срок истёк' });
+    const pType = kData.type || 'logist';
+    if (kData.folderId) { 
+        await readPlanogramDb(kData.folderId); 
+        await readBarcodeDb(kData.folderId); 
+    }
+    if (licenseKey === 'DEV-MASTER-999') return res.json({ status: 'active', expiry: kData.expiry, type: pType });
+    if (!kData.workers) kData.workers = [];
+    if (!kData.workers.includes(workerName)) {
+        if (kData.workers.length >= parseInt(kData.limit)) return res.json({ status: 'error', message: 'Лимит мест исчерпан' });
+        kData.workers.push(workerName); await saveDatabase(keys);
+    }
+    res.json({ status: 'active', expiry: kData.expiry, type: pType });
 });
 
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
