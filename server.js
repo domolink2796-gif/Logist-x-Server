@@ -429,15 +429,22 @@ app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
 app.get('/api/client-keys', async (req, res) => {
     try { 
         const keys = await readDatabase(); 
-        const cid = req.query.chatId;
-        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Фильтруем ключи, чтобы показать ТОЛЬКО те, где ownerChatId совпадает с ID пользователя
-        // И исключаем временные метки WEBSITE_SALE
-        const myKeys = keys.filter(k => 
-            k.ownerChatId && 
-            String(k.ownerChatId) === String(cid) && 
-            k.ownerChatId !== 'WEBSITE_SALE'
-        );
-        res.json(myKeys); 
+        const { chatId, key } = req.query;
+        // Если зашли через бота по chatId
+        if (chatId && chatId !== 'null' && chatId !== 'undefined') {
+            const myKeys = keys.filter(k => 
+                k.ownerChatId && 
+                String(k.ownerChatId) === String(cid) && 
+                k.ownerChatId !== 'WEBSITE_SALE'
+            );
+            return res.json(myKeys);
+        }
+        // Если человек с сайта ввел ключ вручную
+        if (key) {
+            const found = keys.find(k => k.key === key.toUpperCase());
+            return res.json(found ? [found] : []);
+        }
+        res.json([]); 
     } catch (e) { res.json([]); }
 });
 
