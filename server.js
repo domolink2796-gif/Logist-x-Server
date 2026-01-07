@@ -29,8 +29,8 @@ const MAX_DISTANCE_METERS = 600;
 
 // --- НАСТРОЙКИ РОБОКАССЫ ---
 const ROBO_LOGIN = 'Logist_X'; 
-const ROBO_PASS1 = 'P_password1'; 
-const ROBO_PASS2 = 'P_password2'; 
+const ROBO_PASS1 = 'uWvrnYz8roL3a6RN1Ua3'; 
+const ROBO_PASS2 ='cke71a0ABJG3PpnCzuM7'; 
 const IS_TEST = 1; 
 
 const oauth2Client = new google.auth.OAuth2(
