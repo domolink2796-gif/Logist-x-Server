@@ -495,7 +495,7 @@ app.post('/api/notify-admin', async (req, res) => {
         const sign = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${displayKey}:Shp_limit=${finalLimit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
 
         // ССЫЛКА ВОЗВРАТА С КЛЮЧОМ
-        const returnUrl = encodeURIComponent(`https://logist-x.ru/?payment=success&key=${displayKey}`);
+        const returnUrl = encodeURIComponent(`https://logist-x.ru/success.html?key=${displayKey}`);
 
         const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${sign}&Shp_days=${days}&Shp_key=${displayKey}&Shp_chatId=${chatId}&Shp_limit=${finalLimit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}&SuccessURL=${returnUrl}`;
 
