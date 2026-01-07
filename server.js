@@ -432,9 +432,9 @@ app.get('/api/client-keys', async (req, res) => {
     try { 
         const keys = await readDatabase(); 
         const cid = req.query.chatId;
-        // Показываем ключи только если chatId совпадает с ownerChatId
-        const myKeys = keys.filter(k => String(k.ownerChatId) === String(cid)); 
-        res.json(myKeys); 
+        // Фильтруем ключи, чтобы показать только те, которые принадлежат этому chatId
+        const filtered = keys.filter(k => String(k.ownerChatId) === String(cid));
+        res.json(filtered); 
     } catch (e) { res.json([]); }
 });
 
@@ -472,7 +472,7 @@ app.post('/api/keys/delete', async (req, res) => {
     await saveDatabase(keys); res.json({ success: true });
 });
 
-// --- ОПЛАТА С ПРАВИЛЬНЫМИ ТАРИФАМИ ---
+// --- ОПЛАТА С 4-МЯ ВАРИАНТАМИ СРОКОВ ---
 app.post('/api/notify-admin', async (req, res) => {
     try {
         const { key, name, days, chatId, limit, type } = req.body;
@@ -486,7 +486,6 @@ app.post('/api/notify-admin', async (req, res) => {
         const foundInDb = keys.find(k => k.key === key);
         const finalLimit = foundInDb ? parseInt(foundInDb.limit) : (parseInt(limit) || 1);
 
-        // ТВОЯ ЛОГИКА ЦЕН
         let price = finalLimit * 1500;
         if (days == 90) price = finalLimit * 4050; 
         if (days == 180) price = finalLimit * 7650; 
@@ -495,13 +494,14 @@ app.post('/api/notify-admin', async (req, res) => {
         const invId = Math.floor(Date.now() / 1000);
         const desc = `Программа: ${type === 'merch' ? 'Merch X' : 'Logist X'}. Объект: ${name}. КЛЮЧ: ${displayKey}`;
         const sign = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${displayKey}:Shp_limit=${finalLimit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
-        
+
         const returnUrl = encodeURIComponent(`https://logist-x.ru/success.html?key=${displayKey}`);
         const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${sign}&Shp_days=${days}&Shp_key=${displayKey}&Shp_chatId=${chatId}&Shp_limit=${finalLimit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}&SuccessURL=${returnUrl}`;
 
         res.json({ success: true, payUrl });
     } catch (e) {
-        res.status(500).json({ success: false, error: "Ошибка на стороне сервера" });
+        console.error("ОШИБКА ОПЛАТЫ:", e);
+        res.status(500).json({ success: false });
     }
 });
 
@@ -625,7 +625,6 @@ app.get('/dashboard', (req, res) => {
 </html>`);
 });
 
-// --- ИСПРАВЛЕННЫЙ КАБИНЕТ КЛИЕНТА (4 ЦЕНЫ И ПОЛНАЯ БЕЗОПАСНОСТЬ) ---
 app.get('/client-dashboard', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="ru">
@@ -646,16 +645,29 @@ app.get('/client-dashboard', (req, res) => {
         .stat-item { text-align: center; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 12px; flex: 1; margin: 0 4px; }
         .stat-val { display: block; font-weight: 800; font-size: 16px; color: #f59e0b; }
         .stat-lbl { font-size: 9px; opacity: 0.5; text-transform: uppercase; }
+        .warning-box { background: rgba(218, 54, 51, 0.1); border: 1px dashed #da3633; color: #ff7b72; padding: 12px; border-radius: 12px; font-size: 11px; margin-bottom: 20px; text-align: center; line-height: 1.4; }
         .workers-box { background: rgba(0,0,0,0.2); border-radius: 16px; padding: 10px; margin-bottom: 20px; }
         .worker-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-        .folder-btn { text-decoration: none; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 6px 12px; border-radius: 8px; font-size: 11px; font-weight: 800; border: 1px solid rgba(245,158,11,0.2); cursor: pointer; }
+        .folder-btn { text-decoration: none; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 6px 12px; border-radius: 8px; font-size: 11px; font-weight: 800; transition: 0.2s; border: 1px solid rgba(245,158,11,0.2); cursor: pointer; }
         .grid-prices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
-        .price-card { background: rgba(0,0,0,0.3); padding: 12px 5px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); text-align: center; cursor: pointer; transition: 0.3s; }
+        .price-card { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); text-align: center; cursor: pointer; transition: 0.3s; }
         .price-card:hover { border-color: #f59e0b; background: rgba(245,158,11,0.05); }
         .sale-tag { font-size: 8px; background: #da3633; color: #fff; padding: 2px 5px; border-radius: 4px; display: inline-block; margin-bottom: 4px; }
+        
+        #success-modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.9); z-index: 9999; justify-content: center; align-items: center; padding: 20px; }
+        .modal-content { background: #000; color: #fff; padding: 30px; border-radius: 30px; max-width: 500px; width: 100%; text-align: center; border: 2px solid #f59e0b; }
     </style>
 </head>
 <body>
+    <div id="success-modal">
+        <div class="modal-content">
+            <h1 style="margin:0; font-size: 32px; color: #f59e0b;">💰 ОПЛАЧЕНО!</h1>
+            <p style="font-size: 16px; margin: 20px 0; opacity: 0.7;">ВАШ КЛЮЧ ДЛЯ ПРИЛОЖЕНИЯ:</p>
+            <div id="final-key" style="font-size: 32px; font-weight: 900; background: rgba(245,158,11,0.1); color: #f59e0b; padding: 20px; border-radius: 15px; border: 1px dashed #f59e0b; word-break: break-all;"></div>
+            <button onclick="document.getElementById('success-modal').style.display='none'" style="margin-top: 30px; width: 100%; padding: 15px; background: #f59e0b; color: #000; border: none; border-radius: 15px; font-weight: 900; cursor: pointer; text-transform: uppercase;">Я СОХРАНИЛ КЛЮЧ</button>
+        </div>
+    </div>
+
     <div class="header">
         <div class="logo-box">LOGIST X</div>
         <div style="font-size: 12px; opacity: 0.6">ЛИЧНЫЙ КАБИНЕТ</div>
@@ -663,75 +675,81 @@ app.get('/client-dashboard', (req, res) => {
     <div id="root"></div>
 
     <script>
+        function openExternal(url) {
+            const absoluteUrl = url.startsWith('http') ? url : window.location.origin + url;
+            const a = document.createElement('a');
+            a.href = absoluteUrl; a.target = '_blank'; a.rel = 'noopener noreferrer';
+            a.click();
+        }
+
         async function load(){
             const params = new URLSearchParams(window.location.search);
             const r = await fetch('/api/client-keys?chatId=' + params.get('chatId'));
             const keys = await r.json();
             
-            if(keys.length === 0) {
-                document.getElementById('root').innerHTML = '<div style="text-align:center; padding:50px; opacity:0.5;">У вас пока нет активных объектов.</div>';
-                return;
+            // Если пришли после оплаты - показываем окно
+            if(params.get('payment') === 'success' || params.get('status') === 'success') {
+                const modal = document.getElementById('success-modal');
+                const keyBox = document.getElementById('final-key');
+                if(modal && keyBox) {
+                    modal.style.display = 'flex';
+                    keyBox.innerText = params.get('key') || 'АКТИВИРОВАН';
+                }
             }
 
             document.getElementById('root').innerHTML = keys.map(k => {
-                const daysLeft = Math.ceil((new Date(k.expiry) - new Date()) / (1000*60*60*24));
+                const days = Math.ceil((new Date(k.expiry) - new Date()) / (1000*60*60*24));
                 let workersList = [];
                 k.workers.forEach(w => {
-                    workersList.push(\`<div class="worker-item"><span>👤 \${w}</span><div onclick="window.open('/api/open-folder?workerName=\${encodeURIComponent(w)}', '_blank')" class="folder-btn">📂 ОТЧЕТЫ</div></div>\`);
+                    workersList.push(\`<div class="worker-item"><span class="worker-name">👤 \${w}</span><div onclick="openExternal('/api/open-folder?workerName=\${encodeURIComponent(w)}')" class="folder-btn">📂 ОТЧЕТЫ</div></div>\`);
                 });
                 for(let i = k.workers.length; i < k.limit; i++) {
-                    workersList.push(\`<div class="worker-item"><span style="opacity:0.3; font-style:italic">⚪️ Свободное место</span></div>\`);
+                    workersList.push(\`<div class="worker-item"><span style="font-size:13px; opacity:0.3; font-style:italic">⚪️ Свободное место</span></div>\`);
                 }
-
                 return \`
                 <div class="card">
-                    <div class="status-badge">\${daysLeft > 0 ? 'Доступ активен' : 'Срок истек'}</div>
+                    <div class="status-badge">\${days > 0 ? 'Доступ активен' : 'Срок истек'}</div>
                     <div class="obj-name">\${k.name} (\${k.type || 'logist'})</div>
                     <div style="font-size: 11px; opacity: 0.4; margin-bottom: 15px;">Ключ: \${k.key}</div>
-                    
+                    <div class="warning-box">⚠️ ФОТО-ОТЧЕТЫ И АРХИВЫ ХРАНЯТСЯ 60 ДНЕЙ.</div>
                     <div class="stats">
-                        <div class="stat-item"><span class="stat-val">\${daysLeft > 0 ? daysLeft : 0}</span><span class="stat-lbl">Дней</span></div>
+                        <div class="stat-item"><span class="stat-val">\${days > 0 ? days : 0}</span><span class="stat-lbl">Дней</span></div>
                         <div class="stat-item"><span class="stat-val">\${k.workers.length}/\${k.limit}</span><span class="stat-lbl">Людей</span></div>
                     </div>
-
                     <div class="workers-box">\${workersList.join('')}</div>
-
-                    <div style="font-size:12px; font-weight:800; color:#f59e0b; margin-top:20px;">ПРОДЛИТЬ ЛИЦЕНЗИЮ:</div>
+                    
+                    <div style="font-size:12px; font-weight:800; color:#f59e0b; margin-top:15px;">ПРОДЛИТЬ ЛИЦЕНЗИЮ:</div>
                     <div class="grid-prices">
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}', \${k.limit})">
-                            <div style="font-size:13px; font-weight:800">30 дн.</div>
-                            <div style="font-size:11px; color:#f59e0b">\${k.limit*1500}₽</div>
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}')">
+                            <div style="font-size:14px; font-weight:800">30 дн.</div>
+                            <div style="font-size:10px; color:#f59e0b">\${k.limit*1500}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90,'\${k.type}', \${k.limit})">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90,'\${k.type}')">
                             <div class="sale-tag">-10%</div>
-                            <div style="font-size:13px; font-weight:800">90 дн.</div>
-                            <div style="font-size:11px; color:#f59e0b">\${k.limit*4050}₽</div>
+                            <div style="font-size:14px; font-weight:800">90 дн.</div>
+                            <div style="font-size:10px; color:#f59e0b">\${k.limit*4050}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',180,'\${k.type}', \${k.limit})">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',180,'\${k.type}')">
                             <div class="sale-tag">-15%</div>
-                            <div style="font-size:13px; font-weight:800">180 дн.</div>
-                            <div style="font-size:11px; color:#f59e0b">\${k.limit*7650}₽</div>
+                            <div style="font-size:14px; font-weight:800">180 дн.</div>
+                            <div style="font-size:10px; color:#f59e0b">\${k.limit*7650}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',365,'\${k.type}', \${k.limit})">
+                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',365,'\${k.type}')">
                             <div class="sale-tag">-20%</div>
-                            <div style="font-size:13px; font-weight:800">365 дн.</div>
-                            <div style="font-size:11px; color:#f59e0b">\${k.limit*15000}₽</div>
+                            <div style="font-size:14px; font-weight:800">365 дн.</div>
+                            <div style="font-size:10px; color:#f59e0b">\${k.limit*15000}₽</div>
                         </div>
                     </div>
                 </div>\`;
             }).join('');
         }
 
-        async function req(key, name, days, type, limit){
+        async function req(key, name, days, type){
             const cid = new URLSearchParams(window.location.search).get('chatId');
-            const r = await fetch('/api/notify-admin',{
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({key, name, days, chatId:cid, type, limit})
-            });
+            const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days,chatId:cid,type})});
             const res = await r.json();
             if(res.success && res.payUrl) window.location.href = res.payUrl;
-            else alert('Ошибка при формировании оплаты');
+            else alert('Ошибка платежа');
         }
         load();
     </script>
