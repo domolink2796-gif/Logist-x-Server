@@ -466,32 +466,46 @@ app.post('/api/keys/delete', async (req, res) => {
 
 // --- ОПЛАТА С 4-МЯ ВАРИАНТАМИ СРОКОВ ---
 app.post('/api/notify-admin', async (req, res) => {
-    const { key, name, days, chatId, limit, type } = req.body;
-    const keys = await readDatabase();
+    try {
+        const { key, name, days, chatId, limit, type } = req.body;
+        const keys = await readDatabase();
 
-    let displayKey = key;
-    if (key === "NEW_USER") {
-        displayKey = (type === 'merch' ? 'M-' : 'L-') + Math.random().toString(36).substring(2, 6).toUpperCase();
+        // Определяем ключ для отображения
+        let displayKey = key;
+        if (key === "NEW_USER") {
+            displayKey = (type === 'merch' ? 'M-' : 'L-') + Math.random().toString(36).substring(2, 6).toUpperCase();
+        }
+
+        // ПРАВИЛЬНЫЙ РАСЧЕТ ЛИМИТА (чтобы сервер не выдавал ошибку на новых юзеров)
+        const foundInDb = keys.find(k => k.key === key);
+        const finalLimit = foundInDb ? parseInt(foundInDb.limit) : (parseInt(limit) || 1);
+
+        // ТВОЯ ЛОГИКА ЦЕН (сохранена полностью)
+        let price = finalLimit * 1500;
+        if (days == 90) price = finalLimit * 4050; 
+        if (days == 180) price = finalLimit * 7650; 
+        if (days == 365) price = finalLimit * 15000; 
+
+        const invId = Math.floor(Date.now() / 1000);
+
+        // Описание для Робокассы
+        const desc = `Программа: ${type === 'merch' ? 'Merch X' : 'Logist X'}. Объект: ${name}. КЛЮЧ: ${displayKey}`;
+
+        // ТВОЯ ПОДПИСЬ (Signature)
+        const sign = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${displayKey}:Shp_limit=${finalLimit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
+
+        // ССЫЛКА ВОЗВРАТА С КЛЮЧОМ
+        const returnUrl = encodeURIComponent(`https://logist-x.ru/?payment=success&key=${displayKey}`);
+
+        const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${sign}&Shp_days=${days}&Shp_key=${displayKey}&Shp_chatId=${chatId}&Shp_limit=${finalLimit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}&SuccessURL=${returnUrl}`;
+
+        res.json({ success: true, payUrl });
+    } catch (e) {
+        console.error("ОШИБКА СЕРВЕРА В ОПЛАТЕ:", e);
+        res.status(500).json({ success: false, error: "Ошибка на стороне сервера" });
     }
-
-    const kData = keys.find(k => k.key === key) || { limit: limit || 1, key: displayKey };
-
-    let price = kData.limit * 1500;
-    if (days == 90) price = kData.limit * 4050; 
-    if (days == 180) price = kData.limit * 7650; 
-    if (days == 365) price = kData.limit * 15000; 
-
-    const invId = Math.floor(Date.now() / 1000);
-    const desc = `Программа: ${type === 'merch' ? 'Merch X' : 'Logist X'}. Объект: ${name}. КЛЮЧ: ${displayKey}`;
-    const sign = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${displayKey}:Shp_limit=${kData.limit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
-
-    // ПРАВИЛЬНЫЙ SuccessURL ДЛЯ ГЛАВНОЙ СТРАНИЦЫ И КАБИНЕТА
-    const returnUrl = encodeURIComponent(`https://logist-x.ru/?payment=success&key=${displayKey}`);
-
-    const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${sign}&Shp_days=${days}&Shp_key=${displayKey}&Shp_chatId=${chatId}&Shp_limit=${kData.limit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}&SuccessURL=${returnUrl}`;
-
-    res.json({ success: true, payUrl });
 });
+
 
 app.post('/api/payment-result', async (req, res) => {
     const { OutSum, InvId, SignatureValue, Shp_key, Shp_days, Shp_chatId, Shp_limit, Shp_name, Shp_type } = req.body;
