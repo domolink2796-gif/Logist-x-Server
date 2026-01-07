@@ -831,11 +831,24 @@ const fs = require('fs');
 const path = require('path');
 
 const pluginContext = { 
-    app, drive, google, sheets, bot, 
-    readDatabase, saveDatabase, getOrCreateFolder, 
-    readPlanogramDb, savePlanogramDb, readJsonFromDrive, saveJsonToDrive,
-    readBarcodeDb, saveBarcodeDb, readShopItemsDb, saveShopItemsDb,
-    MY_ROOT_ID, MERCH_ROOT_ID 
+    app, 
+    drive, 
+    google, 
+    sheets, 
+    bot, 
+    readDatabase, 
+    saveDatabase, 
+    getOrCreateFolder, 
+    readPlanogramDb, 
+    savePlanogramDb, 
+    readJsonFromDrive, 
+    saveJsonToDrive,
+    readBarcodeDb, 
+    saveBarcodeDb, 
+    readShopItemsDb, 
+    saveShopItemsDb,
+    MY_ROOT_ID, 
+    MERCH_ROOT_ID 
 };
 
 fs.readdirSync(__dirname).forEach(file => {
@@ -851,6 +864,7 @@ fs.readdirSync(__dirname).forEach(file => {
         }
     }
 });
+
 
 
 bot.launch().then(() => console.log("READY"));
