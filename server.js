@@ -826,6 +826,21 @@ bot.on('text', async (ctx) => {
         ctx.reply('✅ КЛЮЧ АКТИВИРОВАН!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
     } else ctx.reply('❌ Ключ не найден.');
 });
+const fs = require('fs');
+const path = require('path');
+const pluginContext = { 
+    drive, google, sheets, bot, readDatabase, saveDatabase, 
+    getOrCreateFolder, MY_ROOT_ID, MERCH_ROOT_ID, readJsonFromDrive, saveJsonToDrive 
+};
+
+fs.readdirSync(__dirname).forEach(file => {
+    if (file.startsWith('plugin-') && file.endsWith('.js')) {
+        try {
+            require(path.join(__dirname, file))(app, pluginContext);
+            console.log(`✅ Доп. модуль загружен: ${file}`);
+        } catch (e) { console.error(`❌ Ошибка в ${file}:`, e.message); }
+    }
+});
 
 bot.launch().then(() => console.log("READY"));
 app.listen(process.env.PORT || 3000);
