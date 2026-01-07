@@ -469,17 +469,32 @@ app.post('/api/keys/delete', async (req, res) => {
 app.post('/api/notify-admin', async (req, res) => {
     const { key, name, days, chatId, limit, type } = req.body;
     const keys = await readDatabase();
+
+    // Генерируем временный ключ, если это новая покупка, чтобы он попал в описание
+    let displayKey = key;
+    if (key === "NEW_USER") {
+        displayKey = (type === 'merch' ? 'M-' : 'L-') + Math.random().toString(36).substring(2, 6).toUpperCase();
+    }
+
     const kData = keys.find(k => k.key === key) || { limit: limit || 1 };
-    
+
     let price = kData.limit * 1500;
-    if (days == 90) price = kData.limit * 4050; // -10%
-    if (days == 180) price = kData.limit * 7650; // -15%
-    if (days == 365) price = kData.limit * 15000; // -20%
+    if (days == 90) price = kData.limit * 4050; 
+    if (days == 180) price = kData.limit * 7650; 
+    if (days == 365) price = kData.limit * 15000; 
 
     const invId = Math.floor(Date.now() / 1000);
-    const desc = `License ${name}`;
-    const sign = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${key}:Shp_limit=${kData.limit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
-    const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${sign}&Shp_days=${days}&Shp_key=${key}&Shp_chatId=${chatId}&Shp_limit=${kData.limit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}`;
+
+    // Это описание клиент увидит в письме от Робокассы
+    const desc = `Программа: ${type === 'merch' ? 'Merch X' : 'Logist X'}. Объект: ${name}. КЛЮЧ: ${displayKey}`;
+
+    const sign = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${displayKey}:Shp_limit=${kData.limit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
+
+    // SuccessURL заставляет Робокассу вернуть клиента именно на твой сервер Railway
+    const returnUrl = encodeURIComponent(`${SERVER_URL}/client-dashboard?chatId=${chatId}&status=success&key=${displayKey}`);
+
+    const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${sign}&Shp_days=${days}&Shp_key=${displayKey}&Shp_chatId=${chatId}&Shp_limit=${kData.limit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}&SuccessURL=${returnUrl}`;
+
     res.json({ success: true, payUrl });
 });
 
@@ -613,6 +628,22 @@ app.get('/client-dashboard', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>КАБИНЕТ | LOGIST_X</title>
     <style>
+        <style>
+        /* Добавь это в конец своего блока style */
+        #success-modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.9); z-index: 9999; justify-content: center; align-items: center; padding: 20px; }
+        .modal-content { background: #f59e0b; color: #000; padding: 30px; border-radius: 30px; max-width: 500px; width: 100%; text-align: center; border: 5px solid #fff; }
+    </style>
+</head>
+<body>
+    <div id="success-modal">
+        <div class="modal-content">
+            <h1 style="margin:0; font-size: 36px;">💰 ОПЛАЧЕНО!</h1>
+            <p style="font-size: 18px; font-weight: 800; margin: 20px 0;">ВАШ КЛЮЧ ДЛЯ ПРИЛОЖЕНИЯ:</p>
+            <div id="final-key" style="font-size: 35px; font-weight: 900; background: #000; color: #f59e0b; padding: 20px; border-radius: 15px; border: 3px solid #fff; word-break: break-all;"></div>
+            <button onclick="document.getElementById('success-modal').style.display='none'" style="margin-top: 20px; padding: 15px 30px; background: #000; color: #fff; border: none; border-radius: 10px; font-weight: 900; cursor: pointer;">Я СОХРАНИЛ КЛЮЧ</button>
+        </div>
+    </div>
+
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
         body { background: radial-gradient(circle at top right, #1a1c2c, #010409); color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; min-height: 100vh; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
@@ -696,6 +727,19 @@ app.get('/client-dashboard', (req, res) => {
                 </div>\`;
             }).join('');
         }
+               async function load(){
+            const params = new URLSearchParams(window.location.search);
+            // Если в ссылке есть статус успеха, показываем окно и вставляем ключ
+            if(params.get('status') === 'success') {
+                const modal = document.getElementById('success-modal');
+                const keyBox = document.getElementById('final-key');
+                if(modal && keyBox) {
+                    modal.style.display = 'flex';
+                    keyBox.innerText = params.get('key');
+                }
+            }
+            // --- Твой старый код функции load продолжается ниже ---
+ 
         async function req(key, name, days, type){
             const cid = new URLSearchParams(window.location.search).get('chatId');
             const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days,chatId:cid,type})});
