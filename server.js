@@ -648,7 +648,7 @@ app.get('/client-dashboard', (req, res) => {
             <div id="final-key" style="font-size: 40px; font-weight: 900; background: #000; color: #f59e0b; padding: 20px; border-radius: 15px; border: 3px solid #fff; word-break: break-all;"></div>
             <p style="color: #000; font-weight: 900; margin-top: 20px;">⚠️ ОБЯЗАТЕЛЬНО СОХРАНИТЕ КЛЮЧ!</p>
             <hr style="border: 1px solid #000; margin: 20px 0;">
-            <p style="font-size: 14px; font-weight: 700; color: #333;">👉 Если вы еще не в боте, введите этот ключ в Telegram-бот @${BOT_TOKEN.split(':')[0]} для регистрации.</p>
+            <p style="font-size: 14px; font-weight: 700; color: #333;">👉 Введите этот ключ в Телеграм-бот @LogistX_bot для регистрации.</p>
             <button onclick="document.getElementById('success-modal').style.display='none'" style="margin-top: 20px; padding: 15px 30px; background: #000; color: #fff; border: none; border-radius: 10px; font-weight: 900; cursor: pointer;">Я СОХРАНИЛ КЛЮЧ, ЗАКРЫТЬ</button>
         </div>
     </div>
@@ -657,11 +657,14 @@ app.get('/client-dashboard', (req, res) => {
     <div id="root"></div>
     <script>
         const params = new URLSearchParams(window.location.search);
-        // Проверка возврата после оплаты
-        if(window.location.href.includes('status=success') || params.get('status') === 'success' || (document.referrer.includes('robokassa') && params.get('InvId'))) {
-            const savedKey = params.get('key') || params.get('Shp_key') || 'ОБНОВЛЕНО';
-            document.getElementById('success-modal').style.display = 'flex';
-            document.getElementById('final-key').innerText = savedKey;
+        
+        // --- ЛОГИКА АВТОМАТИЧЕСКОГО ПОКАЗА КЛЮЧА ---
+        if(params.get('status') === 'success' || params.get('Shp_key')) {
+            const savedKey = params.get('key') || params.get('Shp_key');
+            if(savedKey) {
+                document.getElementById('success-modal').style.display = 'flex';
+                document.getElementById('final-key').innerText = savedKey;
+            }
         }
 
         async function load(){
@@ -685,8 +688,13 @@ app.get('/client-dashboard', (req, res) => {
             const cid = params.get('chatId');
             const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days,chatId:cid,type})});
             const res = await r.json();
-            // После оплаты Робокасса вернет сюда, добавив параметры
-            if(res.success && res.payUrl) window.location.href = res.payUrl;
+            
+            // --- ДОБАВЛЯЕМ URL ВОЗВРАТА ДЛЯ РОБОКАССЫ ---
+            if(res.success && res.payUrl) {
+                // Это заставит Робокассу после оплаты вернуть клиента на эту же страницу с ключом в ссылке
+                const returnUrl = encodeURIComponent(window.location.href + "&status=success&key=" + key);
+                window.location.href = res.payUrl + "&SuccessURL=" + returnUrl;
+            }
         }
         load();
     </script>
@@ -723,7 +731,10 @@ bot.on('text', async (ctx) => {
         const limit = parseInt(txt); if(isNaN(limit)) return ctx.reply("Число!");
         const r = await fetch(SERVER_URL + '/api/notify-admin', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ key: "NEW_USER", name: step.name, days: 30, limit, chatId: cid, type: step.type }) });
         const res = await r.json();
-        ctx.reply(`💳 К оплате: ${limit * 1500}₽`, { reply_markup: { inline_keyboard: [[{ text: "ОПЛАТИТЬ", url: res.payUrl }]] } });
+        
+        // --- ДЛЯ НОВОГО ПОЛЬЗОВАТЕЛЯ ТОЖЕ ДОБАВЛЯЕМ URL ВОЗВРАТА ---
+        const returnUrl = encodeURIComponent(SERVER_URL + "/client-dashboard?chatId=" + cid + "&status=success&key=НОВЫЙ_КЛЮЧ");
+        ctx.reply(`💳 К оплате: ${limit * 1500}₽`, { reply_markup: { inline_keyboard: [[{ text: "ОПЛАТИТЬ", url: res.payUrl + "&SuccessURL=" + returnUrl }]] } });
         delete userSteps[cid]; return;
     }
     const key = txt.toUpperCase(); let keys = await readDatabase(); 
