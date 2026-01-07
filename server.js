@@ -488,33 +488,41 @@ app.post('/api/payment-result', async (req, res) => {
     const mySign = crypto.createHash('md5').update(`${OutSum}:${InvId}:${ROBO_PASS2}:Shp_chatId=${Shp_chatId}:Shp_days=${Shp_days}:Shp_key=${Shp_key}:Shp_limit=${Shp_limit}:Shp_name=${Shp_name}:Shp_type=${Shp_type}`).digest('hex');
     if (SignatureValue.toLowerCase() === mySign.toLowerCase()) {
         let keys = await readDatabase();
+        let currentKey = Shp_key;
         let clientMsg = "";
 
         if (Shp_key === "NEW_USER") {
-            const newK = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
+            currentKey = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
             const exp = new Date(); exp.setDate(exp.getDate() + parseInt(Shp_days));
             const projR = (Shp_type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
             const fId = await getOrCreateFolder(Shp_name, projR);
-            keys.push({ key: newK, name: Shp_name, limit: parseInt(Shp_limit), expiry: exp.toISOString(), workers: [], ownerChatId: Shp_chatId, folderId: fId, type: Shp_type });
-            clientMsg = `🎉 Оплата успешна! Ваш ключ: ${newK}`;
+            keys.push({ key: currentKey, name: Shp_name, limit: parseInt(Shp_limit), expiry: exp.toISOString(), workers: [], ownerChatId: Shp_chatId, folderId: fId, type: Shp_type });
+            
+            // КРУПНОЕ СООБЩЕНИЕ ДЛЯ НОВОГО КЛЮЧА
+            clientMsg = `💸 **ОПЛАТА УСПЕШНА!**\n\n` +
+                        `📦 Проект: **${Shp_name}**\n` +
+                        `📅 Срок: **${Shp_days} дней**\n\n` +
+                        `🔑 **ВАШ КЛЮЧ ДОСТУПА:**\n` +
+                        `\`${currentKey}\`\n\n` +
+                        `⚠️ *Нажмите на ключ выше, чтобы скопировать его. Обязательно сохраните его для входа!*`;
         } else {
             const idx = keys.findIndex(k => k.key === Shp_key);
             if (idx !== -1) {
                 let d = new Date(keys[idx].expiry); if (d < new Date()) d = new Date();
                 d.setDate(d.getDate() + parseInt(Shp_days)); keys[idx].expiry = d.toISOString();
-                clientMsg = `✅ Лицензия продлена!`;
+                clientMsg = `✅ **ЛИЦЕНЗИЯ ПРОДЛЕНА!**\n\nОбъект: **${Shp_name}**\nНовый срок: до **${new Date(keys[idx].expiry).toLocaleDateString()}**`;
             }
         }
         await saveDatabase(keys); 
 
-        // БЕЗОПАСНАЯ ОТПРАВКА КЛИЕНТУ
+        // БЕЗОПАСНАЯ ОТПРАВКА КЛИЕНТУ (try/catch чтобы не падал сервер)
         if (Shp_chatId && Shp_chatId !== 'null' && Shp_chatId !== 'undefined') {
-            try { await bot.telegram.sendMessage(Shp_chatId, clientMsg); } catch(e) { console.log("Tg Client Send Error:", e.message); }
+            try { await bot.telegram.sendMessage(Shp_chatId, clientMsg, { parse_mode: 'Markdown' }); } catch(e) { console.log("Tg Client Send Error:", e.message); }
         }
 
         // УВЕДОМЛЕНИЕ АДМИНУ (ТЕБЕ)
         try {
-            await bot.telegram.sendMessage(MY_TELEGRAM_ID, `💰 ОПЛАТА!\nОбъект: ${Shp_name}\nСумма: ${OutSum}₽\nДней: ${Shp_days}\nТип: ${Shp_type}`);
+            await bot.telegram.sendMessage(MY_TELEGRAM_ID, `💰 **ОПЛАТА!**\nОбъект: ${Shp_name}\nКлюч: ${currentKey}\nСумма: ${OutSum}₽\nДней: ${Shp_days}\nТип: ${Shp_type}`);
         } catch(e) { console.log("Tg Admin Send Error:", e.message); }
 
         return res.send(`OK${InvId}`);
@@ -614,94 +622,71 @@ app.get('/client-dashboard', (req, res) => {
     <title>КАБИНЕТ | LOGIST_X</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
-        body { background: radial-gradient(circle at top right, #1a1c2c, #010409); color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; min-height: 100vh; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
-        .logo-box { background: #f59e0b; color: #000; padding: 5px 10px; border-radius: 8px; font-weight: 800; font-size: 18px; }
-        .card { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 24px; padding: 25px; margin-bottom: 20px; position: relative; overflow: hidden; }
-        .card::before { content: ""; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: #f59e0b; }
-        .obj-name { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 5px; }
-        .status-badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 700; text-transform: uppercase; background: rgba(245, 158, 11, 0.1); color: #f59e0b; margin-bottom: 15px; }
-        .stats { display: flex; justify-content: space-between; margin-bottom: 20px; }
-        .stat-item { text-align: center; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 12px; flex: 1; margin: 0 4px; }
-        .stat-val { display: block; font-weight: 800; font-size: 16px; color: #f59e0b; }
-        .stat-lbl { font-size: 9px; opacity: 0.5; text-transform: uppercase; }
-        .warning-box { background: rgba(218, 54, 51, 0.1); border: 1px dashed #da3633; color: #ff7b72; padding: 12px; border-radius: 12px; font-size: 11px; margin-bottom: 20px; text-align: center; line-height: 1.4; }
-        .workers-box { background: rgba(0,0,0,0.2); border-radius: 16px; padding: 10px; margin-bottom: 20px; }
-        .worker-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-        .folder-btn { text-decoration: none; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 6px 12px; border-radius: 8px; font-size: 11px; font-weight: 800; transition: 0.2s; border: 1px solid rgba(245,158,11,0.2); cursor: pointer; }
-        .grid-prices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
-        .price-card { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); text-align: center; cursor: pointer; transition: 0.3s; }
-        .price-card:hover { border-color: #f59e0b; background: rgba(245,158,11,0.05); }
-        .sale-tag { font-size: 8px; background: #da3633; color: #fff; padding: 2px 5px; border-radius: 4px; display: inline-block; margin-bottom: 4px; }
+        body { background: #010409; color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; }
+        .card { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 24px; padding: 25px; margin-bottom: 20px; border-left: 5px solid #f59e0b; }
+        .key-box { background: #000; padding: 15px; border-radius: 12px; border: 1px dashed #f59e0b; color: #f59e0b; font-weight: 800; font-size: 20px; text-align: center; margin: 15px 0; letter-spacing: 2px; }
+        .btn-pay { background: #f59e0b; color: #000; padding: 12px; border-radius: 12px; display: block; text-align: center; font-weight: 800; text-decoration: none; margin-top: 10px; }
+        
+        /* МОДАЛЬНОЕ ОКНО С КЛЮЧОМ */
+        #success-modal { 
+            display: none; 
+            position: fixed; top:0; left:0; width:100%; height:100%; 
+            background: rgba(0,0,0,0.9); z-index: 9999; 
+            justify-content: center; align-items: center; padding: 20px;
+        }
+        .modal-content { 
+            background: #f59e0b; color: #000; padding: 30px; border-radius: 30px; 
+            max-width: 500px; width: 100%; text-align: center; border: 5px solid #fff;
+        }
     </style>
 </head>
 <body>
-    <div class="header">
-        <div class="logo-box">LOGIST X</div>
-        <div style="font-size: 12px; opacity: 0.6">ЛИЧНЫЙ КАБИНЕТ</div>
+    <div id="success-modal">
+        <div class="modal-content">
+            <h1 style="margin:0; font-size: 36px;">💰 ОПЛАЧЕНО!</h1>
+            <p style="font-size: 18px; font-weight: 800; margin: 20px 0;">ВАШ КЛЮЧ ДЛЯ ВХОДА В ПРИЛОЖЕНИЕ:</p>
+            <div id="final-key" style="font-size: 40px; font-weight: 900; background: #000; color: #f59e0b; padding: 20px; border-radius: 15px; border: 3px solid #fff; word-break: break-all;"></div>
+            <p style="color: #000; font-weight: 900; margin-top: 20px;">⚠️ ОБЯЗАТЕЛЬНО СОХРАНИТЕ КЛЮЧ!</p>
+            <hr style="border: 1px solid #000; margin: 20px 0;">
+            <p style="font-size: 14px; font-weight: 700; color: #333;">👉 Если вы еще не в боте, введите этот ключ в Telegram-бот @${BOT_TOKEN.split(':')[0]} для регистрации.</p>
+            <button onclick="document.getElementById('success-modal').style.display='none'" style="margin-top: 20px; padding: 15px 30px; background: #000; color: #fff; border: none; border-radius: 10px; font-weight: 900; cursor: pointer;">Я СОХРАНИЛ КЛЮЧ, ЗАКРЫТЬ</button>
+        </div>
     </div>
+
+    <div style="font-weight:800; font-size:24px; margin-bottom:20px;">🏢 МОИ ОБЪЕКТЫ</div>
     <div id="root"></div>
     <script>
-        function openExternal(url) {
-            const absoluteUrl = url.startsWith('http') ? url : window.location.origin + url;
-            const a = document.createElement('a');
-            a.href = absoluteUrl; a.target = '_blank'; a.rel = 'noopener noreferrer';
-            a.click();
+        const params = new URLSearchParams(window.location.search);
+        // Проверка возврата после оплаты
+        if(window.location.href.includes('status=success') || params.get('status') === 'success' || (document.referrer.includes('robokassa') && params.get('InvId'))) {
+            const savedKey = params.get('key') || params.get('Shp_key') || 'ОБНОВЛЕНО';
+            document.getElementById('success-modal').style.display = 'flex';
+            document.getElementById('final-key').innerText = savedKey;
         }
+
         async function load(){
-            const params = new URLSearchParams(window.location.search);
             const r = await fetch('/api/client-keys?chatId=' + params.get('chatId'));
             const keys = await r.json();
             document.getElementById('root').innerHTML = keys.map(k => {
-                const days = Math.ceil((new Date(k.expiry) - new Date()) / (1000*60*60*24));
-                let workersList = [];
-                k.workers.forEach(w => {
-                    workersList.push(\`<div class="worker-item"><span class="worker-name">👤 \${w}</span><div onclick="openExternal('/api/open-folder?workerName=\${encodeURIComponent(w)}')" class="folder-btn">📂 ОТЧЕТЫ</div></div>\`);
-                });
-                for(let i = k.workers.length; i < k.limit; i++) {
-                    workersList.push(\`<div class="worker-item"><span style="font-size:13px; opacity:0.3; font-style:italic">⚪️ Свободное место</span></div>\`);
-                }
                 return \`
                 <div class="card">
-                    <div class="status-badge">\${days > 0 ? 'Доступ активен' : 'Срок истек'}</div>
-                    <div class="obj-name">\${k.name} (\${k.type || 'logist'})</div>
-                    <div style="font-size: 11px; opacity: 0.4; margin-bottom: 15px;">Ключ: \${k.key}</div>
-                    <div class="warning-box">⚠️ ФОТО-ОТЧЕТЫ И АРХИВЫ ХРАНЯТСЯ 60 ДНЕЙ.<br><b>СОХРАНЯЙТЕ ДАННЫЕ ВОВРЕМЯ!</b></div>
-                    <div class="stats">
-                        <div class="stat-item"><span class="stat-val">\${days > 0 ? days : 0}</span><span class="stat-lbl">Дней</span></div>
-                        <div class="stat-item"><span class="stat-val">\${k.workers.length}/\${k.limit}</span><span class="stat-lbl">Людей</span></div>
-                    </div>
-                    <div class="workers-box">\${workersList.join('')}</div>
-                    <div class="grid-prices">
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}')">
-                            <div style="font-size:14px; font-weight:800">30 дн.</div>
-                            <div style="font-size:10px; color:#f59e0b">\${k.limit*1500}₽</div>
-                        </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',90,'\${k.type}')">
-                            <div class="sale-tag">-10%</div>
-                            <div style="font-size:14px; font-weight:800">90 дн.</div>
-                            <div style="font-size:10px; color:#f59e0b">\${k.limit*4050}₽</div>
-                        </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',180,'\${k.type}')">
-                            <div class="sale-tag">-15%</div>
-                            <div style="font-size:14px; font-weight:800">180 дн.</div>
-                            <div style="font-size:10px; color:#f59e0b">\${k.limit*7650}₽</div>
-                        </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',365,'\${k.type}')">
-                            <div class="sale-tag">-20%</div>
-                            <div style="font-size:14px; font-weight:800">365 дн.</div>
-                            <div style="font-size:10px; color:#f59e0b">\${k.limit*15000}₽</div>
-                        </div>
+                    <div style="font-size:18px; font-weight:800">\${k.name} [\${k.type || 'logist'}]</div>
+                    <div style="opacity:0.6; font-size:12px; margin-top:5px;">Срок: до \${new Date(k.expiry).toLocaleDateString()}</div>
+                    <div class="key-box">\${k.key}</div>
+                    <div style="color:#ff7b72; font-size:11px; text-align:center; font-weight: 900;">⚠️ ВВОДИТЕ ЭТОТ КЛЮЧ В ПРИЛОЖЕНИИ</div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:15px;">
+                        <a href="#" class="btn-pay" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}')">30 дн / \${k.limit*1500}₽</a>
+                        <a href="#" class="btn-pay" onclick="req('\${k.key}','\${k.name}',90,'\${k.limit*4050}₽</a>
                     </div>
                 </div>\`;
             }).join('');
         }
         async function req(key, name, days, type){
-            const cid = new URLSearchParams(window.location.search).get('chatId');
+            const cid = params.get('chatId');
             const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days,chatId:cid,type})});
             const res = await r.json();
+            // После оплаты Робокасса вернет сюда, добавив параметры
             if(res.success && res.payUrl) window.location.href = res.payUrl;
-            else alert('Ошибка платежа');
         }
         load();
     </script>
@@ -711,45 +696,43 @@ app.get('/client-dashboard', (req, res) => {
 
 bot.start(async (ctx) => {
     const cid = ctx.chat.id;
-    if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 ПУЛЬТ УПРАВЛЕНИЯ', { reply_markup: { inline_keyboard: [[{ text: "📦 ОБЪЕКТЫ / КЛЮЧИ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
+    if (cid === MY_TELEGRAM_ID) return ctx.reply('👑 АДМИН-ПАНЕЛЬ', { reply_markup: { inline_keyboard: [[{ text: "📦 УПРАВЛЕНИЕ", web_app: { url: SERVER_URL + "/dashboard" } }]] } });
     const keys = await readDatabase(); const ck = keys.find(k => String(k.ownerChatId) === String(cid));
     if (ck) return ctx.reply('🏢 ВАШ КАБИНЕТ', { reply_markup: { inline_keyboard: [[{ text: "📊 МОИ ДАННЫЕ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
-    ctx.reply(`👋 **Добро пожаловать в Logist X!**`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: "💳 КУПИТЬ НОВЫЙ ДОСТУП", callback_data: "buy_new" }], [{ text: "🔑 У МЕНЯ ЕСТЬ КЛЮЧ", callback_data: "have_key" }]] } });
+    ctx.reply(`👋 **Добро пожаловать в Logist X!**`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: "💳 КУПИТЬ ДОСТУП", callback_data: "buy_new" }], [{ text: "🔑 У МЕНЯ ЕСТЬ КЛЮЧ", callback_data: "have_key" }]] } });
 });
 
 bot.action('buy_new', (ctx) => {
     userSteps[ctx.chat.id] = { step: 'type' };
-    ctx.reply("Выберите тип проекта:", { reply_markup: { inline_keyboard: [[{ text: "📦 ЛОГИСТ X", callback_data: "set_type_logist" }], [{ text: "🛒 МЕРЧЕНДАЙЗИНГ", callback_data: "set_type_merch" }]] } });
+    ctx.reply("Тип проекта:", { reply_markup: { inline_keyboard: [[{ text: "📦 ЛОГИСТ X", callback_data: "set_type_logist" }], [{ text: "🛒 МЕРЧ", callback_data: "set_type_merch" }]] } });
 });
 
 bot.action(/set_type_(.+)/, (ctx) => {
-    const type = ctx.match[1]; userSteps[ctx.chat.id] = { type, step: 'name' };
-    ctx.reply("Введите название вашего объекта:");
+    userSteps[ctx.chat.id] = { type: ctx.match[1], step: 'name' };
+    ctx.reply("Название объекта:");
 });
 
 bot.on('text', async (ctx) => {
     const cid = ctx.chat.id; if (cid === MY_TELEGRAM_ID) return; 
-    const txt = ctx.message.text.trim();
-    const step = userSteps[cid];
+    const txt = ctx.message.text.trim(); const step = userSteps[cid];
     if (step && step.step === 'name') {
         step.name = txt; step.step = 'limit';
-        return ctx.reply("Сколько сотрудников будет работать? (введите число)");
+        return ctx.reply("Количество сотрудников:");
     }
     if (step && step.step === 'limit') {
-        const limit = parseInt(txt); if(isNaN(limit)) return ctx.reply("Введите число!");
+        const limit = parseInt(txt); if(isNaN(limit)) return ctx.reply("Число!");
         const r = await fetch(SERVER_URL + '/api/notify-admin', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ key: "NEW_USER", name: step.name, days: 30, limit, chatId: cid, type: step.type }) });
         const res = await r.json();
-        ctx.reply(`💳 К оплате за ${limit} чел.: ${limit * 1500}₽`, { reply_markup: { inline_keyboard: [[{ text: "ОПЛАТИТЬ", url: res.payUrl }]] } });
+        ctx.reply(`💳 К оплате: ${limit * 1500}₽`, { reply_markup: { inline_keyboard: [[{ text: "ОПЛАТИТЬ", url: res.payUrl }]] } });
         delete userSteps[cid]; return;
     }
     const key = txt.toUpperCase(); let keys = await readDatabase(); 
     const idx = keys.findIndex(k => k.key === key);
     if (idx !== -1) { 
-        if(keys[idx].ownerChatId && keys[idx].ownerChatId !== cid) return ctx.reply('Этот ключ уже активирован.'); 
         keys[idx].ownerChatId = cid; await saveDatabase(keys); 
-        ctx.reply('✅ КЛЮЧ АКТИВИРОВАН!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
-    } else ctx.reply('❌ Ключ не найден.');
+        ctx.reply('✅ АКТИВИРОВАНО!', { reply_markup: { inline_keyboard: [[{ text: "📊 КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
+    } else ctx.reply('❌ Неверный ключ.');
 });
 
-bot.launch().then(() => console.log("READY"));
+bot.launch().then(() => console.log("BOT STARTED"));
 app.listen(process.env.PORT || 3000);
