@@ -17,7 +17,6 @@ module.exports = (app, ctx) => {
             const cleanAddr = addr.trim();
             const fileName = cleanAddr + ".jpg";
 
-            // Поиск в новой папке
             const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
             const search = await drive.files.list({ q, fields: 'files(id, webViewLink, webContentLink)' });
             
@@ -28,7 +27,6 @@ module.exports = (app, ctx) => {
                 });
             }
 
-            // Поиск по старой базе (если в новой папке нет)
             try {
                 const oldDb = await readPlanogramDb(kData.folderId);
                 if (oldDb && oldDb[cleanAddr]) {
