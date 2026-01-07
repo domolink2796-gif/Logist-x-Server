@@ -431,7 +431,12 @@ app.get('/api/client-keys', async (req, res) => {
         const keys = await readDatabase(); 
         const cid = req.query.chatId;
         // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Фильтруем ключи, чтобы показать ТОЛЬКО те, где ownerChatId совпадает с ID пользователя
-        const myKeys = keys.filter(k => k.ownerChatId && String(k.ownerChatId) === String(cid));
+        // И исключаем временные метки WEBSITE_SALE
+        const myKeys = keys.filter(k => 
+            k.ownerChatId && 
+            String(k.ownerChatId) === String(cid) && 
+            k.ownerChatId !== 'WEBSITE_SALE'
+        );
         res.json(myKeys); 
     } catch (e) { res.json([]); }
 });
@@ -527,7 +532,9 @@ app.post('/api/payment-result', async (req, res) => {
                 const exp = new Date(); exp.setDate(exp.getDate() + parseInt(Shp_days));
                 const projR = (Shp_type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
                 const fId = await getOrCreateFolder(Shp_name, projR);
-                keys.push({ key: Shp_key, name: Shp_name, limit: parseInt(Shp_limit), expiry: exp.toISOString(), workers: [], ownerChatId: Shp_chatId, folderId: fId, type: Shp_type });
+                // При покупке с сайта (WEBSITE_SALE) ставим null, чтобы ключ был "свободным" до активации в ТГ
+                const finalOwner = (Shp_chatId === 'WEBSITE_SALE') ? null : Shp_chatId;
+                keys.push({ key: Shp_key, name: Shp_name, limit: parseInt(Shp_limit), expiry: exp.toISOString(), workers: [], ownerChatId: finalOwner, folderId: fId, type: Shp_type });
                 clientMsg = `🎉 Оплата успешна! Ваш ключ: ${Shp_key}`;
              } else {
                 let d = new Date(keys[existingIdx].expiry); if (d < new Date()) d = new Date();
