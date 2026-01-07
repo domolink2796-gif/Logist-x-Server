@@ -488,22 +488,36 @@ app.post('/api/payment-result', async (req, res) => {
     const mySign = crypto.createHash('md5').update(`${OutSum}:${InvId}:${ROBO_PASS2}:Shp_chatId=${Shp_chatId}:Shp_days=${Shp_days}:Shp_key=${Shp_key}:Shp_limit=${Shp_limit}:Shp_name=${Shp_name}:Shp_type=${Shp_type}`).digest('hex');
     if (SignatureValue.toLowerCase() === mySign.toLowerCase()) {
         let keys = await readDatabase();
+        let clientMsg = "";
+
         if (Shp_key === "NEW_USER") {
             const newK = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
             const exp = new Date(); exp.setDate(exp.getDate() + parseInt(Shp_days));
             const projR = (Shp_type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
             const fId = await getOrCreateFolder(Shp_name, projR);
             keys.push({ key: newK, name: Shp_name, limit: parseInt(Shp_limit), expiry: exp.toISOString(), workers: [], ownerChatId: Shp_chatId, folderId: fId, type: Shp_type });
-            await bot.telegram.sendMessage(Shp_chatId, `🎉 Оплата успешна! Ваш ключ: ${newK}`);
+            clientMsg = `🎉 Оплата успешна! Ваш ключ: ${newK}`;
         } else {
             const idx = keys.findIndex(k => k.key === Shp_key);
             if (idx !== -1) {
                 let d = new Date(keys[idx].expiry); if (d < new Date()) d = new Date();
                 d.setDate(d.getDate() + parseInt(Shp_days)); keys[idx].expiry = d.toISOString();
-                await bot.telegram.sendMessage(Shp_chatId, `✅ Лицензия продлена!`);
+                clientMsg = `✅ Лицензия продлена!`;
             }
         }
-        await saveDatabase(keys); return res.send(`OK${InvId}`);
+        await saveDatabase(keys); 
+
+        // БЕЗОПАСНАЯ ОТПРАВКА КЛИЕНТУ
+        if (Shp_chatId && Shp_chatId !== 'null' && Shp_chatId !== 'undefined') {
+            try { await bot.telegram.sendMessage(Shp_chatId, clientMsg); } catch(e) { console.log("Tg Client Send Error:", e.message); }
+        }
+
+        // УВЕДОМЛЕНИЕ АДМИНУ (ТЕБЕ)
+        try {
+            await bot.telegram.sendMessage(MY_TELEGRAM_ID, `💰 ОПЛАТА!\nОбъект: ${Shp_name}\nСумма: ${OutSum}₽\nДней: ${Shp_days}\nТип: ${Shp_type}`);
+        } catch(e) { console.log("Tg Admin Send Error:", e.message); }
+
+        return res.send(`OK${InvId}`);
     }
     res.send("error");
 });
