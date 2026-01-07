@@ -55,7 +55,6 @@ function getDistance(lat1, lon1, lat2, lon2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// НОВЫЙ РОУТ: Поиск координат по адресу (Nominatim OpenStreetMap)
 app.get('/get-coords', async (req, res) => {
     try {
         const { addr } = req.query;
@@ -470,13 +469,12 @@ app.post('/api/notify-admin', async (req, res) => {
     const { key, name, days, chatId, limit, type } = req.body;
     const keys = await readDatabase();
 
-    // Генерируем временный ключ, если это новая покупка, чтобы он попал в описание
     let displayKey = key;
     if (key === "NEW_USER") {
         displayKey = (type === 'merch' ? 'M-' : 'L-') + Math.random().toString(36).substring(2, 6).toUpperCase();
     }
 
-    const kData = keys.find(k => k.key === key) || { limit: limit || 1 };
+    const kData = keys.find(k => k.key === key) || { limit: limit || 1, key: displayKey };
 
     let price = kData.limit * 1500;
     if (days == 90) price = kData.limit * 4050; 
@@ -484,14 +482,11 @@ app.post('/api/notify-admin', async (req, res) => {
     if (days == 365) price = kData.limit * 15000; 
 
     const invId = Math.floor(Date.now() / 1000);
-
-    // Это описание клиент увидит в письме от Робокассы
     const desc = `Программа: ${type === 'merch' ? 'Merch X' : 'Logist X'}. Объект: ${name}. КЛЮЧ: ${displayKey}`;
-
     const sign = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${displayKey}:Shp_limit=${kData.limit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
 
-    // SuccessURL заставляет Робокассу вернуть клиента именно на твой сервер Railway
-    const returnUrl = encodeURIComponent(`https://logist-x.ru/?payment=success&key=${kData.key}`);
+    // ПРАВИЛЬНЫЙ SuccessURL ДЛЯ ГЛАВНОЙ СТРАНИЦЫ И КАБИНЕТА
+    const returnUrl = encodeURIComponent(`https://logist-x.ru/?payment=success&key=${displayKey}`);
 
     const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${sign}&Shp_days=${days}&Shp_key=${displayKey}&Shp_chatId=${chatId}&Shp_limit=${kData.limit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}&SuccessURL=${returnUrl}`;
 
@@ -505,31 +500,28 @@ app.post('/api/payment-result', async (req, res) => {
         let keys = await readDatabase();
         let clientMsg = "";
 
-        if (Shp_key === "NEW_USER") {
-            const newK = Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
-            const exp = new Date(); exp.setDate(exp.getDate() + parseInt(Shp_days));
-            const projR = (Shp_type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
-            const fId = await getOrCreateFolder(Shp_name, projR);
-            keys.push({ key: newK, name: Shp_name, limit: parseInt(Shp_limit), expiry: exp.toISOString(), workers: [], ownerChatId: Shp_chatId, folderId: fId, type: Shp_type });
-            clientMsg = `🎉 Оплата успешна! Ваш ключ: ${newK}`;
-        } else {
-            const idx = keys.findIndex(k => k.key === Shp_key);
-            if (idx !== -1) {
-                let d = new Date(keys[idx].expiry); if (d < new Date()) d = new Date();
-                d.setDate(d.getDate() + parseInt(Shp_days)); keys[idx].expiry = d.toISOString();
+        if (Shp_key.startsWith('M-') || Shp_key.startsWith('L-') || Shp_key.includes('-')) {
+             const existingIdx = keys.findIndex(k => k.key === Shp_key);
+             if (existingIdx === -1) {
+                const exp = new Date(); exp.setDate(exp.getDate() + parseInt(Shp_days));
+                const projR = (Shp_type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
+                const fId = await getOrCreateFolder(Shp_name, projR);
+                keys.push({ key: Shp_key, name: Shp_name, limit: parseInt(Shp_limit), expiry: exp.toISOString(), workers: [], ownerChatId: Shp_chatId, folderId: fId, type: Shp_type });
+                clientMsg = `🎉 Оплата успешна! Ваш ключ: ${Shp_key}`;
+             } else {
+                let d = new Date(keys[existingIdx].expiry); if (d < new Date()) d = new Date();
+                d.setDate(d.getDate() + parseInt(Shp_days)); keys[existingIdx].expiry = d.toISOString();
                 clientMsg = `✅ Лицензия продлена!`;
-            }
+             }
         }
         await saveDatabase(keys); 
 
-        // БЕЗОПАСНАЯ ОТПРАВКА КЛИЕНТУ
-        if (Shp_chatId && Shp_chatId !== 'null' && Shp_chatId !== 'undefined') {
+        if (Shp_chatId && Shp_chatId !== 'null' && Shp_chatId !== 'undefined' && Shp_chatId !== 'WEBSITE_SALE') {
             try { await bot.telegram.sendMessage(Shp_chatId, clientMsg); } catch(e) { console.log("Tg Client Send Error:", e.message); }
         }
 
-        // УВЕДОМЛЕНИЕ АДМИНУ (ТЕБЕ)
         try {
-            await bot.telegram.sendMessage(MY_TELEGRAM_ID, `💰 ОПЛАТА!\nОбъект: ${Shp_name}\nСумма: ${OutSum}₽\nДней: ${Shp_days}\nТип: ${Shp_type}`);
+            await bot.telegram.sendMessage(MY_TELEGRAM_ID, `💰 ОПЛАТА!\nОбъект: ${Shp_name}\nСумма: ${OutSum}₽\nКлюч: ${Shp_key}\nТип: ${Shp_type}`);
         } catch(e) { console.log("Tg Admin Send Error:", e.message); }
 
         return res.send(`OK${InvId}`);
@@ -628,22 +620,6 @@ app.get('/client-dashboard', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>КАБИНЕТ | LOGIST_X</title>
     <style>
-        <style>
-        /* Добавь это в конец своего блока style */
-        #success-modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.9); z-index: 9999; justify-content: center; align-items: center; padding: 20px; }
-        .modal-content { background: #f59e0b; color: #000; padding: 30px; border-radius: 30px; max-width: 500px; width: 100%; text-align: center; border: 5px solid #fff; }
-    </style>
-</head>
-<body>
-    <div id="success-modal">
-        <div class="modal-content">
-            <h1 style="margin:0; font-size: 36px;">💰 ОПЛАЧЕНО!</h1>
-            <p style="font-size: 18px; font-weight: 800; margin: 20px 0;">ВАШ КЛЮЧ ДЛЯ ПРИЛОЖЕНИЯ:</p>
-            <div id="final-key" style="font-size: 35px; font-weight: 900; background: #000; color: #f59e0b; padding: 20px; border-radius: 15px; border: 3px solid #fff; word-break: break-all;"></div>
-            <button onclick="document.getElementById('success-modal').style.display='none'" style="margin-top: 20px; padding: 15px 30px; background: #000; color: #fff; border: none; border-radius: 10px; font-weight: 900; cursor: pointer;">Я СОХРАНИЛ КЛЮЧ</button>
-        </div>
-    </div>
-
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
         body { background: radial-gradient(circle at top right, #1a1c2c, #010409); color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; min-height: 100vh; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
@@ -664,14 +640,27 @@ app.get('/client-dashboard', (req, res) => {
         .price-card { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); text-align: center; cursor: pointer; transition: 0.3s; }
         .price-card:hover { border-color: #f59e0b; background: rgba(245,158,11,0.05); }
         .sale-tag { font-size: 8px; background: #da3633; color: #fff; padding: 2px 5px; border-radius: 4px; display: inline-block; margin-bottom: 4px; }
+        
+        #success-modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.9); z-index: 9999; justify-content: center; align-items: center; padding: 20px; }
+        .modal-content { background: #000; color: #fff; padding: 30px; border-radius: 30px; max-width: 500px; width: 100%; text-align: center; border: 2px solid #f59e0b; }
     </style>
 </head>
 <body>
+    <div id="success-modal">
+        <div class="modal-content">
+            <h1 style="margin:0; font-size: 32px; color: #f59e0b;">💰 ОПЛАЧЕНО!</h1>
+            <p style="font-size: 16px; margin: 20px 0; opacity: 0.7;">ВАШ КЛЮЧ ДЛЯ ПРИЛОЖЕНИЯ:</p>
+            <div id="final-key" style="font-size: 32px; font-weight: 900; background: rgba(245,158,11,0.1); color: #f59e0b; padding: 20px; border-radius: 15px; border: 1px dashed #f59e0b; word-break: break-all;"></div>
+            <button onclick="document.getElementById('success-modal').style.display='none'" style="margin-top: 30px; width: 100%; padding: 15px; background: #f59e0b; color: #000; border: none; border-radius: 15px; font-weight: 900; cursor: pointer; text-transform: uppercase;">Я СОХРАНИЛ КЛЮЧ</button>
+        </div>
+    </div>
+
     <div class="header">
         <div class="logo-box">LOGIST X</div>
         <div style="font-size: 12px; opacity: 0.6">ЛИЧНЫЙ КАБИНЕТ</div>
     </div>
     <div id="root"></div>
+
     <script>
         function openExternal(url) {
             const absoluteUrl = url.startsWith('http') ? url : window.location.origin + url;
@@ -679,8 +668,20 @@ app.get('/client-dashboard', (req, res) => {
             a.href = absoluteUrl; a.target = '_blank'; a.rel = 'noopener noreferrer';
             a.click();
         }
+
         async function load(){
             const params = new URLSearchParams(window.location.search);
+            
+            // Если пришли после оплаты - показываем окно
+            if(params.get('payment') === 'success' || params.get('status') === 'success') {
+                const modal = document.getElementById('success-modal');
+                const keyBox = document.getElementById('final-key');
+                if(modal && keyBox) {
+                    modal.style.display = 'flex';
+                    keyBox.innerText = params.get('key') || 'АКТИВИРОВАН';
+                }
+            }
+
             const r = await fetch('/api/client-keys?chatId=' + params.get('chatId'));
             const keys = await r.json();
             document.getElementById('root').innerHTML = keys.map(k => {
@@ -697,7 +698,7 @@ app.get('/client-dashboard', (req, res) => {
                     <div class="status-badge">\${days > 0 ? 'Доступ активен' : 'Срок истек'}</div>
                     <div class="obj-name">\${k.name} (\${k.type || 'logist'})</div>
                     <div style="font-size: 11px; opacity: 0.4; margin-bottom: 15px;">Ключ: \${k.key}</div>
-                    <div class="warning-box">⚠️ ФОТО-ОТЧЕТЫ И АРХИВЫ ХРАНЯТСЯ 60 ДНЕЙ.<br><b>СОХРАНЯЙТЕ ДАННЫЕ ВОВРЕМЯ!</b></div>
+                    <div class="warning-box">⚠️ ФОТО-ОТЧЕТЫ И АРХИВЫ ХРАНЯТСЯ 60 ДНЕЙ.</div>
                     <div class="stats">
                         <div class="stat-item"><span class="stat-val">\${days > 0 ? days : 0}</span><span class="stat-lbl">Дней</span></div>
                         <div class="stat-item"><span class="stat-val">\${k.workers.length}/\${k.limit}</span><span class="stat-lbl">Людей</span></div>
@@ -713,33 +714,11 @@ app.get('/client-dashboard', (req, res) => {
                             <div style="font-size:14px; font-weight:800">90 дн.</div>
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*4050}₽</div>
                         </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',180,'\${k.type}')">
-                            <div class="sale-tag">-15%</div>
-                            <div style="font-size:14px; font-weight:800">180 дн.</div>
-                            <div style="font-size:10px; color:#f59e0b">\${k.limit*7650}₽</div>
-                        </div>
-                        <div class="price-card" onclick="req('\${k.key}','\${k.name}',365,'\${k.type}')">
-                            <div class="sale-tag">-20%</div>
-                            <div style="font-size:14px; font-weight:800">365 дн.</div>
-                            <div style="font-size:10px; color:#f59e0b">\${k.limit*15000}₽</div>
-                        </div>
                     </div>
                 </div>\`;
             }).join('');
         }
-               async function load(){
-            const params = new URLSearchParams(window.location.search);
-            // Если в ссылке есть статус успеха, показываем окно и вставляем ключ
-            if(params.get('status') === 'success') {
-                const modal = document.getElementById('success-modal');
-                const keyBox = document.getElementById('final-key');
-                if(modal && keyBox) {
-                    modal.style.display = 'flex';
-                    keyBox.innerText = params.get('key');
-                }
-            }
-            // --- Твой старый код функции load продолжается ниже ---
- 
+
         async function req(key, name, days, type){
             const cid = new URLSearchParams(window.location.search).get('chatId');
             const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days,chatId:cid,type})});
