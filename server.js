@@ -426,15 +426,13 @@ app.post('/merch-upload', async (req, res) => {
 });
 
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
-
-// --- ИСПРАВЛЕННАЯ БЕЗОПАСНОСТЬ: КЛИЕНТ ВИДИТ ТОЛЬКО СВОИ КЛЮЧИ ---
 app.get('/api/client-keys', async (req, res) => {
     try { 
         const keys = await readDatabase(); 
         const cid = req.query.chatId;
-        // Фильтруем ключи, чтобы показать только те, которые принадлежат этому chatId
-        const filtered = keys.filter(k => String(k.ownerChatId) === String(cid));
-        res.json(filtered); 
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Фильтруем ключи, чтобы показать ТОЛЬКО те, где ownerChatId совпадает с ID пользователя
+        const myKeys = keys.filter(k => k.ownerChatId && String(k.ownerChatId) === String(cid));
+        res.json(myKeys); 
     } catch (e) { res.json([]); }
 });
 
@@ -478,30 +476,40 @@ app.post('/api/notify-admin', async (req, res) => {
         const { key, name, days, chatId, limit, type } = req.body;
         const keys = await readDatabase();
 
+        // Определяем ключ для отображения
         let displayKey = key;
         if (key === "NEW_USER") {
             displayKey = (type === 'merch' ? 'M-' : 'L-') + Math.random().toString(36).substring(2, 6).toUpperCase();
         }
 
+        // ПРАВИЛЬНЫЙ РАСЧЕТ ЛИМИТА (чтобы сервер не выдавал ошибку на новых юзеров)
         const foundInDb = keys.find(k => k.key === key);
         const finalLimit = foundInDb ? parseInt(foundInDb.limit) : (parseInt(limit) || 1);
 
+        // ТВОЯ ЛОГИКА ЦЕН (сохранена полностью)
         let price = finalLimit * 1500;
         if (days == 90) price = finalLimit * 4050; 
         if (days == 180) price = finalLimit * 7650; 
         if (days == 365) price = finalLimit * 15000; 
 
         const invId = Math.floor(Date.now() / 1000);
+
+        // Описание для Робокассы
         const desc = `Программа: ${type === 'merch' ? 'Merch X' : 'Logist X'}. Объект: ${name}. КЛЮЧ: ${displayKey}`;
+
+        // ТВОЯ ПОДПИСЬ (Signature)
         const sign = crypto.createHash('md5').update(`${ROBO_LOGIN}:${price}:${invId}:${ROBO_PASS1}:Shp_chatId=${chatId}:Shp_days=${days}:Shp_key=${displayKey}:Shp_limit=${finalLimit}:Shp_name=${name}:Shp_type=${type}`).digest('hex');
 
-        const returnUrl = encodeURIComponent(`https://logist-x.ru/success.html?key=${displayKey}`);
+        // ССЫЛКА ВОЗВРАТА С КЛЮЧОМ
+        console.log("СФОРМИРОВАН КЛЮЧ ДЛЯ ОПЛАТЫ:", displayKey);
+const returnUrl = encodeURIComponent(`https://logist-x.ru/success.html?key=${displayKey}`);
+
         const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${sign}&Shp_days=${days}&Shp_key=${displayKey}&Shp_chatId=${chatId}&Shp_limit=${finalLimit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}&SuccessURL=${returnUrl}`;
 
         res.json({ success: true, payUrl });
     } catch (e) {
-        console.error("ОШИБКА ОПЛАТЫ:", e);
-        res.status(500).json({ success: false });
+        console.error("ОШИБКА СЕРВЕРА В ОПЛАТЕ:", e);
+        res.status(500).json({ success: false, error: "Ошибка на стороне сервера" });
     }
 });
 
@@ -684,8 +692,6 @@ app.get('/client-dashboard', (req, res) => {
 
         async function load(){
             const params = new URLSearchParams(window.location.search);
-            const r = await fetch('/api/client-keys?chatId=' + params.get('chatId'));
-            const keys = await r.json();
             
             // Если пришли после оплаты - показываем окно
             if(params.get('payment') === 'success' || params.get('status') === 'success') {
@@ -695,6 +701,14 @@ app.get('/client-dashboard', (req, res) => {
                     modal.style.display = 'flex';
                     keyBox.innerText = params.get('key') || 'АКТИВИРОВАН';
                 }
+            }
+
+            const r = await fetch('/api/client-keys?chatId=' + params.get('chatId'));
+            const keys = await r.json();
+            
+            if(keys.length === 0) {
+                document.getElementById('root').innerHTML = '<div style="text-align:center; padding:50px; opacity:0.5;">У вас пока нет активных объектов.</div>';
+                return;
             }
 
             document.getElementById('root').innerHTML = keys.map(k => {
