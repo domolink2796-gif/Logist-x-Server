@@ -429,15 +429,18 @@ app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
 app.get('/api/client-keys', async (req, res) => {
     try { 
         const keys = await readDatabase(); 
-        const cid = req.query.chatId;
-        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Фильтруем ключи, чтобы показать ТОЛЬКО те, где ownerChatId совпадает с ID пользователя
-        // И исключаем временные метки WEBSITE_SALE
-        const myKeys = keys.filter(k => 
-            k.ownerChatId && 
-            String(k.ownerChatId) === String(cid) && 
-            k.ownerChatId !== 'WEBSITE_SALE'
-        );
-        res.json(myKeys); 
+        const { chatId, key } = req.query;
+        // Если зашли через бота по chatId
+        if (chatId && chatId !== 'null' && chatId !== 'undefined') {
+            const myKeys = keys.filter(k => k.ownerChatId && String(k.ownerChatId) === String(chatId) && k.ownerChatId !== 'WEBSITE_SALE');
+            return res.json(myKeys);
+        }
+        // Если человек с сайта ввел ключ вручную
+        if (key) {
+            const found = keys.find(k => k.key === key.toUpperCase());
+            return res.json(found ? [found] : []);
+        }
+        res.json([]); 
     } catch (e) { res.json([]); }
 });
 
@@ -652,72 +655,42 @@ app.get('/client-dashboard', (req, res) => {
         body { background: radial-gradient(circle at top right, #1a1c2c, #010409); color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; min-height: 100vh; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
         .logo-box { background: #f59e0b; color: #000; padding: 5px 10px; border-radius: 8px; font-weight: 800; font-size: 18px; }
-        .card { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 24px; padding: 25px; margin-bottom: 20px; position: relative; overflow: hidden; }
-        .card::before { content: ""; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: #f59e0b; }
-        .obj-name { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 5px; }
-        .status-badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 700; text-transform: uppercase; background: rgba(245, 158, 11, 0.1); color: #f59e0b; margin-bottom: 15px; }
-        .stats { display: flex; justify-content: space-between; margin-bottom: 20px; }
-        .stat-item { text-align: center; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 12px; flex: 1; margin: 0 4px; }
-        .stat-val { display: block; font-weight: 800; font-size: 16px; color: #f59e0b; }
-        .stat-lbl { font-size: 9px; opacity: 0.5; text-transform: uppercase; }
-        .warning-box { background: rgba(218, 54, 51, 0.1); border: 1px dashed #da3633; color: #ff7b72; padding: 12px; border-radius: 12px; font-size: 11px; margin-bottom: 20px; text-align: center; line-height: 1.4; }
-        .workers-box { background: rgba(0,0,0,0.2); border-radius: 16px; padding: 10px; margin-bottom: 20px; }
-        .worker-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-        .folder-btn { text-decoration: none; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 6px 12px; border-radius: 8px; font-size: 11px; font-weight: 800; transition: 0.2s; border: 1px solid rgba(245,158,11,0.2); cursor: pointer; }
+        .card { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 24px; padding: 25px; margin-bottom: 20px; }
+        .login-box { text-align: center; padding: 40px 20px; }
+        input { width: 100%; padding: 15px; border-radius: 12px; border: 1px solid #30363d; background: #010409; color: #fff; margin-bottom: 10px; box-sizing: border-box; font-size: 16px; text-align: center; }
+        .btn-gold { background: #f59e0b; color: #000; padding: 15px; border-radius: 12px; font-weight: 800; border: none; width: 100%; cursor: pointer; }
         .grid-prices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
-        .price-card { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); text-align: center; cursor: pointer; transition: 0.3s; }
-        .price-card:hover { border-color: #f59e0b; background: rgba(245,158,11,0.05); }
-        .sale-tag { font-size: 8px; background: #da3633; color: #fff; padding: 2px 5px; border-radius: 4px; display: inline-block; margin-bottom: 4px; }
-        
-        #success-modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.9); z-index: 9999; justify-content: center; align-items: center; padding: 20px; }
-        .modal-content { background: #000; color: #fff; padding: 30px; border-radius: 30px; max-width: 500px; width: 100%; text-align: center; border: 2px solid #f59e0b; }
+        .price-card { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); text-align: center; cursor: pointer; }
+        .sale-tag { font-size: 8px; background: #da3633; color: #fff; padding: 2px 5px; border-radius: 4px; }
     </style>
 </head>
 <body>
-    <div id="success-modal">
-        <div class="modal-content">
-            <h1 style="margin:0; font-size: 32px; color: #f59e0b;">💰 ОПЛАЧЕНО!</h1>
-            <p style="font-size: 16px; margin: 20px 0; opacity: 0.7;">ВАШ КЛЮЧ ДЛЯ ПРИЛОЖЕНИЯ:</p>
-            <div id="final-key" style="font-size: 32px; font-weight: 900; background: rgba(245,158,11,0.1); color: #f59e0b; padding: 20px; border-radius: 15px; border: 1px dashed #f59e0b; word-break: break-all;"></div>
-            <button onclick="document.getElementById('success-modal').style.display='none'" style="margin-top: 30px; width: 100%; padding: 15px; background: #f59e0b; color: #000; border: none; border-radius: 15px; font-weight: 900; cursor: pointer; text-transform: uppercase;">Я СОХРАНИЛ КЛЮЧ</button>
-        </div>
-    </div>
-
-    <div class="header">
-        <div class="logo-box">LOGIST X</div>
-        <div style="font-size: 12px; opacity: 0.6">ЛИЧНЫЙ КАБИНЕТ</div>
-    </div>
     <div id="root"></div>
 
     <script>
-        function openExternal(url) {
-            const absoluteUrl = url.startsWith('http') ? url : window.location.origin + url;
-            const a = document.createElement('a');
-            a.href = absoluteUrl; a.target = '_blank'; a.rel = 'noopener noreferrer';
-            a.click();
-        }
-
         async function load(){
             const params = new URLSearchParams(window.location.search);
-            
-            // Если пришли после оплаты - показываем окно
-            if(params.get('payment') === 'success' || params.get('status') === 'success') {
-                const modal = document.getElementById('success-modal');
-                const keyBox = document.getElementById('final-key');
-                if(modal && keyBox) {
-                    modal.style.display = 'flex';
-                    keyBox.innerText = params.get('key') || 'АКТИВИРОВАН';
-                }
-            }
+            let cid = params.get('chatId');
+            let savedKey = localStorage.getItem('logist_x_key');
 
-            const r = await fetch('/api/client-keys?chatId=' + params.get('chatId'));
-            const keys = await r.json();
-            
-            if(keys.length === 0) {
-                document.getElementById('root').innerHTML = '<div style="text-align:center; padding:50px; opacity:0.5;">У вас пока нет активных объектов.</div>';
+            // 1. Если нет Telegram ID и нет сохраненного ключа - показываем форму входа
+            if(!cid && !savedKey) {
+                showLoginForm();
                 return;
             }
 
+            // 2. Запрашиваем данные
+            const url = (cid && cid !== 'null' && cid !== 'undefined') ? '/api/client-keys?chatId=' + cid : '/api/client-keys?key=' + savedKey;
+            const r = await fetch(url);
+            const keys = await r.json();
+
+            if(keys.length === 0) {
+                if(savedKey) localStorage.removeItem('logist_x_key');
+                showLoginForm(savedKey ? 'Ключ не найден или не активирован' : '');
+                return;
+            }
+
+            // 3. Рисуем кабинет
             document.getElementById('root').innerHTML = keys.map(k => {
                 const days = Math.ceil((new Date(k.expiry) - new Date()) / (1000*60*60*24));
                 let workersList = [];
@@ -729,17 +702,15 @@ app.get('/client-dashboard', (req, res) => {
                 }
                 return \`
                 <div class="card">
-                    <div class="status-badge">\${days > 0 ? 'Доступ активен' : 'Срок истек'}</div>
-                    <div class="obj-name">\${k.name} (\${k.type || 'logist'})</div>
-                    <div style="font-size: 11px; opacity: 0.4; margin-bottom: 15px;">Ключ: \${k.key}</div>
-                    <div class="warning-box">⚠️ ФОТО-ОТЧЕТЫ И АРХИВЫ ХРАНЯТСЯ 60 ДНЕЙ.</div>
-                    <div class="stats">
-                        <div class="stat-item"><span class="stat-val">\${days > 0 ? days : 0}</span><span class="stat-lbl">Дней</span></div>
-                        <div class="stat-item"><span class="stat-val">\${k.workers.length}/\${k.limit}</span><span class="stat-lbl">Людей</span></div>
+                    <div style="font-size: 20px; font-weight: 800;">\${k.name}</div>
+                    <div style="font-size: 11px; opacity: 0.4; margin-bottom: 15px;">Лицензия: \${k.key} [\${k.type}]</div>
+                    <div style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; display:flex; justify-content:space-around;">
+                        <div style="text-align:center"><span style="display:block; font-weight:800; color:#f59e0b">\${days > 0 ? days : 0}</span><small style="font-size:9px; opacity:0.5">ДНЕЙ</small></div>
+                        <div style="text-align:center"><span style="display:block; font-weight:800; color:#f59e0b">\${k.limit}</span><small style="font-size:9px; opacity:0.5">МЕСТ</small></div>
                     </div>
-                    <div class="workers-box">\${workersList.join('')}</div>
+                    <div class="workers-box" style="margin-top:15px;">\${workersList.join('')}</div>
                     
-                    <div style="font-size:12px; font-weight:800; color:#f59e0b; margin-top:15px;">ПРОДЛИТЬ ЛИЦЕНЗИЮ:</div>
+                    <div style="font-size:12px; font-weight:800; color:#f59e0b; margin-top:20px;">ПРОДЛИТЬ ДОСТУП:</div>
                     <div class="grid-prices">
                         <div class="price-card" onclick="req('\${k.key}','\${k.name}',30,'\${k.type}')">
                             <div style="font-size:14px; font-weight:800">30 дн.</div>
@@ -761,17 +732,43 @@ app.get('/client-dashboard', (req, res) => {
                             <div style="font-size:10px; color:#f59e0b">\${k.limit*15000}₽</div>
                         </div>
                     </div>
+                    \${!cid || cid === 'null' ? '<button onclick="logout()" style="margin-top:20px; background:none; border:none; color:#da3633; width:100%; font-size:12px; cursor:pointer;">Выйти из кабинета</button>' : ''}
                 </div>\`;
             }).join('');
         }
 
+        function showLoginForm(err = '') {
+            document.getElementById('root').innerHTML = \`
+                <div class="login-box">
+                    <h2 style="color:#f59e0b">ЛИЧНЫЙ КАБИНЕТ</h2>
+                    <p style="opacity:0.6; font-size:13px;">Введите ключ лицензии для входа</p>
+                    <input id="keyInput" placeholder="XXXX-XXXX" maxlength="9">
+                    \${err ? '<p style="color:#da3633; font-size:12px;">' + err + '</p>' : ''}
+                    <button class="btn-gold" onclick="login()">ВОЙТИ</button>
+                    <p style="margin-top:30px; font-size:11px; opacity:0.4;">Если вы покупали через Telegram, заходите напрямую через бота.</p>
+                </div>\`;
+        }
+
+        function login() {
+            const val = document.getElementById('keyInput').value.toUpperCase();
+            if(!val) return;
+            localStorage.setItem('logist_x_key', val);
+            load();
+        }
+
+        function logout() {
+            localStorage.removeItem('logist_x_key');
+            location.reload();
+        }
+
         async function req(key, name, days, type){
-            const cid = new URLSearchParams(window.location.search).get('chatId');
+            const params = new URLSearchParams(window.location.search);
+            const cid = params.get('chatId') || 'WEBSITE_USER';
             const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days,chatId:cid,type})});
             const res = await r.json();
             if(res.success && res.payUrl) window.location.href = res.payUrl;
-            else alert('Ошибка платежа');
         }
+
         load();
     </script>
 </body>
