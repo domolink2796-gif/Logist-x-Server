@@ -59,7 +59,6 @@ function getDistance(lat1, lon1, lat2, lon2) {
 app.get('/get-coords', async (req, res) => {
     try {
         const { addr } = req.query;
-        // Запрос к бесплатному API карт
         const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}&limit=1`;
         const response = await fetch(url, { headers: { 'User-Agent': 'LogistX_App_Server' } });
         const data = await response.json();
@@ -116,8 +115,6 @@ async function saveDatabase(keys) {
     } catch (e) { console.error("DB Error:", e); }
 }
 
-// --- УНИВЕРСАЛЬНЫЕ ФУНКЦИИ ЧТЕНИЯ/ЗАПИСИ (ЧТОБЫ НЕ ДУБЛИРОВАТЬ КОД, НО СОХРАНИТЬ ФУНКЦИОНАЛ) ---
-
 async function readJsonFromDrive(folderId, fileName) {
     try {
         const q = `name = '${fileName}' and '${folderId}' in parents and trashed = false`;
@@ -138,20 +135,13 @@ async function saveJsonToDrive(folderId, fileName, data) {
     } catch (e) { console.error("Save JSON Error:", e); }
 }
 
-// БД Штрих-кодов
 async function readBarcodeDb(clientFolderId) { return await readJsonFromDrive(clientFolderId, BARCODE_DB_NAME); }
 async function saveBarcodeDb(clientFolderId, data) { return await saveJsonToDrive(clientFolderId, BARCODE_DB_NAME, data); }
-
-// БД Планограмм
 async function readPlanogramDb(clientFolderId) { return await readJsonFromDrive(clientFolderId, PLANOGRAM_DB_NAME); }
 async function savePlanogramDb(clientFolderId, data) { return await saveJsonToDrive(clientFolderId, PLANOGRAM_DB_NAME, data); }
-
-// БД Товаров на точках (НОВОЕ)
 async function readShopItemsDb(clientFolderId) { return await readJsonFromDrive(clientFolderId, SHOP_ITEMS_DB); }
 async function saveShopItemsDb(clientFolderId, data) { return await saveJsonToDrive(clientFolderId, SHOP_ITEMS_DB, data); }
 
-
-// --- ОТЧЕТЫ ---
 
 async function appendToReport(workerId, workerName, city, dateStr, address, entrance, client, workType, price, lat, lon) {
     try {
@@ -198,8 +188,6 @@ async function appendMerchToReport(workerId, workerName, net, address, stock, fa
     } catch (e) { console.error("Merch Error:", e); }
 }
 
-// --- РОУТЫ ДЛЯ ПЛАНОГРАММ ---
-
 app.get('/get-planogram', async (req, res) => {
     try {
         const { addr, key } = req.query;
@@ -244,8 +232,6 @@ app.post('/upload-planogram', async (req, res) => {
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
-// --- РОУТЫ ДЛЯ ШТРИХ-КОДОВ И ТОВАРОВ ---
 
 app.get('/get-catalog', async (req, res) => {
     try {
@@ -331,8 +317,6 @@ app.post('/save-barcode', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// --- УПРАВЛЕНИЕ ---
-
 app.get('/api/open-folder', async (req, res) => {
     try {
         const { workerName } = req.query;
@@ -402,14 +386,15 @@ app.post('/upload', async (req, res) => {
 
 app.post('/merch-upload', async (req, res) => {
     try {
-        const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon, city, items, key } = req.body;
+        const { worker, net, address, stock, faces, share, ourPrice, compPrice, expDate, pdf, startTime, endTime, duration, lat, lon, city, items, key, entrance } = req.body;
         const keys = await readDatabase();
         const kData = keys.find(k => k.key === key) || keys.find(k => k.workers && k.workers.includes(worker)) || keys.find(k => k.key === 'DEV-MASTER-999');
         
-        // СОХРАНЕНИЕ АССОРТИМЕНТА ДЛЯ КОЛЛЕГ
+        // СОХРАНЕНИЕ АССОРТИМЕНТА И ОСТАТКОВ ДЛЯ ДИНАМИКИ
         if (kData && kData.folderId && items) {
             const shopDb = await readShopItemsDb(kData.folderId);
-            shopDb[address] = items.map(i => ({ bc: i.bc, name: i.name }));
+            // Сохраняем shelf и stock для следующего визита
+            shopDb[address] = items.map(i => ({ bc: i.bc, name: i.name, shelf: i.shelf || 0, stock: i.stock || 0 }));
             await saveShopItemsDb(kData.folderId, shopDb);
         }
 
@@ -417,11 +402,22 @@ app.post('/merch-upload', async (req, res) => {
         const wId = await getOrCreateFolder(worker, oId);
         const cityId = await getOrCreateFolder(city || "Без города", wId);
         const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], cityId);
+        
         let pUrl = "Нет файла";
         if (pdf) {
             const base64Data = pdf.includes(',') ? pdf.split(',')[1] : pdf;
             const buf = Buffer.from(base64Data, 'base64');
-            const f = await drive.files.create({ resource: { name: `ВРЕМЯ ПРОВЕДЕННОЕ В МАГАЗИНЕ.jpg`, parents: [dId] }, media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, fields: 'id, webViewLink' });
+            
+            // ПРАВИЛЬНОЕ НАЗВАНИЕ ФОТО: адрес номер_дома подъезд
+            const safeAddr = (address || "ADDRESS").replace(/[/\\?%*:|"<>]/g, '-');
+            const safeEntr = (entrance || "1");
+            const fileName = `${safeAddr} под ${safeEntr}.jpg`;
+
+            const f = await drive.files.create({ 
+                resource: { name: fileName, parents: [dId] }, 
+                media: { mimeType: 'image/jpeg', body: Readable.from(buf) }, 
+                fields: 'id, webViewLink' 
+            });
             await drive.permissions.create({ fileId: f.data.id, resource: { role: 'writer', type: 'anyone' } });
             pUrl = f.data.webViewLink;
         }
