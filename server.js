@@ -496,7 +496,7 @@ app.post('/api/notify-admin', async (req, res) => {
 
         // ССЫЛКА ВОЗВРАТА С КЛЮЧОМ
         console.log("СФОРМИРОВАН КЛЮЧ ДЛЯ ОПЛАТЫ:", displayKey);
-const returnUrl = encodeURIComponent(`https://logist-x.ru/success.html?key=${displayKey})`
+const returnUrl = encodeURIComponent(`https://logist-x.ru/success.html?key=${displayKey}`);
 
         const payUrl = `https://auth.robokassa.ru/Merchant/Index.aspx?MerchantLogin=${ROBO_LOGIN}&OutSum=${price}&InvId=${invId}&Description=${encodeURIComponent(desc)}&SignatureValue=${sign}&Shp_days=${days}&Shp_key=${displayKey}&Shp_chatId=${chatId}&Shp_limit=${finalLimit}&Shp_name=${encodeURIComponent(name)}&Shp_type=${type}${IS_TEST ? '&IsTest=1' : ''}&SuccessURL=${returnUrl}`;
 
