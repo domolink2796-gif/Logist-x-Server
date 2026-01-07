@@ -826,21 +826,32 @@ bot.on('text', async (ctx) => {
         ctx.reply('✅ КЛЮЧ АКТИВИРОВАН!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
     } else ctx.reply('❌ Ключ не найден.');
 });
+// --- ЗАГРУЗЧИК ПЛАГИНОВ (СТРОКА 829) ---
 const fs = require('fs');
 const path = require('path');
+
 const pluginContext = { 
-    drive, google, sheets, bot, readDatabase, saveDatabase, 
-    getOrCreateFolder, MY_ROOT_ID, MERCH_ROOT_ID, readJsonFromDrive, saveJsonToDrive 
+    app, drive, google, sheets, bot, 
+    readDatabase, saveDatabase, getOrCreateFolder, 
+    readPlanogramDb, savePlanogramDb, readJsonFromDrive, saveJsonToDrive,
+    readBarcodeDb, saveBarcodeDb, readShopItemsDb, saveShopItemsDb,
+    MY_ROOT_ID, MERCH_ROOT_ID 
 };
 
 fs.readdirSync(__dirname).forEach(file => {
     if (file.startsWith('plugin-') && file.endsWith('.js')) {
         try {
-            require(path.join(__dirname, file))(app, pluginContext);
-            console.log(`✅ Доп. модуль загружен: ${file}`);
-        } catch (e) { console.error(`❌ Ошибка в ${file}:`, e.message); }
+            const plugin = require(path.join(__dirname, file));
+            if (typeof plugin === 'function') {
+                plugin(app, pluginContext);
+                console.log(`✅ Плагин загружен: ${file}`);
+            }
+        } catch (err) {
+            console.error(`❌ Ошибка загрузки ${file}:`, err.message);
+        }
     }
 });
+// -------------------------------------
 
 bot.launch().then(() => console.log("READY"));
 app.listen(process.env.PORT || 3000);
