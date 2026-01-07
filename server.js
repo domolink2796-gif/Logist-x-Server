@@ -394,7 +394,7 @@ app.post('/merch-upload', async (req, res) => {
         if (kData && kData.folderId && items) {
             const shopDb = await readShopItemsDb(kData.folderId);
             // Сохраняем shelf и stock для следующего визита
-            shopDb[address] = items.map(i => ({ bc: i.bc, name: i.name, shelf: i.shelf || 0, stock: i.stock || 0 }));
+            shopDb[address] = items.map(i => ({ i_bc: i.bc, i_name: i.name, i_shelf: i.shelf || 0, i_stock: i.stock || 0 }));
             await saveShopItemsDb(kData.folderId, shopDb);
         }
 
@@ -689,10 +689,11 @@ app.get('/client-dashboard', (req, res) => {
             const r = await fetch('/api/notify-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,name,days,chatId:cid,type})});
             const res = await r.json();
             
-            // --- ДОБАВЛЯЕМ URL ВОЗВРАТА ДЛЯ РОБОКАССЫ ---
+            // --- ТЕПЕРЬ СТРАНИЦА САМА ПОНИМАЕТ СВОЙ АДРЕС ---
             if(res.success && res.payUrl) {
-                // Это заставит Робокассу после оплаты вернуть клиента на эту же страницу с ключом в ссылке
-                const returnUrl = encodeURIComponent(window.location.href + "&status=success&key=" + key);
+                // Берем текущий URL из браузера, чтобы точно вернуться сюда
+                const currentBaseUrl = window.location.origin + window.location.pathname;
+                const returnUrl = encodeURIComponent(currentBaseUrl + "?chatId=" + cid + "&status=success&key=" + key);
                 window.location.href = res.payUrl + "&SuccessURL=" + returnUrl;
             }
         }
@@ -732,7 +733,7 @@ bot.on('text', async (ctx) => {
         const r = await fetch(SERVER_URL + '/api/notify-admin', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ key: "NEW_USER", name: step.name, days: 30, limit, chatId: cid, type: step.type }) });
         const res = await r.json();
         
-        // --- ДЛЯ НОВОГО ПОЛЬЗОВАТЕЛЯ ТОЖЕ ДОБАВЛЯЕМ URL ВОЗВРАТА ---
+        // --- ДЛЯ НОВОГО ПОЛЬЗОВАТЕЛЯ ТОЖЕ АВТО-ОПРЕДЕЛЕНИЕ АДРЕСА ---
         const returnUrl = encodeURIComponent(SERVER_URL + "/client-dashboard?chatId=" + cid + "&status=success&key=НОВЫЙ_КЛЮЧ");
         ctx.reply(`💳 К оплате: ${limit * 1500}₽`, { reply_markup: { inline_keyboard: [[{ text: "ОПЛАТИТЬ", url: res.payUrl + "&SuccessURL=" + returnUrl }]] } });
         delete userSteps[cid]; return;
