@@ -851,7 +851,7 @@ fs.readdirSync(__dirname).forEach(file => {
         }
     }
 });
-// -------------------------------------
+
 
 bot.launch().then(() => console.log("READY"));
 app.listen(process.env.PORT || 3000);
