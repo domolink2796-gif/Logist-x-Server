@@ -1,42 +1,85 @@
-module.exports = function(app, db) {
-    // Используем db, который уже есть в твоем основном server.js
-    console.log("📦 Серверный плагин: Синхронизация через базу данных активна");
+module.exports = function(app, googleSheets, auth) {
+    console.log("🚀 Серверный плагин: Индивидуальные таблицы остатков активны");
 
-    // 1. Прием данных (Катя сохраняет)
+    // Память сервера, чтобы не искать ID таблицы в Google каждый раз
+    let clientTables = {}; 
+
+    // Функция поиска или создания таблицы для клиента
+    async function getClientTable(key) {
+        if (clientTables[key]) return clientTables[key];
+
+        const fileName = `STOCKS_STORAGE_${key}`;
+        try {
+            // Ищем файл на диске
+            const drive = google.drive({ version: 'v3', auth });
+            const response = await drive.files.list({
+                q: `name = '${fileName}' and mimeType = 'application/vnd.google-apps.spreadsheet'`,
+                fields: 'files(id, name)',
+            });
+
+            if (response.data.files.length > 0) {
+                clientTables[key] = response.data.files[0].id;
+            } else {
+                // Создаем новую таблицу, если не нашли
+                const spreadsheet = await googleSheets.spreadsheets.create({
+                    resource: { properties: { title: fileName } },
+                    fields: 'spreadsheetId',
+                });
+                const newId = spreadsheet.data.spreadsheetId;
+                
+                // Создаем заголовки в новой таблице
+                await googleSheets.spreadsheets.values.update({
+                    spreadsheetId: newId,
+                    range: "Sheet1!A1:F1",
+                    valueInputOption: "USER_ENTERED",
+                    resource: { values: [["address", "bc", "name", "shelf", "stock", "last_update"]] }
+                });
+                
+                clientTables[key] = newId;
+                console.log(`✨ Создана новая таблица для клиента ${key}: ${newId}`);
+            }
+            return clientTables[key];
+        } catch (e) { console.error("Ошибка Диска:", e); return null; }
+    }
+
+    // ПРИЕМ ДАННЫХ
     app.post('/save-partial-stock', async (req, res) => {
         const { key, addr, item } = req.body;
-        if (!key || !addr || !item) return res.sendStatus(400);
+        const tableId = await getClientTable(key);
+        if (!tableId) return res.sendStatus(500);
 
         try {
-            // Записываем в таблицу, где хранятся текущие остатки
-            // Если такой товар уже был для этого магазина — обновляем цифры
-            await db.query(`
-                INSERT INTO shop_stocks (lic_key, address, barcode, name, shelf, stock)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (lic_key, address, barcode) 
-                DO UPDATE SET shelf = $5, stock = $6
-            `, [key, addr, item.bc, item.name, item.shelf, item.stock]);
-
+            // Добавляем запись: Адрес, Штрихкод, Имя, Полка, Склад, Время
+            await googleSheets.spreadsheets.values.append({
+                spreadsheetId: tableId,
+                range: "Sheet1!A:F",
+                valueInputOption: "USER_ENTERED",
+                resource: { values: [[addr, item.bc, item.name, item.shelf, item.stock, new Date().toISOString()]] }
+            });
             res.sendStatus(200);
-        } catch (e) {
-            console.error("Ошибка сохранения в БД:", e);
-            res.sendStatus(500);
-        }
+        } catch (e) { res.sendStatus(500); }
     });
 
-    // 2. Раздача данных (Ваня забирает)
+    // ВЫДАЧА ДАННЫХ (для Кати, Вани и др.)
     app.get('/get-shop-stock', async (req, res) => {
         const { key, addr } = req.query;
-        if (!key || !addr) return res.json([]);
+        const tableId = await getClientTable(key);
+        if (!tableId) return res.json([]);
 
         try {
-            const result = await db.query(
-                "SELECT barcode as bc, name, shelf, stock FROM shop_stocks WHERE lic_key = $1 AND address = $2",
-                [key, addr]
-            );
-            res.json(result.rows);
-        } catch (e) {
-            res.json([]);
-        }
+            const result = await googleSheets.spreadsheets.values.get({
+                spreadsheetId: tableId,
+                range: "Sheet1!A:F",
+            });
+            const rows = result.data.values || [];
+            const filtered = rows.filter(r => r[0] === addr);
+            
+            // Берем только самое последнее состояние каждого товара
+            const lastState = {};
+            filtered.forEach(r => {
+                lastState[r[1]] = { bc: r[1], name: r[2], shelf: r[3], stock: r[4] };
+            });
+            res.json(Object.values(lastState));
+        } catch (e) { res.json([]); }
     });
 };
