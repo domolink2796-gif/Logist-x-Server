@@ -1,37 +1,24 @@
 module.exports = function(app, ctx) {
     const { sheets, drive, readDatabase } = ctx;
     
-    console.log("☀️ [DEBUG] Плагин СОЛНЦЕ: Система синхронизации готова!");
+    console.log("☀️ [DEBUG] Плагин СОЛНЦЕ: Система памяти активирована!");
 
+    // --- 1. ПРИЕМ ДАННЫХ ОТ ТЕЛЕФОНА (Сохранение) ---
     app.post('/save-partial-stock', async (req, res) => {
         try {
             const { key, addr, item, userName } = req.body;
-            
-            // 1. Проверяем данные
-            if (!key || !addr || !item) {
-                console.log("⚠️ Получены пустые данные, пропускаю.");
-                return res.sendStatus(200);
-            }
+            if (!key || !addr || !item) return res.sendStatus(200);
 
-            console.log(`📥 [СИГНАЛ] Товар: ${item.name} | Магазин: ${addr}`);
-
-            // 2. Ищем папку клиента
+            console.log(`📥 [СИГНАЛ] Обновляю: ${item.name} (${addr})`);
             const db = await readDatabase();
             const client = db.find(k => k.key === key);
-            if (!client || !client.folderId) {
-                console.log("❌ Ошибка: Папка клиента не найдена.");
-                return res.sendStatus(200);
-            }
+            if (!client || !client.folderId) return res.sendStatus(200);
 
             const tableName = `ОСТАТКИ_МАГАЗИНОВ_${key}`;
-            const q = `'${client.folderId}' in parents and name = '${tableName}' and trashed = false`;
-            const search = await drive.files.list({ q, fields: 'files(id)' });
-
+            const search = await drive.files.list({ q: `'${client.folderId}' in parents and name = '${tableName}' and trashed = false` });
             let tId = search.data.files.length > 0 ? search.data.files[0].id : null;
 
-            // 3. Создаем таблицу, если её нет
             if (!tId) {
-                console.log("🔨 Создаю новую таблицу остатков...");
                 const ss = await sheets.spreadsheets.create({ resource: { properties: { title: tableName } } });
                 tId = ss.data.spreadsheetId;
                 await drive.files.update({ fileId: tId, addParents: client.folderId, removeParents: 'root' });
@@ -42,7 +29,6 @@ module.exports = function(app, ctx) {
                 });
             }
 
-            // 4. УМНОЕ ОБНОВЛЕНИЕ (Ищем, есть ли уже этот товар в этом магазине)
             const result = await sheets.spreadsheets.values.get({ spreadsheetId: tId, range: "Sheet1!A:G" });
             const rows = result.data.values || [];
             const rowIndex = rows.findIndex(r => r[0] === addr && r[1] === item.bc);
@@ -51,27 +37,43 @@ module.exports = function(app, ctx) {
             const newValues = [addr, item.bc, item.name, item.shelf || 0, item.stock || 0, time, userName];
 
             if (rowIndex !== -1) {
-                // Если нашли — обновляем строку
                 await sheets.spreadsheets.values.update({
                     spreadsheetId: tId, range: `Sheet1!A${rowIndex + 1}:G${rowIndex + 1}`,
-                    valueInputOption: "USER_ENTERED",
-                    resource: { values: [newValues] }
+                    valueInputOption: "USER_ENTERED", resource: { values: [newValues] }
                 });
-                console.log(`✅ Данные ОБНОВЛЕНЫ в строке ${rowIndex + 1}`);
             } else {
-                // Если нет — добавляем в конец
                 await sheets.spreadsheets.values.append({
                     spreadsheetId: tId, range: "Sheet1!A:G",
-                    valueInputOption: "USER_ENTERED",
-                    resource: { values: [newValues] }
+                    valueInputOption: "USER_ENTERED", resource: { values: [newValues] }
                 });
-                console.log("✅ Создана НОВАЯ запись в таблице");
             }
+            res.sendStatus(200);
+        } catch (e) { res.sendStatus(200); }
+    });
 
-            res.sendStatus(200);
-        } catch (e) {
-            console.error("❌ Ошибка записи:", e.message);
-            res.sendStatus(200);
-        }
+    // --- 2. ПЕРЕДАЧА ДАННЫХ В ТЕЛЕФОН (Загрузка списка) ---
+    app.get('/get-shop-stock', async (req, res) => {
+        try {
+            const { key, addr } = req.query;
+            const db = await readDatabase();
+            const client = db.find(k => k.key === key);
+            if (!client || !client.folderId) return res.json([]);
+
+            const tableName = `ОСТАТКИ_МАГАЗИНОВ_${key}`;
+            const search = await drive.files.list({ q: `'${client.folderId}' in parents and name = '${tableName}' and trashed = false` });
+            if (search.data.files.length === 0) return res.json([]);
+
+            const tId = search.data.files[0].id;
+            const result = await sheets.spreadsheets.values.get({ spreadsheetId: tId, range: "Sheet1!A:G" });
+            const rows = result.data.values || [];
+
+            // Фильтруем товары только для этого магазина
+            const shopItems = rows.slice(1)
+                .filter(r => r[0] === addr)
+                .map(r => ({ bc: r[1], name: r[2], shelf: r[3], stock: r[4] }));
+
+            console.log(`📤 [ОТДАЮ] Отправил ${shopItems.length} товаров для магазина: ${addr}`);
+            res.json(shopItems);
+        } catch (e) { res.json([]); }
     });
 };
