@@ -312,6 +312,7 @@ app.post('/save-barcode', async (req, res) => {
         const barcodeDb = await readBarcodeDb(keys[kIdx].folderId);
         barcodeDb[code] = { name: name, date: new Date().toISOString() };
         await saveBarcodeDb(keys[kIdx].folderId, barcodeDb);
+app.emit('barcode-scanned', { key: licenseKey, bc: code, name: name });
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -830,7 +831,7 @@ bot.on('text', async (ctx) => {
 const fs = require('fs');
 const path = require('path');
 
-const pluginContext = { 
+const pluginContext = {
     app, 
     drive, 
     google, 
@@ -867,5 +868,3 @@ fs.readdirSync(__dirname).forEach(file => {
 
 
 
-bot.launch().then(() => console.log("READY"));
-app.listen(process.env.PORT || 3000);
