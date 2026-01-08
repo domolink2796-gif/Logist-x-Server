@@ -866,3 +866,4 @@ process.on('unhandledRejection', (reason) => {
     if (reason && reason.response && reason.response.error_code === 409) return;
     console.error('Unhandled Rejection:', reason);
 });
+app.listen(process.env.PORT || 3000, () => console.log("🚀 СЕРВЕР ЗАПУЩЕН И ЖДЕТ ЗАПРОСОВ"));
