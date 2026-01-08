@@ -10,13 +10,14 @@ module.exports = function(app, googleSheets, auth, db) {
         try {
             const drive = google.drive({ version: 'v3', auth });
             
-            // 1. Узнаем ID папки клиента из твоей базы (таблица licenses или users)
+            // 1. Ищем ID папки клиента (folder_id) в твоей базе данных
+            // ПРОВЕРЬ: Название таблицы (licenses) и колонки (folder_id) должны совпадать с твоими
             const result = await db.query("SELECT folder_id FROM licenses WHERE lic_key = $1", [key]);
             const folderId = result.rows.length > 0 ? result.rows[0].folder_id : null;
 
             const fileName = `ОСТАТКИ_КОМАНДЫ_${key}`;
 
-            // 2. Ищем, нет ли уже такого файла в ЭТОЙ папке
+            // 2. Ищем файл именно в этой папке
             const query = folderId 
                 ? `'${folderId}' in parents and name = '${fileName}' and trashed = false`
                 : `name = '${fileName}' and trashed = false`;
@@ -28,45 +29,39 @@ module.exports = function(app, googleSheets, auth, db) {
                 return clientTables[key];
             }
 
-            // 3. Если нет — создаем таблицу прямо в папке клиента
-            const resource = {
-                properties: { title: fileName },
-            };
-            
-            // Если нашли folderId в базе, указываем его как родителя
-            if (folderId) {
-                resource.parents = [folderId];
-            }
-
+            // 3. Если таблицы нет — создаем её прямо внутри папки клиента
             const spreadsheet = await googleSheets.spreadsheets.create({
-                resource: resource,
+                resource: {
+                    properties: { title: fileName },
+                    parents: folderId ? [folderId] : []
+                },
                 fields: 'spreadsheetId',
             });
             const newId = spreadsheet.data.spreadsheetId;
 
-            // 4. Настройка доступа "Для всех" (как ты просил)
+            // 4. Доступ по ссылке (чтобы открывалось из твоего кабинета без логина)
             await drive.permissions.create({
                 fileId: newId,
                 resource: { type: 'anyone', role: 'writer' }
             });
 
-            // 5. Шапка
+            // 5. Создаем шапку таблицы
             await googleSheets.spreadsheets.values.update({
                 spreadsheetId: newId,
                 range: "Sheet1!A1:G1",
                 valueInputOption: "USER_ENTERED",
-                resource: { values: [["Магазин", "Штрихкод", "Товар", "Полка", "Склад", "Обновлено", "Сотрудник"]] }
+                resource: { values: [["Магазин", "Штрихкод", "Товар", "Полка", "Склад", "Дата/Время", "Сотрудник"]] }
             });
 
             clientTables[key] = newId;
             return newId;
         } catch (e) {
-            console.error("❌ Ошибка привязки к папке клиента:", e);
+            console.error("❌ Ошибка плагина остатков:", e.message);
             return null;
         }
     }
 
-    // Сохранение (теперь летит в папку клиента)
+    // Обработка сохранения данных от мерчендайзера
     app.post('/save-partial-stock', async (req, res) => {
         const { key, addr, item, userName } = req.body;
         const tableId = await getClientTable(key);
@@ -77,13 +72,13 @@ module.exports = function(app, googleSheets, auth, db) {
                 spreadsheetId: tableId,
                 range: "Sheet1!A:G",
                 valueInputOption: "USER_ENTERED",
-                resource: { values: [[addr, item.bc, item.name, item.shelf, item.stock, new Date().toLocaleString('ru-RU'), userName]] }
+                resource: { values: [[addr, item.bc, item.name, item.shelf, item.stock, new Date().toLocaleString('ru-RU'), userName || 'Сотрудник']] }
             });
             res.sendStatus(200);
         } catch (e) { res.sendStatus(500); }
     });
 
-    // Чтение для команды
+    // Обработка загрузки для команды (Ваня видит данные Кати)
     app.get('/get-shop-stock', async (req, res) => {
         const { key, addr } = req.query;
         const tableId = await getClientTable(key);
@@ -96,6 +91,8 @@ module.exports = function(app, googleSheets, auth, db) {
             });
             const rows = result.data.values || [];
             const filtered = rows.slice(1).filter(r => r[0] === addr);
+            
+            // Собираем актуальное состояние (последняя запись по каждому BC)
             const lastState = {};
             filtered.forEach(r => {
                 lastState[r[1]] = { bc: r[1], name: r[2], shelf: r[3], stock: r[4] };
