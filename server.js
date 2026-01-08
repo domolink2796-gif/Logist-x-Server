@@ -852,19 +852,17 @@ const pluginContext = {
     MERCH_ROOT_ID 
 };
 
-fs.readdirSync(__dirname).forEach(file => {
-    if (file.startsWith('plugin-') && file.endsWith('.js')) {
-        try {
-            const plugin = require(path.join(__dirname, file));
-            if (typeof plugin === 'function') {
-                plugin(app, pluginContext);
-                console.log(`✅ Плагин загружен: ${file}`);
-            }
-        } catch (err) {
-            console.error(`❌ Ошибка загрузки ${file}:`, err.message);
-        }
+// Безопасный запуск: если будет конфликт 409, сервер не упадет
+bot.launch().catch(err => {
+    if (err.response && err.response.error_code === 409) {
+        console.log("⚠️ Бот уже запущен в другом месте. Работаем без него, админка и таблицы будут доступны.");
+    } else {
+        console.error("❌ Ошибка бота:", err);
     }
 });
 
-
-
+// Дополнительная защита от падения
+process.on('unhandledRejection', (reason) => {
+    if (reason && reason.response && reason.response.error_code === 409) return;
+    console.error('Unhandled Rejection:', reason);
+});
