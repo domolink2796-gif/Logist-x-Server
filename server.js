@@ -427,26 +427,33 @@ app.post('/merch-upload', async (req, res) => {
 });
 
 app.get('/api/keys', async (req, res) => { res.json(await readDatabase()); });
+
+// --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ ЛИЧНОГО КАБИНЕТА КЛИЕНТА ---
 app.get('/api/client-keys', async (req, res) => {
     try { 
         const keys = await readDatabase(); 
         const { chatId, key } = req.query;
-        // Если зашли через бота по chatId
+        let results = [];
+        
+        // Поиск по chatId (из бота)
         if (chatId && chatId !== 'null' && chatId !== 'undefined') {
-            const myKeys = keys.filter(k => 
+            results = keys.filter(k => 
                 k.ownerChatId && 
-                String(k.ownerChatId) === String(cid) && 
-                k.ownerChatId !== 'WEBSITE_SALE'
+                String(k.ownerChatId) === String(chatId)
             );
-            return res.json(myKeys);
         }
-        // Если человек с сайта ввел ключ вручную
-        if (key) {
+        
+        // Поиск по ключу вручную
+        if (key && results.length === 0) {
             const found = keys.find(k => k.key === key.toUpperCase());
-            return res.json(found ? [found] : []);
+            if (found) results = [found];
         }
+        
+        res.json(results); 
+    } catch (e) { 
+        console.error("Client Keys Error:", e);
         res.json([]); 
-    } catch (e) { res.json([]); }
+    }
 });
 
 app.post('/api/keys/add', async (req, res) => {
@@ -495,11 +502,11 @@ app.post('/api/notify-admin', async (req, res) => {
             displayKey = (type === 'merch' ? 'M-' : 'L-') + Math.random().toString(36).substring(2, 6).toUpperCase();
         }
 
-        // ПРАВИЛЬНЫЙ РАСЧЕТ ЛИМИТА (чтобы сервер не выдавал ошибку на новых юзеров)
+        // ПРАВИЛЬНЫЙ РАСЧЕТ ЛИМИТА
         const foundInDb = keys.find(k => k.key === key);
         const finalLimit = foundInDb ? parseInt(foundInDb.limit) : (parseInt(limit) || 1);
 
-        // ТВОЯ ЛОГИКА ЦЕН (сохранена полностью)
+        // ТВОЯ ЛОГИКА ЦЕН
         let price = finalLimit * 1500;
         if (days == 90) price = finalLimit * 4050; 
         if (days == 180) price = finalLimit * 7650; 
@@ -540,7 +547,7 @@ app.post('/api/payment-result', async (req, res) => {
                 const exp = new Date(); exp.setDate(exp.getDate() + parseInt(Shp_days));
                 const projR = (Shp_type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
                 const fId = await getOrCreateFolder(Shp_name, projR);
-                // При покупке с сайта (WEBSITE_SALE) ставим null, чтобы ключ был "свободным" до активации в ТГ
+                // При покупке с сайта (WEBSITE_SALE) ставим null
                 const finalOwner = (Shp_chatId === 'WEBSITE_SALE') ? null : Shp_chatId;
                 keys.push({ key: Shp_key, name: Shp_name, limit: parseInt(Shp_limit), expiry: exp.toISOString(), workers: [], ownerChatId: finalOwner, folderId: fId, type: Shp_type });
                 clientMsg = `🎉 Оплата успешна! Ваш ключ: ${Shp_key}`;
@@ -827,51 +834,37 @@ bot.on('text', async (ctx) => {
         ctx.reply('✅ КЛЮЧ АКТИВИРОВАН!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
     } else ctx.reply('❌ Ключ не найден.');
 });
-// --- ЗАГРУЗЧИК ПЛАГИНОВ (СТРОКА 829) ---
+
+// --- ЗАГРУЗЧИК ПЛАГИНОВ ---
 const fs = require('fs');
 const path = require('path');
 
 const pluginContext = {
-    app, 
-    drive, 
-    google, 
-    sheets, 
-    bot, 
-    readDatabase, 
-    saveDatabase, 
-    getOrCreateFolder, 
-    readPlanogramDb, 
-    savePlanogramDb, 
-    readJsonFromDrive, 
-    saveJsonToDrive,
-    readBarcodeDb, 
-    saveBarcodeDb, 
-    readShopItemsDb, 
-    saveShopItemsDb,
-    MY_ROOT_ID, 
-    MERCH_ROOT_ID 
+    app, drive, google, sheets, bot, 
+    readDatabase, saveDatabase, getOrCreateFolder, 
+    readPlanogramDb, savePlanogramDb, readJsonFromDrive, 
+    saveJsonToDrive, readBarcodeDb, saveBarcodeDb, 
+    readShopItemsDb, saveShopItemsDb, MY_ROOT_ID, MERCH_ROOT_ID 
 };
-// --- ВКЛЮЧАЕМ ПЛАГИНЫ ИЗ КОРНЯ ---
+
 try {
-    // Эта строчка запускает твой плагин "Солнце"
     require('./plugin-merch-sun.js')(app, pluginContext); 
     console.log("✅ ПЛАГИН СОЛНЦЕ ПОДКЛЮЧЕН");
 } catch (e) {
     console.log("❌ Ошибка в файле plugin-merch-sun.js: " + e.message);
 }
 
-// Безопасный запуск: если будет конфликт 409, сервер не упадет
 bot.launch().catch(err => {
     if (err.response && err.response.error_code === 409) {
-        console.log("⚠️ Бот уже запущен в другом месте. Работаем без него, админка и таблицы будут доступны.");
+        console.log("⚠️ Бот уже запущен в другом месте.");
     } else {
         console.error("❌ Ошибка бота:", err);
     }
 });
 
-// Дополнительная защита от падения
 process.on('unhandledRejection', (reason) => {
     if (reason && reason.response && reason.response.error_code === 409) return;
     console.error('Unhandled Rejection:', reason);
 });
+
 app.listen(process.env.PORT || 3000, () => console.log("🚀 СЕРВЕР ЗАПУЩЕН И ЖДЕТ ЗАПРОСОВ"));
