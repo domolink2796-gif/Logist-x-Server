@@ -851,6 +851,14 @@ const pluginContext = {
     MY_ROOT_ID, 
     MERCH_ROOT_ID 
 };
+// --- ВКЛЮЧАЕМ ПЛАГИНЫ ИЗ КОРНЯ ---
+try {
+    // Эта строчка запускает твой плагин "Солнце"
+    require('./plugin-merch-sun.js')(app, pluginContext); 
+    console.log("✅ ПЛАГИН СОЛНЦЕ ПОДКЛЮЧЕН");
+} catch (e) {
+    console.log("❌ Ошибка в файле plugin-merch-sun.js: " + e.message);
+}
 
 // Безопасный запуск: если будет конфликт 409, сервер не упадет
 bot.launch().catch(err => {
