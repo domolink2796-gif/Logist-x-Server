@@ -1,21 +1,20 @@
 const { Readable } = require('stream');
 
 module.exports = (app, ctx) => {
-    // Безопасно достаем инструменты. Если чего-то нет, плагин просто выдаст ошибку в лог, а не уронит сервер.
-    const drive = ctx.drive;
-    const getOrCreateFolder = ctx.getOrCreateFolder;
-    const readDatabase = ctx.readDatabase;
+    // Инструменты от сервера
+    const { drive, getOrCreateFolder, readDatabase } = ctx;
 
-    // 1. Получение планограммы
     app.get('/get-planogram', async (req, res) => {
         try {
             const { addr, key } = req.query;
-            if (!addr || !key) return res.json({ exists: false, error: "Missing params" });
-
             const keys = await readDatabase();
+            // Ищем клиента по ключу
             const kData = keys.find(k => k.key === key);
+            
+            // Если клиент не найден или у него нет папки - от ворот поворот
             if (!kData || !kData.folderId) return res.json({ exists: false });
 
+            // Ищем папку PLANOGRAMS строго ВНУТРИ папки этого клиента
             const planFolderId = await getOrCreateFolder("PLANOGRAMS", kData.folderId);
             const fileName = addr.trim() + ".jpg";
 
@@ -25,35 +24,33 @@ module.exports = (app, ctx) => {
             if (search.data.files && search.data.files.length > 0) {
                 res.json({ 
                     exists: true, 
-                    url: search.data.files[0].webContentLink || search.data.files[0].webViewLink 
+                    url: search.data.files[0].webViewLink,
+                    webContentLink: search.data.files[0].webContentLink 
                 });
             } else {
                 res.json({ exists: false });
             }
         } catch (e) {
-            console.error("❌ Ошибка плагина (GET):", e.message);
-            res.status(500).json({ error: e.message });
+            res.json({ exists: false });
         }
     });
 
-    // 2. Загрузка планограммы
     app.post('/upload-planogram', async (req, res) => {
         try {
             const { addr, image, key } = req.body;
-            if (!addr || !image || !key) return res.status(400).json({ error: "Missing data" });
-
             const keys = await readDatabase();
             const kData = keys.find(k => k.key === key);
-            if (!kData || !kData.folderId) return res.status(403).json({ error: "No folder" });
+            
+            if (!kData || !kData.folderId) return res.status(403).json({ error: "Нет доступа к папке клиента" });
 
+            // Создаем/ищем папку PLANOGRAMS в папке КЛИЕНТА
             const planFolderId = await getOrCreateFolder("PLANOGRAMS", kData.folderId);
             const fileName = addr.trim() + ".jpg";
             const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
 
+            const media = { mimeType: 'image/jpeg', body: Readable.from(buf) };
             const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
             const existing = await drive.files.list({ q });
-            
-            const media = { mimeType: 'image/jpeg', body: Readable.from(buf) };
 
             if (existing.data.files && existing.data.files.length > 0) {
                 await drive.files.update({ fileId: existing.data.files[0].id, media });
@@ -67,7 +64,6 @@ module.exports = (app, ctx) => {
             }
             res.json({ success: true });
         } catch (e) {
-            console.error("❌ Ошибка плагина (POST):", e.message);
             res.status(500).json({ error: e.message });
         }
     });
