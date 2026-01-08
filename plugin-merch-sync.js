@@ -1,116 +1,99 @@
 const { google } = require('googleapis');
 
 module.exports = function(app, ctx) {
-    // Берем инструменты из контекста твоего основного server.js
-    const { sheets, drive, readDatabase, getOrCreateFolder } = ctx;
-    
-    console.log("📂 Плагин командных остатков подключен к контексту Server.js");
+    // Используем инструменты из твоего server.js
+    const { sheets, drive, readDatabase } = ctx;
+    console.log("🚀 Плагин: ЖИВАЯ СИНХРОНИЗАЦИЯ ОСТАТКОВ запущен");
 
-    let clientTables = {};
-
-    async function getClientTable(key) {
-        if (clientTables[key]) return clientTables[key];
-
+    async function getTable(key) {
         try {
-            // 1. Используем твою функцию из server.js для получения папки клиента
             const keys = await readDatabase();
             const kData = keys.find(k => k.key === key);
-            
-            if (!kData || !kData.folderId) {
-                console.log(`⚠️ Предупреждение: Ключ ${key} не имеет folderId`);
-                return null;
-            }
+            if (!kData || !kData.folderId) return null;
 
-            const folderId = kData.folderId;
-            const fileName = `ОСТАТКИ_КОМАНДЫ_${key}`;
-
-            // 2. Ищем, нет ли уже такой таблицы в папке
-            const q = `'${folderId}' in parents and name = '${fileName}' and trashed = false`;
+            const name = `ОСТАТКИ_КОМАНДЫ_${key}`;
+            const q = `'${kData.folderId}' in parents and name = '${name}' and trashed = false`;
             const search = await drive.files.list({ q, fields: 'files(id)' });
 
-            if (search.data.files && search.data.files.length > 0) {
-                clientTables[key] = search.data.files[0].id;
-                return clientTables[key];
-            }
+            if (search.data.files && search.data.files.length > 0) return search.data.files[0].id;
 
-            // 3. Если нет — создаем новую таблицу Google
-            const spreadsheet = await sheets.spreadsheets.create({
-                resource: {
-                    properties: { title: fileName }
-                }
+            // Если таблицы нет, создаем её
+            const ss = await sheets.spreadsheets.create({
+                resource: { properties: { title: name } }
             });
-            const newId = spreadsheet.data.spreadsheetId;
+            const id = ss.data.spreadsheetId;
 
-            // 4. Переносим её в папку клиента и даем доступ
-            await drive.files.update({
-                fileId: newId,
-                addParents: folderId,
-                removeParents: 'root',
-                fields: 'id, parents'
-            });
+            // Переносим в папку клиента и даем доступ
+            await drive.files.update({ fileId: id, addParents: kData.folderId, removeParents: 'root' });
+            await drive.permissions.create({ fileId: id, resource: { type: 'anyone', role: 'writer' } });
 
-            await drive.permissions.create({
-                fileId: newId,
-                resource: { type: 'anyone', role: 'writer' }
-            });
-
-            // 5. Создаем шапку
+            // Шапка таблицы
             await sheets.spreadsheets.values.update({
-                spreadsheetId: newId,
-                range: "Sheet1!A1:G1",
+                spreadsheetId: id, range: "Sheet1!A1:G1",
                 valueInputOption: "USER_ENTERED",
-                resource: { values: [["Магазин", "Штрихкод", "Товар", "Полка", "Склад", "Дата/Время", "Сотрудник"]] }
+                resource: { values: [["Магазин", "Штрихкод", "Товар", "Полка", "Склад", "Обновлено", "Мерч"]] }
             });
 
-            clientTables[key] = newId;
-            console.log(`✅ Создана таблица в папке клиента ${kData.name}: ${newId}`);
-            return newId;
-        } catch (e) {
-            console.error("❌ Ошибка в плагине остатков:", e.message);
-            return null;
-        }
+            return id;
+        } catch (e) { console.error("❌ Ошибка getTable:", e.message); return null; }
     }
 
-    // Прием данных от мерча
     app.post('/save-partial-stock', async (req, res) => {
         const { key, addr, item, userName } = req.body;
-        console.log(`📥 ПРИШЕЛ ПИК: ${item.name} (${addr}) от ${userName}`);
-        
-        const tableId = await getClientTable(key);
-        if (!tableId) return res.status(500).send("Не найдена папка клиента");
+        const tId = await getTable(key);
+        if (!tId) return res.status(500).send("Ошибка доступа к таблице");
 
         try {
-            await sheets.spreadsheets.values.append({
-                spreadsheetId: tableId,
-                range: "Sheet1!A:G",
-                valueInputOption: "USER_ENTERED",
-                resource: { values: [[addr, item.bc, item.name, item.shelf, item.stock, new Date().toLocaleString('ru-RU'), userName || 'Мерч']] }
-            });
+            // Читаем данные, чтобы найти существующую строку
+            const getRes = await sheets.spreadsheets.values.get({ spreadsheetId: tId, range: "Sheet1!A:G" });
+            const rows = getRes.data.values || [];
+            
+            // Ищем строку: совпадение Магазина (A) и Штрихкода (B)
+            const rowIndex = rows.findIndex(r => r[0] === addr && r[1] === item.bc);
+            const timestamp = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+            const newRow = [addr, item.bc, item.name, item.shelf, item.stock, timestamp, userName || 'Мерч'];
+
+            if (rowIndex !== -1) {
+                // ОБНОВЛЯЕМ существующую строку
+                await sheets.spreadsheets.values.update({
+                    spreadsheetId: tId,
+                    range: `Sheet1!A${rowIndex + 1}:G${rowIndex + 1}`,
+                    valueInputOption: "USER_ENTERED",
+                    resource: { values: [newRow] }
+                });
+                console.log(`🔄 Обновлено: ${item.name} в ${addr}`);
+            } else {
+                // ДОБАВЛЯЕМ новую строку
+                await sheets.spreadsheets.values.append({
+                    spreadsheetId: tId,
+                    range: "Sheet1!A:G",
+                    valueInputOption: "USER_ENTERED",
+                    resource: { values: [newRow] }
+                });
+                console.log(`➕ Добавлено: ${item.name} в ${addr}`);
+            }
             res.sendStatus(200);
         } catch (e) { 
-            console.error("❌ Ошибка записи в таблицу:", e.message);
+            console.error("❌ Ошибка записи:", e.message);
             res.sendStatus(500); 
         }
     });
 
-    // Получение данных для синхронизации команды
+    // Получение данных для команды (чтобы Ваня видел данные Кати)
     app.get('/get-shop-stock', async (req, res) => {
         const { key, addr } = req.query;
-        const tableId = await getClientTable(key);
-        if (!tableId) return res.json([]);
+        const tId = await getTable(key);
+        if (!tId) return res.json([]);
 
         try {
-            const result = await sheets.spreadsheets.values.get({
-                spreadsheetId: tableId,
-                range: "Sheet1!A:G",
-            });
+            const result = await sheets.spreadsheets.values.get({ spreadsheetId: tId, range: "Sheet1!A:G" });
             const rows = result.data.values || [];
             const filtered = rows.slice(1).filter(r => r[0] === addr);
-            const lastState = {};
-            filtered.forEach(r => {
-                lastState[r[1]] = { bc: r[1], name: r[2], shelf: r[3], stock: r[4] };
-            });
-            res.json(Object.values(lastState));
+            
+            const lastState = filtered.map(r => ({
+                bc: r[1], name: r[2], shelf: r[3], stock: r[4]
+            }));
+            res.json(lastState);
         } catch (e) { res.json([]); }
     });
 };
