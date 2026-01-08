@@ -1,89 +1,59 @@
-const { google } = require('googleapis');
-
 module.exports = function(app, ctx) {
     const { sheets, drive, readDatabase } = ctx;
     
-    console.log("☀️ [ПЛАГИН] Память магазинов: АКТИВИРОВАНО");
+    console.log("☀️ [DEBUG] Плагин СОЛНЦЕ: Жду данных от телефона...");
 
-    // Функция поиска ID таблицы для конкретного клиента
-    async function getTableId(key) {
+    app.post('/save-partial-stock', async (req, res) => {
+        const { key, addr, item, userName } = req.body;
+        
+        // МАЯЧОК №1: Проверяем, пришел ли вообще запрос
+        console.log(`📥 [СИГНАЛ] Получены данные: Магазин: ${addr}, Товар: ${item ? item.name : 'неизвестно'}`);
+
         try {
             const db = await readDatabase();
             const client = db.find(k => k.key === key);
-            if (!client || !client.folderId) return null;
+            
+            if (!client || !client.folderId) {
+                console.log("❌ ОШИБКА: Не нашли папку клиента для ключа: " + key);
+                return res.sendStatus(200);
+            }
 
             const tableName = `ОСТАТКИ_МАГАЗИНОВ_${key}`;
-            const q = `'${client.folderId}' in parents and name = '${tableName}' and trashed = false`;
-            const search = await drive.files.list({ q, fields: 'files(id)' });
+            console.log(`🔎 Ищу таблицу "${tableName}" в папке ${client.folderId}`);
 
-            if (search.data.files.length > 0) return search.data.files[0].id;
-
-            // Если таблицы нет — создаем
-            const ss = await sheets.spreadsheets.create({ resource: { properties: { title: tableName } } });
-            const id = ss.data.spreadsheetId;
-            await drive.files.update({ fileId: id, addParents: client.folderId, removeParents: 'root' });
-            await sheets.spreadsheets.values.update({
-                spreadsheetId: id, range: "Sheet1!A1:G1",
-                valueInputOption: "USER_ENTERED",
-                resource: { values: [["Магазин", "Штрихкод", "Товар", "Полка", "Склад", "Обновлено", "Мерч"]] }
+            const search = await drive.files.list({
+                q: `'${client.folderId}' in parents and name = '${tableName}' and trashed = false`,
+                fields: 'files(id)'
             });
-            return id;
-        } catch (e) { return null; }
-    }
 
-    // 1. ОТДАЕМ ОСТАТКИ: Когда мерч заходит в конкретный адрес
-    app.get('/get-shop-stock', async (req, res) => {
-        try {
-            const { key, addr } = req.query;
-            const tId = await getTableId(key);
-            if (!tId) return res.json([]);
+            let tId = search.data.files.length > 0 ? search.data.files[0].id : null;
 
-            const result = await sheets.spreadsheets.values.get({ spreadsheetId: tId, range: "Sheet1!A:G" });
-            const rows = result.data.values || [];
-            
-            // Фильтруем товары только для этого магазина
-            const currentStock = rows.slice(1)
-                .filter(r => r[0] === addr)
-                .map(r => ({
-                    bc: r[1],
-                    name: r[2],
-                    shelf: parseInt(r[3]) || 0,
-                    stock: parseInt(r[4]) || 0
-                }));
-
-            res.json(currentStock);
-        } catch (e) { res.json([]); }
-    });
-
-    // 2. СОХРАНЯЕМ И ОБНОВЛЯЕМ: Когда мерч нажал + или -
-    app.post('/save-partial-stock', async (req, res) => {
-        try {
-            const { key, addr, item, userName } = req.body;
-            const tId = await getTableId(key);
-            if (!tId) return res.sendStatus(200);
-
-            const getRes = await sheets.spreadsheets.values.get({ spreadsheetId: tId, range: "Sheet1!A:G" });
-            const rows = getRes.data.values || [];
-            
-            // Ищем, есть ли уже этот товар в этом магазине
-            const rIdx = rows.findIndex(r => r[0] === addr && r[1] === item.bc);
-            const time = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-            const newRow = [addr, item.bc, item.name, item.shelf || 0, item.stock || 0, time, userName];
-
-            if (rIdx !== -1) {
-                // Если товар найден — обновляем цифры в строке
+            if (!tId) {
+                console.log("🔨 Таблицы нет. СОЗДАЮ новую...");
+                const ss = await sheets.spreadsheets.create({ resource: { properties: { title: tableName } } });
+                tId = ss.data.spreadsheetId;
+                await drive.files.update({ fileId: tId, addParents: client.folderId, removeParents: 'root' });
+                
                 await sheets.spreadsheets.values.update({
-                    spreadsheetId: tId, range: `Sheet1!A${rIdx + 1}:G${rIdx + 1}`,
-                    valueInputOption: "USER_ENTERED", resource: { values: [newRow] }
+                    spreadsheetId: tId, range: "Sheet1!A1:G1",
+                    valueInputOption: "USER_ENTERED",
+                    resource: { values: [["Магазин", "Штрихкод", "Товар", "Полка", "Склад", "Время", "Мерч"]] }
                 });
-            } else {
-                // Если товара еще нет в этом магазине — добавляем новую строку
-                await sheets.spreadsheets.values.append({
-                    spreadsheetId: tId, range: "Sheet1!A:G",
-                    valueInputOption: "USER_ENTERED", resource: { values: [newRow] }
-                });
+                console.log("✅ Таблица успешно создана! ID: " + tId);
             }
+
+            const time = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: tId, range: "Sheet1!A:G",
+                valueInputOption: "USER_ENTERED",
+                resource: { values: [[addr, item.bc, item.name, item.shelf || 0, item.stock || 0, time, userName]] }
+            });
+
+            console.log(`🎉 ДАННЫЕ ЗАПИСАНЫ для ${item.name}`);
             res.sendStatus(200);
-        } catch (e) { res.sendStatus(200); }
+        } catch (e) {
+            console.error("❌ КРИТИЧЕСКАЯ ОШИБКА В ПЛАГИНЕ:", e.message);
+            res.sendStatus(200);
+        }
     });
 };
