@@ -1,7 +1,10 @@
-const { google } = require('googleapis'); // ЭТОГО НЕ ХВАТАЛО
+const { google } = require('googleapis');
 
-module.exports = function(app, googleSheets, auth, db) {
-    console.log("📂 Плагин: Интеграция остатков в личные папки клиентов запущен");
+module.exports = function(app, ctx) {
+    // Берем инструменты из контекста твоего основного server.js
+    const { sheets, drive, readDatabase, getOrCreateFolder } = ctx;
+    
+    console.log("📂 Плагин командных остатков подключен к контексту Server.js");
 
     let clientTables = {};
 
@@ -9,49 +12,50 @@ module.exports = function(app, googleSheets, auth, db) {
         if (clientTables[key]) return clientTables[key];
 
         try {
-            const drive = google.drive({ version: 'v3', auth });
+            // 1. Используем твою функцию из server.js для получения папки клиента
+            const keys = await readDatabase();
+            const kData = keys.find(k => k.key === key);
             
-            // 1. Ищем ID папки клиента
-            // ПРОВЕРЬ: Названия таблицы (licenses) и колонки (folder_id) должны быть как в твоей БД
-            const result = await db.query("SELECT folder_id FROM licenses WHERE lic_key = $1", [key]);
-            const folderId = (result.rows && result.rows.length > 0) ? result.rows[0].folder_id : null;
-
-            if (!folderId) {
-                console.log(`⚠️ Предупреждение: Для ключа ${key} не найден folder_id в базе.`);
+            if (!kData || !kData.folderId) {
+                console.log(`⚠️ Предупреждение: Ключ ${key} не имеет folderId`);
+                return null;
             }
 
+            const folderId = kData.folderId;
             const fileName = `ОСТАТКИ_КОМАНДЫ_${key}`;
 
-            // 2. Ищем файл в папке
-            const query = folderId 
-                ? `'${folderId}' in parents and name = '${fileName}' and trashed = false`
-                : `name = '${fileName}' and trashed = false`;
-
-            const search = await drive.files.list({ q: query, fields: 'files(id)' });
+            // 2. Ищем, нет ли уже такой таблицы в папке
+            const q = `'${folderId}' in parents and name = '${fileName}' and trashed = false`;
+            const search = await drive.files.list({ q, fields: 'files(id)' });
 
             if (search.data.files && search.data.files.length > 0) {
                 clientTables[key] = search.data.files[0].id;
                 return clientTables[key];
             }
 
-            // 3. Создаем таблицу, если не нашли
-            const spreadsheet = await googleSheets.spreadsheets.create({
+            // 3. Если нет — создаем новую таблицу Google
+            const spreadsheet = await sheets.spreadsheets.create({
                 resource: {
-                    properties: { title: fileName },
-                    parents: folderId ? [folderId] : []
-                },
-                fields: 'spreadsheetId',
+                    properties: { title: fileName }
+                }
             });
             const newId = spreadsheet.data.spreadsheetId;
 
-            // 4. Доступ "для всех по ссылке"
+            // 4. Переносим её в папку клиента и даем доступ
+            await drive.files.update({
+                fileId: newId,
+                addParents: folderId,
+                removeParents: 'root',
+                fields: 'id, parents'
+            });
+
             await drive.permissions.create({
                 fileId: newId,
                 resource: { type: 'anyone', role: 'writer' }
             });
 
-            // 5. Создаем заголовки
-            await googleSheets.spreadsheets.values.update({
+            // 5. Создаем шапку
+            await sheets.spreadsheets.values.update({
                 spreadsheetId: newId,
                 range: "Sheet1!A1:G1",
                 valueInputOption: "USER_ENTERED",
@@ -59,10 +63,10 @@ module.exports = function(app, googleSheets, auth, db) {
             });
 
             clientTables[key] = newId;
-            console.log(`✅ Создана новая таблица для ${key}: ${newId}`);
+            console.log(`✅ Создана таблица в папке клиента ${kData.name}: ${newId}`);
             return newId;
         } catch (e) {
-            console.error("❌ Ошибка в getClientTable:", e.message);
+            console.error("❌ Ошибка в плагине остатков:", e.message);
             return null;
         }
     }
@@ -70,34 +74,33 @@ module.exports = function(app, googleSheets, auth, db) {
     // Прием данных от мерча
     app.post('/save-partial-stock', async (req, res) => {
         const { key, addr, item, userName } = req.body;
-        console.log(`📥 Получен запрос на сохранение от ${userName} (${key})`);
+        console.log(`📥 ПРИШЕЛ ПИК: ${item.name} (${addr}) от ${userName}`);
         
         const tableId = await getClientTable(key);
-        if (!tableId) return res.status(500).send("Ошибка поиска таблицы");
+        if (!tableId) return res.status(500).send("Не найдена папка клиента");
 
         try {
-            await googleSheets.spreadsheets.values.append({
+            await sheets.spreadsheets.values.append({
                 spreadsheetId: tableId,
                 range: "Sheet1!A:G",
                 valueInputOption: "USER_ENTERED",
-                resource: { values: [[addr, item.bc, item.name, item.shelf, item.stock, new Date().toLocaleString('ru-RU'), userName || 'Сотрудник']] }
+                resource: { values: [[addr, item.bc, item.name, item.shelf, item.stock, new Date().toLocaleString('ru-RU'), userName || 'Мерч']] }
             });
-            console.log(`💾 Данные записаны: ${item.name} (${addr})`);
             res.sendStatus(200);
         } catch (e) { 
-            console.error("❌ Ошибка записи в Google:", e.message);
+            console.error("❌ Ошибка записи в таблицу:", e.message);
             res.sendStatus(500); 
         }
     });
 
-    // Выдача данных для команды
+    // Получение данных для синхронизации команды
     app.get('/get-shop-stock', async (req, res) => {
         const { key, addr } = req.query;
         const tableId = await getClientTable(key);
         if (!tableId) return res.json([]);
 
         try {
-            const result = await googleSheets.spreadsheets.values.get({
+            const result = await sheets.spreadsheets.values.get({
                 spreadsheetId: tableId,
                 range: "Sheet1!A:G",
             });
