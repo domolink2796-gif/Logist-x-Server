@@ -1,15 +1,23 @@
 module.exports = function(app, ctx) {
     const { sheets, drive, readDatabase } = ctx;
     
-    console.log("☀️ [DEBUG] Плагин СОЛНЦЕ: Система памяти активирована!");
+    console.log("☀️ [DEBUG] Плагин СОЛНЦЕ: Глубокая синхронизация активирована!");
 
+    // Вспомогательная функция для записи данных (чтобы не дублировать код)
+    async function writeToSheet(spreadsheetId, range, values) {
+        return await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range,
+            valueInputOption: "USER_ENTERED",
+            resource: { values: [values] }
+        });
+    }
+
+    // --- 1. ПРИЕМ ДАННЫХ ОТ ТЕЛЕФОНА ---
     app.post('/save-partial-stock', async (req, res) => {
         try {
             const { key, addr, item, userName } = req.body;
             if (!key || !addr || !item) return res.sendStatus(200);
-
-            let finalName = item.name || `Товар ${item.bc}`;
-            console.log(`📥 [СИГНАЛ] Магазин: ${addr}, Товар: ${finalName}`);
 
             const db = await readDatabase();
             const client = db.find(k => k.key === key);
@@ -23,75 +31,64 @@ module.exports = function(app, ctx) {
             
             let tId = search.data.files.length > 0 ? search.data.files[0].id : null;
 
-            // 1. ЕСЛИ ТАБЛИЦЫ НЕТ - СОЗДАЕМ И СРАЗУ ПИШЕМ ШАПКУ
+            // Если таблицы нет — создаем
             if (!tId) {
-                console.log("🛠 Создаю новую таблицу и записываю заголовки...");
-                const ss = await sheets.spreadsheets.create({ 
-                    resource: { properties: { title: tableName } } 
-                });
+                const ss = await sheets.spreadsheets.create({ resource: { properties: { title: tableName } } });
                 tId = ss.data.spreadsheetId;
-                
-                // Перемещаем в папку клиента
                 await drive.files.update({ fileId: tId, addParents: client.folderId, removeParents: 'root' });
-
-                // ПИШЕМ ШАПКУ (используем индекс листа 0, чтобы не зависеть от имени Sheet1/Лист1)
+                
+                // СРАЗУ ПИШЕМ ШАПКУ. Используем "A1:G1" без указания имени листа
                 await sheets.spreadsheets.values.update({
-                    spreadsheetId: tId, 
-                    range: "A1:G1", // Убрали Sheet1!
+                    spreadsheetId: tId,
+                    range: "A1:G1",
                     valueInputOption: "USER_ENTERED",
                     resource: { values: [["Магазин", "Штрихкод", "Товар", "Полка", "Склад", "Обновлено", "Мерч"]] }
                 });
             }
 
-            // 2. ПОЛУЧАЕМ ДАННЫЕ ДЛЯ ПРОВЕРКИ СУЩЕСТВУЮЩЕЙ СТРОКИ
-            const result = await sheets.spreadsheets.values.get({ 
-                spreadsheetId: tId, 
-                range: "A:G" 
-            });
+            // Получаем данные. Читаем просто "A:G"
+            const result = await sheets.spreadsheets.values.get({ spreadsheetId: tId, range: "A:G" });
             const rows = result.data.values || [];
             
-            // Ищем строку по Адресу (колонка A) и Штрихкоду (колонка B)
+            // Ищем строку: совпадение Адреса (0) и Штрихкода (1)
             const rowIndex = rows.findIndex(r => r[0] === addr && String(r[1]) === String(item.bc));
             
             const time = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
             const newValues = [
                 addr, 
                 String(item.bc), 
-                finalName, 
+                item.name || "Товар", 
                 item.shelf || 0, 
                 item.stock || 0, 
                 time, 
-                userName || "Мерчендайзер"
+                userName || ""
             ];
 
             if (rowIndex !== -1) {
-                // ОБНОВЛЯЕМ
+                // Обновляем (A + индекс + 1)
                 await sheets.spreadsheets.values.update({
                     spreadsheetId: tId, 
                     range: `A${rowIndex + 1}:G${rowIndex + 1}`,
                     valueInputOption: "USER_ENTERED", 
                     resource: { values: [newValues] }
                 });
-                console.log("✅ Данные обновлены в строке " + (rowIndex + 1));
             } else {
-                // ДОБАВЛЯЕМ НОВУЮ
+                // Добавляем в конец
                 await sheets.spreadsheets.values.append({
                     spreadsheetId: tId, 
                     range: "A:G",
                     valueInputOption: "USER_ENTERED", 
                     resource: { values: [newValues] }
                 });
-                console.log("➕ Добавлена новая строка");
             }
-
             res.sendStatus(200);
         } catch (e) { 
-            console.error("❌ ОШИБКА ПЛАГИНА:", e);
+            console.log("❌ Ошибка СОЛНЦЕ:", e.message);
             res.sendStatus(200); 
         }
     });
 
-    // --- ПЕРЕДАЧА ДАННЫХ В ТЕЛЕФОН ---
+    // --- 2. ПЕРЕДАЧА ДАННЫХ В ТЕЛЕФОН (Чтобы товары не пропадали) ---
     app.get('/get-shop-stock', async (req, res) => {
         try {
             const { key, addr } = req.query;
@@ -107,11 +104,22 @@ module.exports = function(app, ctx) {
             const result = await sheets.spreadsheets.values.get({ spreadsheetId: tId, range: "A:G" });
             const rows = result.data.values || [];
 
-            const shopItems = rows.slice(1)
+            // Фильтруем данные: берем только те строки, где адрес совпадает
+            // Важно: берем r[1] (штрихкод), r[2] (имя), r[3] (полка), r[4] (склад)
+            const shopItems = rows.slice(1) // пропускаем шапку
                 .filter(r => r[0] === addr)
-                .map(r => ({ bc: r[1], name: r[2], shelf: r[3], stock: r[4] }));
+                .map(r => ({ 
+                    bc: String(r[1]), 
+                    name: r[2] || "Товар", 
+                    shelf: parseInt(r[3]) || 0, 
+                    stock: parseInt(r[4]) || 0 
+                }));
 
+            console.log(`📤 Отправлено для визита: ${shopItems.length} поз. для ${addr}`);
             res.json(shopItems);
-        } catch (e) { res.json([]); }
+        } catch (e) { 
+            console.log("❌ Ошибка загрузки:", e.message);
+            res.json([]); 
+        }
     });
 };
