@@ -1,10 +1,7 @@
 const { Readable } = require('stream');
 
 module.exports = (app, ctx) => {
-    const drive = ctx.drive;
-    const readDatabase = ctx.readDatabase;
-    const getOrCreateFolder = ctx.getOrCreateFolder;
-    const readPlanogramDb = ctx.readPlanogramDb;
+    const { drive, getOrCreateFolder, readDatabase } = ctx;
 
     app.get('/get-planogram', async (req, res) => {
         try {
@@ -14,34 +11,20 @@ module.exports = (app, ctx) => {
             if (!kData || !kData.folderId) return res.json({ exists: false });
 
             const planFolderId = await getOrCreateFolder("PLANOGRAMS", kData.folderId);
-            const cleanAddr = addr.trim();
-            const fileName = cleanAddr + ".jpg";
+            const fileName = addr.trim() + ".jpg";
 
             const q = `name = '${fileName}' and '${planFolderId}' in parents and trashed = false`;
             const search = await drive.files.list({ q, fields: 'files(id, webViewLink, webContentLink)' });
             
             if (search.data.files.length > 0) {
-                return res.json({ 
+                res.json({ 
                     exists: true, 
                     url: search.data.files[0].webContentLink || search.data.files[0].webViewLink 
                 });
+            } else {
+                res.json({ exists: false });
             }
-
-            try {
-                const oldDb = await readPlanogramDb(kData.folderId);
-                if (oldDb && oldDb[cleanAddr]) {
-                    const qOld = `name contains '${cleanAddr}' and '${kData.folderId}' in parents and trashed = false`;
-                    const searchOld = await drive.files.list({ q: qOld, fields: 'files(id, webViewLink)' });
-                    if (searchOld.data.files.length > 0) {
-                        return res.json({ exists: true, url: searchOld.data.files[0].webViewLink });
-                    }
-                }
-            } catch (e) { console.log("Old DB skip"); }
-
-            res.json({ exists: false });
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
+        } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
     app.post('/upload-planogram', async (req, res) => {
@@ -72,8 +55,6 @@ module.exports = (app, ctx) => {
                 await drive.permissions.create({ fileId: f.data.id, resource: { role: 'reader', type: 'anyone' } });
             }
             res.json({ success: true });
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
+        } catch (e) { res.status(500).json({ error: e.message }); }
     });
 };
