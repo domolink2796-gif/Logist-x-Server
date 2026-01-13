@@ -5,7 +5,7 @@ const path = require('path');
 
 /**
  * ============================================================================
- * TITANIUM X-PLATFORM v58.0 | THE COMPLETE MASTER MONOLITH (FIXED)
+ * TITANIUM X-PLATFORM v61.0 | THE COMPLETE MASTER MONOLITH (FINAL)
  * ----------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
@@ -116,7 +116,7 @@ module.exports = function(app, context) {
         /* CONTEXT & NEW MENU */
         #ctx-menu, #new-menu {
             position: fixed; display: none; background: #fff; box-shadow: 0 8px 30px rgba(0,0,0,0.25);
-            border-radius: 12px; z-index: 7000; min-width: 220px; padding: 10px 0; border: 1px solid #eee;
+            border-radius: 12px; z-index: 7000; min-width: 220px; padding: 8px 0; border: 1px solid #eee;
         }
         .menu-item { padding: 12px 20px; font-size: 15px; display: flex; align-items: center; gap: 15px; cursor: pointer; }
         .menu-item:hover { background: #f1f3f4; }
@@ -150,16 +150,16 @@ module.exports = function(app, context) {
         <div class="nav-item active" id="nav-root" onclick="navigate('root', 'Мой диск')">
             <i class="fa fa-hdd"></i> Мой диск
         </div>
-        <div class="nav-item" id="nav-logist" onclick="navigate('${MY_ROOT_ID}', 'Логистика')">
+        <div class="nav-item" onclick="navigate('${MY_ROOT_ID}', 'Логистика')">
             <i class="fa fa-truck-fast"></i> Логистика
         </div>
-        <div class="nav-item" id="nav-merch" onclick="navigate('${MERCH_ROOT_ID}', 'Мерчандайзинг')">
+        <div class="nav-item" onclick="navigate('${MERCH_ROOT_ID}', 'Мерчандайзинг')">
             <i class="fa fa-boxes-stacked"></i> Мерчандайзинг
         </div>
         <div class="nav-item" id="nav-trash" style="margin-top: auto;" onclick="navigate('trash', 'Корзина')">
             <i class="fa fa-trash-can"></i> Корзина
         </div>
-        <div style="padding: 20px; font-size: 10px; color: #ccc;">ULTIMATE v58.0 FULL BUILD</div>
+        <div style="padding: 20px; font-size: 10px; color: #ccc;">ULTIMATE v61.0 FULL BUILD</div>
     </aside>
 
     <main>
@@ -183,11 +183,11 @@ module.exports = function(app, context) {
 </div>
 
 <div id="new-menu" onclick="event.stopPropagation()">
-    <div class="menu-item" onclick="createNewFolder()"><i class="fa fa-folder-plus"></i> Новая папка</div>
-    <div class="menu-item" onclick="document.getElementById('file-input').click()"><i class="fa fa-file-upload"></i> Загрузить файл</div>
+    <div class="menu-item" onclick="createFolder(event)"><i class="fa fa-folder-plus"></i> Новая папка</div>
+    <div class="menu-item" onclick="triggerUpload(event)"><i class="fa fa-file-upload"></i> Загрузить файл</div>
 </div>
 
-<div id="file-ctx" class="ctx-menu" style="display:none; position:fixed; background:#fff; box-shadow:0 8px 24px rgba(0,0,0,0.2); border-radius:12px; z-index:7000; min-width:220px; padding:8px 0; border:1px solid #eee;">
+<div id="ctx-menu">
     <div class="menu-item" onclick="viewFile()"><i class="fa fa-eye"></i> Предпросмотр</div>
     <div class="menu-item" onclick="renameItem()"><i class="fa fa-pen-to-square"></i> Переименовать</div>
     <div class="menu-item" onclick="deleteItem()" style="color: #d93025;"><i class="fa fa-trash-can"></i> Удалить</div>
@@ -217,7 +217,6 @@ module.exports = function(app, context) {
             filesCache = await r.json();
             render();
             renderBC();
-
             // Подсветка активного пункта
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             if(id === 'root') document.getElementById('nav-root').classList.add('active');
@@ -234,18 +233,16 @@ module.exports = function(app, context) {
             tr.className = 'file-row';
             const isDir = f.mimeType.includes('folder');
             
-            tr.innerHTML = \`
-                <td><i class="fa \${isDir?'fa-folder':'fa-file-lines'}" style="margin-right:12px; color:\${isDir?'#fbc02d':'#1a73e8'}; font-size:20px;"></i> \${f.name}</td>
-                <td class="hide-mobile">\${new Date(f.modifiedTime).toLocaleDateString()}</td>
-                <td class="hide-mobile">\${f.size ? (f.size/1024/1024).toFixed(1)+' MB' : '—'}</td>
-            \`;
+            tr.innerHTML = \`<td><i class="fa \${isDir?'fa-folder':'fa-file-lines'}" style="margin-right:12px; color:\${isDir?'#fbc02d':'#1a73e8'}; font-size:20px;"></i> \${f.name}</td>
+                <td class=\"hide-mobile\">\${new Date(f.modifiedTime).toLocaleDateString()}</td>
+                <td class=\"hide-mobile\">\${f.size ? (f.size/1024/1024).toFixed(1)+' MB' : '—'}</td>\`;
 
             tr.onclick = () => isDir ? navigate(f.id, f.name) : viewFile(f.id, f.name);
             
             tr.oncontextmenu = (e) => {
                 e.preventDefault();
                 selectedFile = f;
-                const m = document.getElementById('file-ctx');
+                const m = document.getElementById('ctx-menu');
                 m.style.display = 'block'; 
                 m.style.left = e.clientX + 'px'; 
                 m.style.top = e.clientY + 'px';
@@ -279,8 +276,13 @@ module.exports = function(app, context) {
     function toggleNewMenu(e) { 
         if(e) e.stopPropagation(); 
         const m = document.getElementById('new-menu'); 
-        const isVisible = m.style.display === 'block';
-        m.style.display = isVisible ? 'none' : 'block'; 
+        m.style.display = (m.style.display === 'block') ? 'none' : 'block'; 
+    }
+
+    function triggerUpload(e) {
+        if(e) e.stopPropagation();
+        document.getElementById('file-input').click();
+        document.getElementById('new-menu').style.display = 'none';
     }
 
     function viewFile(id, name) {
@@ -303,11 +305,11 @@ module.exports = function(app, context) {
             fd.append('folderId', currentFolderId);
             await fetch('/storage/api/upload', {method: 'POST', body: fd});
         }
-        document.getElementById('new-menu').style.display = 'none';
         load(currentFolderId);
     }
 
-    async function createNewFolder() {
+    async function createFolder(e) {
+        if(e) e.stopPropagation();
         const n = prompt("Имя новой папки:");
         if(!n) return;
         document.getElementById('new-menu').style.display = 'none';
@@ -343,7 +345,7 @@ module.exports = function(app, context) {
     }
 
     window.onclick = () => {
-        document.getElementById('file-ctx').style.display = 'none';
+        document.getElementById('ctx-menu').style.display = 'none';
         document.getElementById('new-menu').style.display = 'none';
     };
 
@@ -359,12 +361,7 @@ module.exports = function(app, context) {
     app.get('/storage/api/list', async (req, res) => {
         try {
             const folderId = req.query.folderId || 'root';
-            let q = "";
-            if (folderId === 'trash') {
-                q = "trashed = true";
-            } else {
-                q = "'" + folderId + "' in parents and trashed = false";
-            }
+            let q = folderId === 'trash' ? "trashed = true" : \`'\${folderId}' in parents and trashed = false\`;
             const r = await drive.files.list({
                 q: q,
                 fields: 'files(id, name, mimeType, size, modifiedTime)',
@@ -419,5 +416,5 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    console.log("✅ TITANIUM X-PLATFORM v58.0 FULLY LOADED");
+    console.log("✅ TITANIUM X-PLATFORM v61.0 FULLY LOADED");
 };
