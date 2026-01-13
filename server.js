@@ -862,6 +862,13 @@ try {
 } catch (e) {
     console.log("❌ Ошибка в файле plugin-merch-sun.js: " + e.message);
 }
+// Добавь это между Солнцем и Проводником
+try {
+    require('./plugin-final-upload.js')(app, pluginContext);
+} catch (e) {
+    console.log("❌ Ошибка в plugin-final-upload.js: " + e.message);
+}
+
 
 // --- 2. ПЛАГИН ХРАНИЛИЩА (АВТОДЕПЛОЙ + ДИСК) ---
 try {
