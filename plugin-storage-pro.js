@@ -5,22 +5,20 @@ const path = require('path');
 
 /**
  * ============================================================================
- * TITANIUM X-PLATFORM v61.0 | THE COMPLETE MASTER MONOLITH (FINAL)
+ * TITANIUM X-PLATFORM v55.1 | THE GOLDEN MONOLITH REPAIRED
  * ----------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
- * ФУНКЦИОНАЛ: UI + API + MOBILE ADAPTIVE + BRANDING + FILE MGMT
+ * ИСПРАВЛЕНО: Позиционирование меню FAB (создание папки и загрузка)
  * ============================================================================
  */
 
-// ПРЯМАЯ ССЫЛКА НА ЛОГОТИП
 const LOGO_URL = "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png";
 
 module.exports = function(app, context) {
     const { drive, google, MY_ROOT_ID, MERCH_ROOT_ID } = context;
     const upload = multer({ dest: 'uploads/' });
 
-    // --- ПОЛНЫЙ ИНТЕРФЕЙС (HTML + CSS + JS) ---
     const UI = `
 <!DOCTYPE html>
 <html lang="ru">
@@ -44,7 +42,6 @@ module.exports = function(app, context) {
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; margin: 0; padding: 0; }
         body, html { height: 100%; font-family: 'Roboto', sans-serif; color: var(--main-text); background: #fff; overflow: hidden; }
 
-        /* HEADER */
         header {
             height: 64px; padding: 0 20px; border-bottom: 2px solid var(--accent);
             display: flex; align-items: center; justify-content: space-between;
@@ -56,10 +53,8 @@ module.exports = function(app, context) {
         .logo-box { display: flex; align-items: center; gap: 12px; font-family: 'Google Sans'; font-size: 20px; font-weight: 700; color: #fff; text-decoration: none; }
         .logo-box img { height: 42px; width: auto; border-radius: 4px; }
 
-        /* WRAPPER */
         .wrapper { display: flex; height: calc(100vh - 64px); position: relative; }
 
-        /* SIDEBAR */
         aside { 
             width: var(--sidebar-w); height: 100%; border-right: 1px solid #eee;
             background: #fff; display: flex; flex-direction: column; padding: 20px 0;
@@ -76,7 +71,6 @@ module.exports = function(app, context) {
         .nav-item.active { background: #e8f0fe; color: var(--blue-link); font-weight: 700; }
         .nav-item.active i { color: var(--blue-link); }
 
-        /* MAIN CONTENT */
         main { flex: 1; padding: 0 25px; overflow-y: auto; background: #fff; position: relative; }
         .breadcrumbs { 
             height: 56px; display: flex; align-items: center; font-size: 18px; 
@@ -86,22 +80,19 @@ module.exports = function(app, context) {
         .bc-node { cursor: pointer; padding: 4px 8px; border-radius: 4px; }
         .bc-node:hover { background: #eee; color: #000; }
         
-        /* TABLE */
         .file-table { width: 100%; border-collapse: collapse; }
         .file-table th { text-align: left; padding: 12px 8px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--gray-text); position: sticky; top: 0; background: #fff; z-index: 10; }
         .file-table td { padding: 16px 8px; border-bottom: 1px solid #eee; font-size: 15px; cursor: pointer; }
         .file-row:hover { background: #f8f9fa; }
 
-        /* FAB */
         .fab {
             position: fixed; bottom: 30px; right: 30px; width: 64px; height: 64px;
             border-radius: 20px; background: var(--brand-bg); border: 2px solid var(--accent);
-            display: flex; align-items: center; justify-content: center; z-index: 6000;
+            display: flex; align-items: center; justify-content: center; z-index: 1000;
             box-shadow: 0 4px 15px rgba(0,0,0,0.4); cursor: pointer;
         }
         .fab img { height: 38px; width: auto; }
 
-        /* MOBILE OVERLAY */
         .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1400; }
         .overlay.active { display: block; }
 
@@ -113,16 +104,20 @@ module.exports = function(app, context) {
             main { padding: 0 15px; }
         }
 
-        /* CONTEXT & NEW MENU */
-        #ctx-menu, #new-menu {
-            position: fixed; display: none; background: #fff; box-shadow: 0 8px 30px rgba(0,0,0,0.25);
-            border-radius: 12px; z-index: 7000; min-width: 220px; padding: 8px 0; border: 1px solid #eee;
+        /* NEW MENU POSITIONING FIX */
+        #new-menu {
+            position: fixed; display: none; background: #fff; box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+            border-radius: 12px; z-index: 5000; min-width: 220px; padding: 8px 0; border: 1px solid #eee;
+            bottom: 100px; right: 30px; /* Появляется над кнопкой FAB */
+        }
+        #ctx-menu {
+            position: fixed; display: none; background: #fff; box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+            border-radius: 12px; z-index: 5000; min-width: 220px; padding: 8px 0; border: 1px solid #eee;
         }
         .menu-item { padding: 12px 20px; font-size: 15px; display: flex; align-items: center; gap: 15px; cursor: pointer; }
         .menu-item:hover { background: #f1f3f4; }
         .menu-item i { width: 20px; color: var(--gray-text); font-size: 18px; }
 
-        /* PREVIEW */
         #pv-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 9999; flex-direction: column; }
         .pv-h { height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; color: #fff; background: var(--brand-bg); }
         #pv-f { flex: 1; border: none; background: #fff; }
@@ -159,7 +154,7 @@ module.exports = function(app, context) {
         <div class="nav-item" id="nav-trash" style="margin-top: auto;" onclick="navigate('trash', 'Корзина')">
             <i class="fa fa-trash-can"></i> Корзина
         </div>
-        <div style="padding: 20px; font-size: 10px; color: #ccc;">ULTIMATE v61.0 FULL BUILD</div>
+        <div style="padding: 20px; font-size: 10px; color: #ccc;">ULTIMATE v55.1 FULL BUILD</div>
     </aside>
 
     <main>
@@ -172,8 +167,7 @@ module.exports = function(app, context) {
                     <th class="hide-mobile">Размер</th>
                 </tr>
             </thead>
-            <tbody id="file-list">
-                </tbody>
+            <tbody id="file-list"></tbody>
         </table>
     </main>
 </div>
@@ -182,7 +176,7 @@ module.exports = function(app, context) {
     <img src="${LOGO_URL}" alt="+">
 </div>
 
-<div id="new-menu" onclick="event.stopPropagation()">
+<div id="new-menu">
     <div class="menu-item" onclick="createFolder(event)"><i class="fa fa-folder-plus"></i> Новая папка</div>
     <div class="menu-item" onclick="triggerUpload(event)"><i class="fa fa-file-upload"></i> Загрузить файл</div>
 </div>
@@ -217,7 +211,6 @@ module.exports = function(app, context) {
             filesCache = await r.json();
             render();
             renderBC();
-            // Подсветка активного пункта
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             if(id === 'root') document.getElementById('nav-root').classList.add('active');
             if(id === 'trash') document.getElementById('nav-trash').classList.add('active');
@@ -233,9 +226,11 @@ module.exports = function(app, context) {
             tr.className = 'file-row';
             const isDir = f.mimeType.includes('folder');
             
-            tr.innerHTML = \`<td><i class="fa \${isDir?'fa-folder':'fa-file-lines'}" style="margin-right:12px; color:\${isDir?'#fbc02d':'#1a73e8'}; font-size:20px;"></i> \${f.name}</td>
-                <td class=\"hide-mobile\">\${new Date(f.modifiedTime).toLocaleDateString()}</td>
-                <td class=\"hide-mobile\">\${f.size ? (f.size/1024/1024).toFixed(1)+' MB' : '—'}</td>\`;
+            tr.innerHTML = \`
+                <td><i class="fa \${isDir?'fa-folder':'fa-file-lines'}" style="margin-right:12px; color:\${isDir?'#fbc02d':'#1a73e8'}; font-size:20px;"></i> \${f.name}</td>
+                <td class="hide-mobile">\${new Date(f.modifiedTime).toLocaleDateString()}</td>
+                <td class="hide-mobile">\${f.size ? (f.size/1024/1024).toFixed(1)+' MB' : '—'}</td>
+            \`;
 
             tr.onclick = () => isDir ? navigate(f.id, f.name) : viewFile(f.id, f.name);
             
@@ -268,26 +263,26 @@ module.exports = function(app, context) {
     function toggleSidebar(close) {
         const s = document.getElementById('sidebar'); 
         const o = document.getElementById('overlay');
-        if(close) { s.classList.remove('open'); o.classList.remove('active'); return; }
+        if(close) { if(s) s.classList.remove('open'); if(o) o.classList.remove('active'); return; }
         s.classList.toggle('open'); 
         o.classList.toggle('active');
     }
 
     function toggleNewMenu(e) { 
-        if(e) e.stopPropagation(); 
+        e.stopPropagation(); 
         const m = document.getElementById('new-menu'); 
         m.style.display = (m.style.display === 'block') ? 'none' : 'block'; 
     }
 
     function triggerUpload(e) {
-        if(e) e.stopPropagation();
+        e.stopPropagation();
         document.getElementById('file-input').click();
         document.getElementById('new-menu').style.display = 'none';
     }
 
     function viewFile(id, name) {
         const tid = id || selectedFile.id;
-        document.getElementById('pv-title').innerText = name || selectedFile.name;
+        document.getElementById('pv-title').innerText = name || (selectedFile?selectedFile.name:'');
         document.getElementById('pv-f').src = 'https://drive.google.com/file/d/' + tid + '/preview';
         document.getElementById('pv-modal').style.display = 'flex';
     }
@@ -309,7 +304,7 @@ module.exports = function(app, context) {
     }
 
     async function createFolder(e) {
-        if(e) e.stopPropagation();
+        e.stopPropagation();
         const n = prompt("Имя новой папки:");
         if(!n) return;
         document.getElementById('new-menu').style.display = 'none';
@@ -360,8 +355,10 @@ module.exports = function(app, context) {
 
     app.get('/storage/api/list', async (req, res) => {
         try {
+            let q = "";
             const folderId = req.query.folderId || 'root';
-            let q = folderId === 'trash' ? "trashed = true" : \`'\${folderId}' in parents and trashed = false\`;
+            if (folderId === 'trash') { q = "trashed = true"; } 
+            else { q = `'${folderId}' in parents and trashed = false`; }
             const r = await drive.files.list({
                 q: q,
                 fields: 'files(id, name, mimeType, size, modifiedTime)',
@@ -416,5 +413,5 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    console.log("✅ TITANIUM X-PLATFORM v61.0 FULLY LOADED");
+    console.log("✅ TITANIUM X-PLATFORM v55.1 FULLY LOADED");
 };
