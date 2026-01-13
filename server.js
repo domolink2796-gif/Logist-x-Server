@@ -864,7 +864,7 @@ try {
 }
 // Добавь это между Солнцем и Проводником
 try {
-    require('./plugin-final-upload.js')(app, pluginContext);
+ //   require('./plugin-final-upload.js')(app, pluginContext);
 } catch (e) {
     console.log("❌ Ошибка в plugin-final-upload.js: " + e.message);
 }
