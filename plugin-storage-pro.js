@@ -5,11 +5,11 @@ const path = require('path');
 
 /**
  * ============================================================================
- * TITANIUM X-PLATFORM v54.1 | THE COMPLETE MONOLITH (FIXED ACTIONS)
+ * TITANIUM X-PLATFORM v55.0 | THE GOLDEN MONOLITH REPAIRED
  * ----------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
- * ФУНКЦИОНАЛ: UI + API + MOBILE ADAPTIVE + BRANDING + FILE MGMT
+ * ИСПРАВЛЕНО: Логотип, кнопка "Корзина", кнопки создания и загрузки.
  * ============================================================================
  */
 
@@ -138,7 +138,7 @@ module.exports = function(app, context) {
     <div class="h-left">
         <div class="burger" onclick="toggleSidebar()"><i class="fa fa-bars"></i></div>
         <div class="logo-box">
-            <img src="\${LOGO_URL}" alt="X">
+            <img src="${LOGO_URL}" alt="X">
             <span>X-PLATFORM</span>
         </div>
     </div>
@@ -150,16 +150,16 @@ module.exports = function(app, context) {
         <div class="nav-item active" id="nav-root" onclick="navigate('root', 'Мой диск')">
             <i class="fa fa-hdd"></i> Мой диск
         </div>
-        <div class="nav-item" onclick="navigate('\${MY_ROOT_ID}', 'Логистика')">
+        <div class="nav-item" onclick="navigate('${MY_ROOT_ID}', 'Логистика')">
             <i class="fa fa-truck-fast"></i> Логистика
         </div>
-        <div class="nav-item" onclick="navigate('\${MERCH_ROOT_ID}', 'Мерчандайзинг')">
+        <div class="nav-item" onclick="navigate('${MERCH_ROOT_ID}', 'Мерчандайзинг')">
             <i class="fa fa-boxes-stacked"></i> Мерчандайзинг
         </div>
-        <div class="nav-item" style="margin-top: auto;">
+        <div class="nav-item" id="nav-trash" style="margin-top: auto;" onclick="navigate('trash', 'Корзина')">
             <i class="fa fa-trash-can"></i> Корзина
         </div>
-        <div style="padding: 20px; font-size: 10px; color: #ccc;">ULTIMATE v54.1 FIXED BUILD</div>
+        <div style="padding: 20px; font-size: 10px; color: #ccc;">ULTIMATE v55.0 FULL BUILD</div>
     </aside>
 
     <main>
@@ -179,7 +179,7 @@ module.exports = function(app, context) {
 </div>
 
 <div class="fab" onclick="toggleNewMenu(event)">
-    <img src="\${LOGO_URL}" alt="+">
+    <img src="${LOGO_URL}" alt="+">
 </div>
 
 <div id="new-menu">
@@ -217,6 +217,10 @@ module.exports = function(app, context) {
             filesCache = await r.json();
             render();
             renderBC();
+            // Подсветка активного пункта
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            if(id === 'root') document.getElementById('nav-root').classList.add('active');
+            if(id === 'trash') document.getElementById('nav-trash').classList.add('active');
         } catch(e) { showToast("Ошибка загрузки данных"); }
     }
 
@@ -358,8 +362,17 @@ module.exports = function(app, context) {
 
     app.get('/storage/api/list', async (req, res) => {
         try {
+            let q = "";
+            const folderId = req.query.folderId || 'root';
+            
+            if (folderId === 'trash') {
+                q = "trashed = true";
+            } else {
+                q = `'${folderId}' in parents and trashed = false`;
+            }
+
             const r = await drive.files.list({
-                q: "'" + (req.query.folderId || 'root') + "' in parents and trashed = false",
+                q: q,
                 fields: 'files(id, name, mimeType, size, modifiedTime)',
                 orderBy: 'folder, name'
             });
@@ -412,5 +425,5 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    console.log("✅ TITANIUM X-PLATFORM v54.1 FULLY LOADED");
+    console.log("✅ TITANIUM X-PLATFORM v55.0 FULLY LOADED");
 };
