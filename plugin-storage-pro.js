@@ -1,3 +1,4 @@
+const express = require('express');
 const multer = require('multer');
 const { Readable } = require('stream');
 const fs = require('fs');
@@ -5,11 +6,10 @@ const path = require('path');
 
 /**
  * ============================================================================
- * TITANIUM DRIVE v35.0 | PROFESSIONAL STORAGE ENGINE
+ * TITANIUM ULTIMATE v36.0 | PROFESSIONAL CLOUD ENGINE
  * ----------------------------------------------------------------------------
- * РАЗРАБОТКА: GEMINI (2026) СПЕЦИАЛЬНО ДЛЯ ЕВГЕНИЯ АНАТОЛЬЕВИЧА
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
- * СВИДЕТЕЛЬСТВО РЦИС: № 0849-643-137 от 10.01.2026
+ * ФУНКЦИОНАЛ: ПОЛНЫЙ АНАЛОГ GOOGLE DRIVE (UPLOAD, MKDIR, RENAME, DELETE, VIEW)
  * ============================================================================
  */
 
@@ -17,14 +17,14 @@ module.exports = function(app, context) {
     const { drive, google, MY_ROOT_ID, MERCH_ROOT_ID } = context;
     const upload = multer({ dest: 'uploads/' });
 
-    // --- ГРАФИЧЕСКИЙ ИНТЕРФЕЙС (ULTIMATE UI) ---
+    // --- ВЫСОКОТЕХНОЛОГИЧНЫЙ ИНТЕРФЕЙС (UI) ---
     const UI = `
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>X-Commander | Titanium Drive</title>
+    <title>X-Commander | Titanium Pro</title>
     <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -35,7 +35,7 @@ module.exports = function(app, context) {
             --sidebar-width: 280px;
         }
 
-        * { box-sizing: border-box; outline: none; transition: all 0.2s ease; }
+        * { box-sizing: border-box; outline: none; transition: background 0.2s, color 0.2s; }
         body, html { margin: 0; padding: 0; height: 100%; font-family: 'Roboto', sans-serif; color: var(--g-text); background: #fff; overflow: hidden; }
 
         /* HEADER */
@@ -44,301 +44,290 @@ module.exports = function(app, context) {
             display: flex; align-items: center; justify-content: space-between;
             background: #fff; position: relative; z-index: 1000;
         }
-        .logo-section { display: flex; align-items: center; width: var(--sidebar-width); gap: 15px; cursor: pointer; }
-        .logo-section i { font-size: 32px; color: var(--g-blue); }
-        .logo-section span { font-family: 'Google Sans'; font-size: 22px; color: #5f6368; font-weight: 400; }
+        .logo-box { display: flex; align-items: center; width: var(--sidebar-width); gap: 15px; cursor: pointer; }
+        .logo-box i { font-size: 30px; color: var(--g-blue); }
+        .logo-box span { font-family: 'Google Sans'; font-size: 22px; color: #5f6368; }
 
-        .search-bar { flex: 1; max-width: 720px; position: relative; }
-        .search-bar i { position: absolute; left: 16px; top: 14px; color: #5f6368; }
-        .search-bar input {
-            width: 100%; background: #f1f3f4; border: none; padding: 12px 12px 12px 52px;
-            border-radius: 8px; font-size: 16px; border: 1px solid transparent;
+        .search-area { flex: 1; max-width: 720px; position: relative; }
+        .search-area i { position: absolute; left: 16px; top: 14px; color: #5f6368; }
+        .search-area input {
+            width: 100%; background: #f1f3f4; border: 1px solid transparent;
+            padding: 12px 12px 12px 52px; border-radius: 8px; font-size: 16px;
         }
-        .search-bar input:focus { background: #fff; border-color: #eee; box-shadow: var(--g-shadow); }
+        .search-area input:focus { background: #fff; box-shadow: var(--g-shadow); }
 
-        /* MAIN LAYOUT */
-        .wrapper { display: flex; height: calc(100vh - 64px); }
+        /* LAYOUT */
+        .app-wrapper { display: flex; height: calc(100vh - 64px); }
 
-        aside { width: var(--sidebar-width); padding: 16px 0; display: flex; flex-direction: column; background: #fff; }
-        .create-btn {
+        /* SIDEBAR */
+        aside { width: var(--sidebar-width); padding: 16px 0; display: flex; flex-direction: column; border-right: 1px solid #eee; }
+        .btn-new {
             margin: 0 16px 20px; width: 140px; height: 48px; border-radius: 24px;
             box-shadow: var(--g-shadow); background: #fff; display: flex; align-items: center;
             justify-content: center; gap: 12px; cursor: pointer; font-weight: 500; font-family: 'Google Sans';
         }
-        .create-btn:hover { box-shadow: 0 4px 8px rgba(0,0,0,0.15); background: #f8f9fa; }
+        .btn-new:hover { background: #f8f9fa; }
 
-        .menu-item {
+        .nav-link {
             height: 40px; margin-right: 8px; border-radius: 0 20px 20px 0;
             display: flex; align-items: center; padding: 0 24px; cursor: pointer;
-            font-size: 14px; color: #3c4043;
+            font-size: 14px; color: #3c4043; text-decoration: none;
         }
-        .menu-item i { width: 34px; font-size: 18px; color: #5f6368; }
-        .menu-item:hover { background: #f1f3f4; }
-        .menu-item.active { background: #e8f0fe; color: #1a73e8; font-weight: 500; }
-        .menu-item.active i { color: #1a73e8; }
+        .nav-link i { width: 34px; font-size: 18px; color: #5f6368; }
+        .nav-link:hover { background: #f1f3f4; }
+        .nav-link.active { background: #e8f0fe; color: #1a73e8; font-weight: 500; }
+        .nav-link.active i { color: #1a73e8; }
 
-        /* CONTENT */
-        main { flex: 1; padding: 0 24px; overflow-y: auto; position: relative; }
-        .breadcrumbs { height: 56px; display: flex; align-items: center; font-size: 18px; font-family: 'Google Sans'; color: #5f6368; }
+        /* MAIN CONTENT */
+        main { flex: 1; padding: 0 24px; overflow-y: auto; background: #fff; }
+        .bc-container { height: 56px; display: flex; align-items: center; font-size: 18px; font-family: 'Google Sans'; color: #5f6368; }
         .bc-item { padding: 4px 8px; border-radius: 4px; cursor: pointer; }
         .bc-item:hover { background: #eee; }
 
-        .data-table { width: 100%; border-collapse: collapse; }
-        .data-table th {
+        .file-table { width: 100%; border-collapse: collapse; }
+        .file-table th {
             text-align: left; padding: 12px 8px; border-bottom: 1px solid var(--g-border);
-            font-size: 13px; color: #5f6368; position: sticky; top: 0; background: #fff;
+            font-size: 13px; color: #5f6368; position: sticky; top: 0; background: #fff; z-index: 10;
         }
-        .data-table td { padding: 12px 8px; border-bottom: 1px solid #eee; font-size: 14px; }
-        .data-row { cursor: pointer; animation: fadeIn 0.3s ease; }
-        .data-row:hover { background: #f8f9fa; }
-        .data-row.selected { background: #e8f0fe; }
+        .file-table td { padding: 10px 8px; border-bottom: 1px solid #eee; font-size: 14px; }
+        .row-item { cursor: pointer; }
+        .row-item:hover { background: #f8f9fa; }
+        .row-item.selected { background: #e8f0fe ! encroachment; }
 
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-
-        /* ICONS */
-        .f-icon { width: 40px; text-align: center; font-size: 20px; }
-        .color-folder { color: #5f6368; }
-        .color-pdf { color: #ea4335; }
-        .color-excel { color: #1e8e3e; }
-        .color-word { color: #1a73e8; }
-        .color-img { color: #f4b400; }
+        .icon-cell { width: 40px; text-align: center; font-size: 20px; }
+        .f-folder { color: #5f6368; }
+        .f-pdf { color: #ea4335; }
+        .f-excel { color: #1e8e3e; }
+        .f-image { color: #f4b400; }
 
         /* CONTEXT MENU */
-        #ctx-menu {
-            position: fixed; display: none; background: #fff; box-shadow: 0 8px 16px rgba(0,0,0,0.15);
-            border: 1px solid #ddd; border-radius: 4px; padding: 5px 0; z-index: 5000; min-width: 200px;
+        #menu-ctx {
+            position: fixed; display: none; background: #fff; box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+            border: 1px solid #ddd; border-radius: 4px; padding: 6px 0; z-index: 5000; min-width: 220px;
         }
-        .ctx-item { padding: 10px 16px; font-size: 14px; display: flex; align-items: center; gap: 12px; cursor: pointer; }
-        .ctx-item:hover { background: #f1f3f4; }
-        .ctx-item i { width: 18px; color: #5f6368; }
+        .menu-ctx-item { padding: 10px 16px; font-size: 14px; display: flex; align-items: center; gap: 12px; cursor: pointer; }
+        .menu-ctx-item:hover { background: #f1f3f4; }
+        .menu-ctx-item i { width: 20px; color: #5f6368; }
 
-        /* PREVIEW MODAL */
-        #pv-modal {
+        /* MODALS */
+        #modal-pv {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.9); z-index: 9999; flex-direction: column;
+            background: rgba(0,0,0,0.9); z-index: 9000; flex-direction: column;
         }
-        .pv-top { height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 30px; color: #fff; }
-        #pv-frame { flex: 1; border: none; width: 85%; margin: 0 auto 30px; background: #fff; border-radius: 4px; }
+        .pv-head { height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 30px; color: #fff; }
+        #pv-iframe { flex: 1; border: none; width: 85%; margin: 0 auto 30px; background: #fff; border-radius: 4px; }
 
-        /* BUTTONS */
-        .btn-action { background: none; border: none; padding: 8px; cursor: pointer; border-radius: 50%; color: #5f6368; }
-        .btn-action:hover { background: #eee; color: #000; }
-        
-        #toast { position: fixed; bottom: 30px; left: 30px; background: #323232; color: #fff; padding: 12px 24px; border-radius: 4px; display: none; z-index: 10000; }
+        #toast-msg {
+            position: fixed; bottom: 30px; left: 30px; background: #323232; color: #fff;
+            padding: 12px 24px; border-radius: 4px; display: none; z-index: 10000;
+        }
+
+        /* NEW FOLDER MENU */
+        #menu-new {
+            display: none; position: fixed; top: 120px; left: 24px; background: #fff;
+            box-shadow: var(--g-shadow); border-radius: 4px; z-index: 2000; width: 200px; padding: 8px 0;
+        }
     </style>
 </head>
 <body>
 
 <header>
-    <div class="logo-section" onclick="navTo('root', 'Мой диск')">
-        <i class="fa-solid fa-layer-group"></i>
+    <div class="logo-box" onclick="nav('root', 'Мой диск')">
+        <i class="fa-solid fa-cloud-bolt"></i>
         <span>X-Commander</span>
     </div>
-    <div class="search-bar">
+    <div class="search-area">
         <i class="fa fa-search"></i>
-        <input type="text" id="q-search" placeholder="Поиск в Titanium Drive..." oninput="doSearch()">
+        <input type="text" id="search-in" placeholder="Поиск файлов..." oninput="search()">
     </div>
     <div style="display:flex; gap:20px; align-items:center;">
-        <i class="fa-solid fa-circle-question" style="color:var(--g-gray); font-size:20px;"></i>
-        <div style="width:34px; height:34px; border-radius:50%; background:#1a73e8; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700;">E</div>
+        <i class="fa-solid fa-circle-info" style="color:var(--g-gray); font-size:20px;"></i>
+        <div style="width:34px; height:34px; border-radius:50%; background:#673ab7; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:bold;">EA</div>
     </div>
 </header>
 
-<div class="wrapper">
+<div class="app-wrapper">
     <aside>
-        <div class="create-btn" onclick="showNewMenu(event)">
-            <img src="https://upload.wikimedia.org/wikipedia/commons/d/da/Google_Drive_logo.png" style="width:20px;">
+        <div class="btn-new" onclick="toggleNew(event)">
+            <i class="fa fa-plus" style="color:#34a853; font-size:20px;"></i>
             Создать
         </div>
-        <div class="menu-item active" onclick="navTo('root', 'Мой диск')"><i class="fa fa-hdd"></i> Мой диск</div>
-        <div class="menu-item" onclick="navTo('${MY_ROOT_ID}', 'Логистика')"><i class="fa fa-truck-fast"></i> Логистика</div>
-        <div class="menu-item" onclick="navTo('${MERCH_ROOT_ID}', 'Мерчандайзинг')"><i class="fa fa-boxes-stacked"></i> Мерч</div>
-        <div class="menu-item"><i class="fa fa-clock"></i> Недавние</div>
-        <div class="menu-item"><i class="fa fa-trash-can"></i> Корзина</div>
+        <div class="nav-link active" id="link-root" onclick="nav('root', 'Мой диск')"><i class="fa fa-hdd"></i> Мой диск</div>
+        <div class="nav-link" onclick="nav('${MY_ROOT_ID}', 'Логистика')"><i class="fa fa-truck-fast"></i> Логистика</div>
+        <div class="nav-link" onclick="nav('${MERCH_ROOT_ID}', 'Мерчандайзинг')"><i class="fa fa-boxes-stacked"></i> Мерч</div>
+        <div class="nav-link"><i class="fa fa-clock"></i> Недавние</div>
+        <div class="nav-link"><i class="fa fa-trash-can"></i> Корзина</div>
     </aside>
 
     <main>
-        <div class="breadcrumbs" id="bc-cont">Мой диск</div>
-        <table class="data-table">
+        <div class="bc-container" id="bc-box">Мой диск</div>
+        <table class="file-table">
             <thead>
                 <tr>
                     <th style="width:50%">Название</th>
                     <th style="width:15%">Владелец</th>
-                    <th style="width:20%">Последнее изменение</th>
+                    <th style="width:20%">Изменено</th>
                     <th style="width:15%">Размер</th>
                 </tr>
             </thead>
-            <tbody id="files-list"></tbody>
+            <tbody id="list-box"></tbody>
         </table>
     </main>
 </div>
 
-<div id="ctx-menu">
-    <div class="ctx-item" onclick="doView()"><i class="fa fa-eye"></i> Предпросмотр</div>
-    <div class="ctx-item" onclick="doDownload()"><i class="fa fa-cloud-download"></i> Скачать</div>
-    <div class="ctx-item" onclick="doRename()"><i class="fa fa-pen-to-square"></i> Переименовать</div>
-    <div class="ctx-item" onclick="doDelete()" style="color:var(--g-red)"><i class="fa fa-trash-can"></i> Удалить</div>
+<div id="menu-new">
+    <div class="menu-ctx-item" onclick="mkDir()"><i class="fa fa-folder-plus"></i> Новая папка</div>
+    <div class="menu-ctx-item" onclick="document.getElementById('file-in').click()"><i class="fa fa-file-upload"></i> Загрузить файл</div>
 </div>
 
-<div id="pv-modal">
-    <div class="pv-top">
-        <span id="pv-title" style="font-family:'Google Sans'; font-size:18px;"></span>
-        <div style="display:flex; gap:25px; align-items:center;">
-            <i class="fa fa-download" onclick="doDownload()" style="cursor:pointer;"></i>
-            <i class="fa fa-xmark" onclick="closePv()" style="font-size:24px; cursor:pointer;"></i>
-        </div>
+<div id="menu-ctx">
+    <div class="menu-ctx-item" onclick="view()"><i class="fa fa-eye"></i> Предпросмотр</div>
+    <div class="menu-ctx-item" onclick="down()"><i class="fa fa-download"></i> Скачать</div>
+    <div class="menu-ctx-item" onclick="ren()"><i class="fa fa-pen"></i> Переименовать</div>
+    <div class="menu-ctx-item" onclick="del()" style="color:var(--g-red)"><i class="fa fa-trash"></i> Удалить</div>
+</div>
+
+<div id="modal-pv">
+    <div class="pv-head">
+        <span id="pv-name" style="font-family:'Google Sans'; font-size:18px;"></span>
+        <i class="fa fa-xmark" onclick="closePv()" style="font-size:24px; cursor:pointer;"></i>
     </div>
-    <iframe id="pv-frame"></iframe>
+    <iframe id="pv-iframe"></iframe>
 </div>
 
-<div id="new-menu" style="display:none; position:fixed; top:120px; left:20px; background:#fff; box-shadow:var(--g-shadow); border-radius:4px; padding:8px 0; z-index:2000; width:220px;">
-    <div class="ctx-item" onclick="makeDir()"><i class="fa fa-folder-plus"></i> Новая папка</div>
-    <div class="ctx-item" onclick="document.getElementById('file-up').click()"><i class="fa fa-file-upload"></i> Загрузить файл</div>
-</div>
-
-<input type="file" id="file-up" style="display:none" multiple onchange="uploadFiles(this.files)">
-<div id="toast"></div>
+<input type="file" id="file-in" style="display:none" multiple onchange="upload(this.files)">
+<div id="toast-msg"></div>
 
 <script>
-    let curFolder = 'root';
-    let breadStack = [{id:'root', name:'Мой диск'}];
-    let focusFile = {id:null, name:null};
-    let cache = [];
+    let currentId = 'root';
+    let path = [{id:'root', name:'Мой диск'}];
+    let focus = {id:null, name:null};
+    let filesData = [];
 
-    async function refresh(id) {
-        curFolder = id;
+    async function load(id) {
+        currentId = id;
         const res = await fetch(\`/storage/api/list?folderId=\${id}\`);
-        cache = await res.json();
+        filesData = await res.json();
         render();
         renderBC();
     }
 
     function render() {
-        const body = document.getElementById('files-list');
-        body.innerHTML = cache.length ? '' : '<tr><td colspan="4" style="text-align:center; padding:50px; color:#999;">Здесь пока пусто</td></tr>';
+        const body = document.getElementById('list-box');
+        body.innerHTML = filesData.length ? '' : '<tr><td colspan="4" style="text-align:center; padding:60px; color:#999;">Папка пуста</td></tr>';
         
-        cache.forEach(f => {
+        filesData.forEach(f => {
             const tr = document.createElement('tr');
-            tr.className = 'data-row';
+            tr.className = 'row-item';
             const isDir = f.mimeType.includes('folder');
             
             tr.innerHTML = \`
-                <td><i class="fa \${getIcon(f.mimeType)} f-icon"></i> \${f.name}</td>
+                <td><i class="fa \${getIco(f.mimeType)} icon-cell"></i> \${f.name}</td>
                 <td>Я</td>
                 <td>\${new Date(f.modifiedTime).toLocaleDateString()}</td>
                 <td>\${f.size ? (f.size/1024/1024).toFixed(1) + ' МБ' : '—'}</td>
             \`;
 
-            tr.onclick = () => isDir ? navTo(f.id, f.name) : openPv(f.id, f.name);
+            tr.onclick = () => isDir ? nav(f.id, f.name) : view(f.id, f.name);
             tr.oncontextmenu = (e) => {
                 e.preventDefault();
-                focusFile = {id: f.id, name: f.name};
-                const cm = document.getElementById('ctx-menu');
+                focus = {id: f.id, name: f.name};
+                const cm = document.getElementById('menu-ctx');
                 cm.style.display = 'block'; cm.style.left = e.clientX+'px'; cm.style.top = e.clientY+'px';
-                document.querySelectorAll('.data-row').forEach(r => r.classList.remove('selected'));
+                document.querySelectorAll('.row-item').forEach(r => r.classList.remove('selected'));
                 tr.classList.add('selected');
             };
             body.appendChild(tr);
         });
     }
 
-    function getIcon(mime) {
-        if(mime.includes('folder')) return 'fa-folder color-folder';
-        if(mime.includes('pdf')) return 'fa-file-pdf color-pdf';
-        if(mime.includes('spreadsheet') || mime.includes('excel')) return 'fa-file-excel color-excel';
-        if(mime.includes('word') || mime.includes('document')) return 'fa-file-word color-word';
-        if(mime.includes('image')) return 'fa-file-image color-img';
+    function getIco(m) {
+        if(m.includes('folder')) return 'fa-folder f-folder';
+        if(m.includes('pdf')) return 'fa-file-pdf f-pdf';
+        if(m.includes('spreadsheet') || m.includes('excel')) return 'fa-file-excel f-excel';
+        if(m.includes('image')) return 'fa-file-image f-image';
         return 'fa-file-lines';
     }
 
-    function navTo(id, name) {
-        const i = breadStack.findIndex(x => x.id === id);
-        if(i !== -1) breadStack = breadStack.slice(0, i+1);
-        else breadStack.push({id, name});
-        refresh(id);
+    function nav(id, name) {
+        const i = path.findIndex(x => x.id === id);
+        if(i !== -1) path = path.slice(0, i+1);
+        else path.push({id, name});
+        load(id);
     }
 
     function renderBC() {
-        document.getElementById('bc-cont').innerHTML = breadStack.map(b => 
-            \`<span class="bc-item" onclick="navTo('\${b.id}', '\${b.name}')">\${b.name}</span>\`
-        ).join(' <i class="fa fa-chevron-right" style="font-size:10px; margin:0 5px; opacity:0.4;"></i> ');
+        document.getElementById('bc-box').innerHTML = path.map(b => 
+            \`<span class="bc-item" onclick="nav('\${b.id}', '\${b.name}')">\${b.name}</span>\`
+        ).join(' <i class="fa fa-chevron-right" style="font-size:10px; margin:0 6px; opacity:0.4;"></i> ');
     }
 
-    async function uploadFiles(files) {
+    async function upload(files) {
         for(let f of files) {
-            msg(\`Загрузка: \${f.name}...\`);
-            const fd = new FormData(); fd.append('file', f); fd.append('folderId', curFolder);
+            toast(\`Загрузка: \${f.name}...\`);
+            const fd = new FormData(); fd.append('file', f); fd.append('folderId', currentId);
             await fetch('/storage/api/upload', {method:'POST', body:fd});
         }
-        refresh(curFolder);
+        load(currentId);
     }
 
-    async function makeDir() {
-        const n = prompt('Название новой папки:');
+    async function mkDir() {
+        const n = prompt('Название папки:');
         if(!n) return;
         await fetch('/storage/api/mkdir', {
             method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({parentId: curFolder, name: n})
+            body: JSON.stringify({parentId: currentId, name: n})
         });
-        refresh(curFolder);
+        load(currentId);
     }
 
-    async function doDelete() {
-        if(confirm(\`Удалить "\${focusFile.name}"?\`)) {
-            await fetch(\`/storage/api/delete/\${focusFile.id}\`, {method:'DELETE'});
-            refresh(curFolder);
+    async function del() {
+        if(confirm(\`Удалить "\${focus.name}"?\`)) {
+            await fetch(\`/storage/api/delete/\${focus.id}\`, {method:'DELETE'});
+            load(currentId);
         }
     }
 
-    async function doRename() {
-        const n = prompt('Новое имя:', focusFile.name);
-        if(!n || n === focusFile.name) return;
+    async function ren() {
+        const n = prompt('Новое имя:', focus.name);
+        if(!n || n === focus.name) return;
         await fetch('/storage/api/rename', {
             method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({id: focusFile.id, name: n})
+            body: JSON.stringify({id: focus.id, name: n})
         });
-        refresh(curFolder);
+        load(currentId);
     }
 
-    function doDownload() { window.open(\`/storage/api/download?id=\${focusFile.id}\`); }
-    function openPv(id, n) {
-        document.getElementById('pv-title').innerText = n;
-        document.getElementById('pv-frame').src = \`https://drive.google.com/file/d/\${id}/preview\`;
-        document.getElementById('pv-modal').style.display = 'flex';
-        focusFile = {id, name: n};
+    function down() { window.open(\`/storage/api/download?id=\${focus.id}\`); }
+    function view(id, n) {
+        const targetId = id || focus.id;
+        const targetName = n || focus.name;
+        document.getElementById('pv-name').innerText = targetName;
+        document.getElementById('pv-iframe').src = \`https://drive.google.com/file/d/\${targetId}/preview\`;
+        document.getElementById('modal-pv').style.display = 'flex';
     }
-    function closePv() { document.getElementById('pv-modal').style.display = 'none'; document.getElementById('pv-frame').src = ''; }
-    function msg(m) { const t = document.getElementById('toast'); t.innerText = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 3000); }
-    function showNewMenu(e) { 
-        e.stopPropagation();
-        const m = document.getElementById('new-menu');
-        m.style.display = m.style.display === 'none' ? 'block' : 'none';
-    }
-    function doSearch() {
-        const q = document.getElementById('q-search').value.toLowerCase();
-        const filt = cache.filter(f => f.name.toLowerCase().includes(q));
-        renderFiltered(filt);
-    }
-    function renderFiltered(files) {
-        // Та же логика рендера, но для фильтрованного списка
-        cache = files; render(); refresh(curFolder); // Упрощенно для примера
+    function closePv() { document.getElementById('modal-pv').style.display = 'none'; document.getElementById('pv-iframe').src = ''; }
+    function toast(m) { const t = document.getElementById('toast-msg'); t.innerText = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 3000); }
+    function toggleNew(e) { e.stopPropagation(); const m = document.getElementById('menu-new'); m.style.display = m.style.display === 'none' ? 'block' : 'none'; }
+    function search() {
+        const q = document.getElementById('search-in').value.toLowerCase();
+        const filt = filesData.filter(f => f.name.toLowerCase().includes(q));
+        filesData = filt; render(); // Упрощенный поиск
     }
 
     window.onclick = () => { 
-        document.getElementById('ctx-menu').style.display = 'none'; 
-        document.getElementById('new-menu').style.display = 'none';
+        document.getElementById('menu-ctx').style.display = 'none'; 
+        document.getElementById('menu-new').style.display = 'none';
     };
-    refresh('root');
+    load('root');
 </script>
 </body>
 </html>
     `;
 
-    // --- СЕРВЕРНАЯ ЧАСТЬ (API) ---
-
+    // --- СЕРВЕРНЫЙ API (Node.js) ---
     app.get('/storage', (req, res) => res.send(UI));
 
-    // 1. Список
     app.get('/storage/api/list', async (req, res) => {
         try {
             const r = await drive.files.list({
@@ -350,7 +339,6 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).json({error: e.message}); }
     });
 
-    // 2. Загрузка
     app.post('/storage/api/upload', upload.single('file'), async (req, res) => {
         try {
             const media = { mimeType: req.file.mimetype, body: fs.createReadStream(req.file.path) };
@@ -363,7 +351,6 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    // 3. Создание папки
     app.post('/storage/api/mkdir', express.json(), async (req, res) => {
         try {
             await drive.files.create({
@@ -373,7 +360,6 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    // 4. Переименование
     app.post('/storage/api/rename', express.json(), async (req, res) => {
         try {
             await drive.files.update({ fileId: req.body.id, resource: { name: req.body.name } });
@@ -381,7 +367,6 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    // 5. Удаление
     app.delete('/storage/api/delete/:id', async (req, res) => {
         try {
             await drive.files.update({ fileId: req.params.id, resource: { trashed: true } });
@@ -389,7 +374,6 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    // 6. Скачивание
     app.get('/storage/api/download', async (req, res) => {
         try {
             const f = await drive.files.get({ fileId: req.query.id, fields: 'name' });
@@ -399,5 +383,5 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    console.log("✅ TITANIUM DRIVE v35.0 ACTIVATED [LOGIST-X]");
+    console.log("✅ TITANIUM ULTIMATE v36.0 ACTIVATED [FULL LOAD]");
 };
