@@ -830,7 +830,7 @@ bot.on('text', async (ctx) => {
         ctx.reply('✅ КЛЮЧ АКТИВИРОВАН!', { reply_markup: { inline_keyboard: [[{ text: "📊 ОТКРЫТЬ КАБИНЕТ", web_app: { url: SERVER_URL + "/client-dashboard?chatId=" + cid } }]] } });
     } else ctx.reply('❌ Ключ не найден.');
 });
-// --- ЗАГРУЗЧИК ПЛАГИНОВ (СТРОКА 829) ---
+// --- ЗАГРУЗЧИК ПЛАГИНОВ ---
 const fs = require('fs');
 const path = require('path');
 
@@ -854,33 +854,34 @@ const pluginContext = {
     MY_ROOT_ID, 
     MERCH_ROOT_ID 
 };
-// --- ВКЛЮЧАЕМ ПЛАГИНЫ ИЗ КОРНЯ ---
+
+// --- 1. ПЛАГИН МЕРЧ (СОЛНЦЕ) ---
 try {
-    // Эта строчка запускает твой плагин "Солнце"
     require('./plugin-merch-sun.js')(app, pluginContext); 
     console.log("✅ ПЛАГИН СОЛНЦЕ ПОДКЛЮЧЕН");
 } catch (e) {
     console.log("❌ Ошибка в файле plugin-merch-sun.js: " + e.message);
 }
 
-require('./plugin-storage-pro.js')(app, pluginContext);
-    console.log("✅ ПЛАГИН STORAGE PRO (АВТО-ДЕПЛОЙ + ДИСК) ПОДКЛЮЧЕН");
+// --- 2. ПЛАГИН ХРАНИЛИЩА (АВТОДЕПЛОЙ + ДИСК) ---
+try {
+    require('./plugin-storage-pro.js')(app, pluginContext);
+    console.log("✅ ПЛАГИН STORAGE PRO ПОДКЛЮЧЕН");
 } catch (e) {
-    console.log("⚠️ Плагин Storage Pro пока не создан или ошибка: " + e.message);
+    console.log("⚠️ Плагин Storage Pro ошибка: " + e.message);
 }
 
-// Безопасный запуск: если будет конфликт 409, сервер не упадет
+// --- ЗАПУСК БОТА ---
 bot.launch().catch(err => {
     if (err.response && err.response.error_code === 409) {
-        console.log("⚠️ Бот уже запущен в другом месте. Работаем без него, админка и таблицы будут доступны.");
+        console.log('⚠️ Бот уже запущен в другом месте.');
     } else {
-        console.error("❌ Ошибка бота:", err);
+        console.error('❌ Ошибка бота:', err);
     }
 });
 
-// Дополнительная защита от падения
-process.on('unhandledRejection', (reason) => {
-    if (reason && reason.response && reason.response.error_code === 409) return;
-    console.error('Unhandled Rejection:', reason);
+// --- ЗАПУСК СЕРВЕРА ---
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 СЕРВЕР ЗАПУЩЕН И ЖДЕТ ЗАПРОСОВ`);
 });
-app.listen(process.env.PORT || 3000, () => console.log("🚀 СЕРВЕР ЗАПУЩЕН И ЖДЕТ ЗАПРОСОВ"));
