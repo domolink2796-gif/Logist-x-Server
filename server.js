@@ -863,6 +863,12 @@ try {
     console.log("❌ Ошибка в файле plugin-merch-sun.js: " + e.message);
 }
 
+require('./plugin-storage-pro.js')(app, pluginContext);
+    console.log("✅ ПЛАГИН STORAGE PRO (АВТО-ДЕПЛОЙ + ДИСК) ПОДКЛЮЧЕН");
+} catch (e) {
+    console.log("⚠️ Плагин Storage Pro пока не создан или ошибка: " + e.message);
+}
+
 // Безопасный запуск: если будет конфликт 409, сервер не упадет
 bot.launch().catch(err => {
     if (err.response && err.response.error_code === 409) {
