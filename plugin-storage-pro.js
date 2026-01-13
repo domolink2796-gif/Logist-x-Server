@@ -1,363 +1,309 @@
 /**
  * plugin-storage-pro.js
- * FINAL ULTIMATE VERSION - FULL CLONE ENGINE
- * Project: X-Commander
+ * ULTIMATE CLONE ENGINE v3.0 - X-COMMANDER EDITION
+ * Полная интеграция с server.js (Logist_X & Merch_X)
  */
 
-const express = require('express');
-const { google } = require('googleapis');
 const multer = require('multer');
 const fs = require('fs');
+const { Readable } = require('stream');
 const path = require('path');
-const cookieParser = require('cookie-parser');
 
-const router = express.Router();
-const upload = multer({ dest: 'uploads/' });
+module.exports = function(app, ctx) {
+    const { drive, readDatabase, MY_ROOT_ID, MERCH_ROOT_ID } = ctx;
+    const upload = multer({ dest: 'uploads/' });
 
-// --- СИСТЕМА УМНОЙ ПАМЯТИ (Local Index) ---
-const MEMORY_FILE = path.join(process.cwd(), 'storage_brain.json');
-let brain = { history: [], folderMap: {}, preferences: { logisticsId: null, merchId: null } };
-if (fs.existsSync(MEMORY_FILE)) { try { brain = JSON.parse(fs.readFileSync(MEMORY_FILE)); } catch(e){} }
-const saveBrain = () => fs.writeFileSync(MEMORY_FILE, JSON.stringify(brain, null, 2));
+    // --- API: СПИСОК ФАЙЛОВ ---
+    app.get('/storage/api/files', async (req, res) => {
+        try {
+            const folderId = req.query.folderId || MY_ROOT_ID;
+            const response = await drive.files.list({
+                q: `'${folderId}' in parents and trashed = false`,
+                fields: 'files(id, name, mimeType, size, modifiedTime, thumbnailLink, iconLink)',
+                orderBy: 'folder,name'
+            });
+            res.json(response.data.files);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
 
-router.use(cookieParser());
-router.use(express.json());
+    // --- API: ЗАГРУЗКА С ПРАВИЛОМ ПЕРЕИМЕНОВАНИЯ (АДРЕС НОМЕР ПОДЪЕЗД) ---
+    app.post('/storage/api/upload', upload.single('file'), async (req, res) => {
+        try {
+            const { folderId, street, house, entrance } = req.body;
+            let finalName = req.file.originalname;
 
-// --- GOOGLE DRIVE CLIENT ---
-async function getDrive(req) {
-    const auth = new google.auth.OAuth2(process.env.CLIENT_ID, process.env.CLIENT_SECRET);
-    auth.setCredentials({ access_token: req.cookies.access_token });
-    return google.drive({ version: 'v3', auth });
-}
+            // Применяем твоё правило переименования, если заполнены поля
+            if (street && house) {
+                const extension = path.extname(req.file.originalname);
+                finalName = `${street} ${house}${entrance ? ' под ' + entrance : ''}${extension}`;
+            }
 
-// --- API ENDPOINTS ---
+            const media = {
+                mimeType: req.file.mimetype,
+                body: fs.createReadStream(req.file.path)
+            };
 
-router.get('/api/files', async (req, res) => {
-    try {
-        const drive = await getDrive(req);
-        const folderId = req.query.folderId || 'root';
-        const response = await drive.files.list({
-            q: `'${folderId}' in parents and trashed = false`,
-            fields: 'files(id, name, mimeType, size, modifiedTime, iconLink, thumbnailLink)',
-            orderBy: 'folder,name'
-        });
-        
-        // Обучение: индексируем папки для умного поиска без Google в будущем
-        response.data.files.forEach(f => {
-            brain.folderMap[f.id] = { name: f.name, parent: folderId, type: f.mimeType };
-        });
-        saveBrain();
-        
-        res.json(response.data.files);
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
+            const file = await drive.files.create({
+                resource: { name: finalName, parents: [folderId || MY_ROOT_ID] },
+                media: media,
+                fields: 'id, name'
+            });
 
-router.post('/api/upload', upload.single('file'), async (req, res) => {
-    try {
-        const drive = await getDrive(req);
-        const folderId = req.body.folderId || 'root';
-        const fileMetadata = { name: req.file.originalname, parents: [folderId] };
-        const media = { mimeType: req.file.mimetype, body: fs.createReadStream(req.file.path) };
-        
-        const file = await drive.files.create({ resource: fileMetadata, media: media, fields: 'id, name' });
-        
-        // Запоминаем путь для Логистики/Мерча
-        const folderName = brain.folderMap[folderId]?.name || 'Unknown';
-        brain.history.push({ file: file.data.name, to: folderName, date: new Date() });
-        saveBrain();
+            fs.unlinkSync(req.file.path);
+            res.json({ success: true, file: file.data });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
 
-        fs.unlinkSync(req.file.path);
-        res.json({ success: true });
-    } catch (e) { res.status(500).send(e.message); }
-});
-
-// --- MASTERPIECE UI RENDER ---
-router.get('/', (req, res) => {
-    res.send(`
+    // --- ОСНОВНОЙ HTML ДВИЖОК ---
+    app.get('/storage', async (req, res) => {
+        res.send(`
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>X-Commander | Google Drive Professional</title>
     <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@300;400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* CSS MASTERPIECE - PIXEL PERFECT GOOGLE DRIVE CLONE */
         :root {
-            --google-gray-100: #f1f3f4;
-            --google-gray-200: #e8eaed;
-            --google-gray-300: #dadce0;
-            --google-gray-500: #5f6368;
-            --google-blue: #1a73e8;
-            --google-blue-light: #e8f0fe;
-            --text-dark: #3c4043;
-            --sidebar-width: 256px;
+            --g-blue: #1a73e8;
+            --g-red: #ea4335;
+            --g-yellow: #fbbc05;
+            --g-green: #34a853;
+            --sidebar-w: 256px;
+            --border: #dadce0;
+            --text: #3c4043;
         }
 
-        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Roboto', sans-serif; background: white; color: var(--text-dark); overflow: hidden; }
+        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Roboto', sans-serif; background: #fff; color: var(--text); overflow: hidden; }
 
-        /* Header */
+        /* HEADER */
         header {
-            height: 64px; display: flex; align-items: center; justify-content: space-between;
-            padding: 0 16px; border-bottom: 1px solid var(--google-gray-300); background: white;
-            position: relative; z-index: 100;
+            height: 64px; border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+            background: #fff; z-index: 100; position: relative;
         }
-        .header-left { display: flex; align-items: center; width: var(--sidebar-width); }
-        .logo-box { display: flex; align-items: center; text-decoration: none; color: inherit; }
-        .logo-box i { font-size: 24px; color: var(--google-blue); margin-right: 12px; }
-        .logo-box span { font-family: 'Google Sans', sans-serif; font-size: 22px; color: var(--google-gray-500); }
+        .logo-section { display: flex; align-items: center; width: var(--sidebar-w); cursor: pointer; }
+        .logo-section i { font-size: 28px; color: var(--g-blue); margin-right: 12px; }
+        .logo-section span { font-family: 'Google Sans'; font-size: 22px; color: #5f6368; }
 
-        .search-container { flex: 1; max-width: 720px; position: relative; }
+        .search-container { flex: 1; max-width: 722px; position: relative; }
         .search-bar {
-            height: 48px; background: var(--google-gray-100); border-radius: 8px;
-            display: flex; align-items: center; padding: 0 12px; transition: background 0.2s, box-shadow 0.2s;
+            height: 48px; background: #f1f3f4; border-radius: 8px;
+            display: flex; align-items: center; padding: 0 16px; transition: 0.2s;
         }
-        .search-bar:focus-within { background: white; box-shadow: 0 1px 1px 0 rgba(65,69,73,0.3), 0 1px 3px 1px rgba(65,69,73,0.15); }
-        .search-bar i { color: var(--google-gray-500); margin-right: 12px; }
-        .search-bar input { border: none; background: transparent; width: 100%; outline: none; font-size: 16px; }
+        .search-bar:focus-within { background: #fff; box-shadow: 0 1px 1px rgba(0,0,0,0.2); border: 1px solid transparent; }
+        .search-bar input { border: none; background: transparent; width: 100%; outline: none; font-size: 16px; margin-left: 12px; }
 
-        .header-right { display: flex; align-items: center; gap: 20px; width: var(--sidebar-width); justify-content: flex-end; }
-        .avatar { width: 32px; height: 32px; background: #8e24aa; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 500; }
-
-        /* Sidebar */
+        /* LAYOUT */
         .wrapper { display: flex; height: calc(100vh - 64px); }
-        aside { width: var(--sidebar-width); padding-top: 12px; display: flex; flex-direction: column; flex-shrink: 0; }
-        
-        .new-btn {
-            margin: 4px 0 16px 12px; width: 110px; height: 48px; border-radius: 24px;
-            background: white; border: 1px solid var(--google-gray-300); box-shadow: 0 1px 2px 0 rgba(60,64,67,0.30), 0 1px 3px 1px rgba(60,64,67,0.15);
-            display: flex; align-items: center; justify-content: center; cursor: pointer;
-            font-family: 'Google Sans'; font-weight: 500; font-size: 14px; transition: box-shadow 0.2s;
+
+        /* SIDEBAR */
+        aside { width: var(--sidebar-w); padding-top: 8px; flex-shrink: 0; }
+        .create-btn {
+            margin: 4px 16px 16px; width: 115px; height: 48px; border-radius: 24px;
+            background: #fff; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1); cursor: pointer; font-family: 'Google Sans'; font-weight: 500;
         }
-        .new-btn:hover { box-shadow: 0 4px 8px 3px rgba(60,64,67,0.15); background: #f8f9fa; }
-        .new-btn img { width: 24px; margin-right: 12px; }
+        .create-btn:hover { box-shadow: 0 4px 8px rgba(0,0,0,0.15); background: #f8f9fa; }
+        .create-btn img { width: 24px; margin-right: 12px; }
 
         .nav-link {
-            height: 40px; display: flex; align-items: center; padding-left: 24px;
-            border-radius: 0 20px 20px 0; cursor: pointer; font-size: 14px; color: var(--text-dark);
-            margin-right: 8px;
+            height: 40px; display: flex; align-items: center; padding: 0 24px;
+            border-radius: 0 20px 20px 0; cursor: pointer; font-size: 14px; margin-right: 8px;
         }
-        .nav-link:hover { background: var(--google-gray-100); }
-        .nav-link.active { background: var(--google-blue-light); color: var(--google-blue); font-weight: 500; }
-        .nav-link i { width: 24px; font-size: 18px; margin-right: 16px; text-align: center; }
+        .nav-link:hover { background: #f1f3f4; }
+        .nav-link.active { background: #e8f0fe; color: var(--g-blue); font-weight: 500; }
+        .nav-link i { margin-right: 18px; width: 20px; text-align: center; font-size: 18px; }
 
-        /* Content Area */
-        main { flex: 1; display: flex; flex-direction: column; background: white; border-top-left-radius: 16px; border: 1px solid var(--google-gray-300); margin-right: 12px; overflow: hidden; }
+        /* MAIN VIEW */
+        main { flex: 1; display: flex; flex-direction: column; background: #fff; border-top-left-radius: 16px; border: 1px solid var(--border); overflow: hidden; }
+        .toolbar { height: 48px; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid var(--border); }
+        .breadcrumb { font-family: 'Google Sans'; font-size: 18px; display: flex; align-items: center; }
         
-        .breadcrumb-row { height: 48px; display: flex; align-items: center; padding: 0 20px; font-family: 'Google Sans'; font-size: 18px; color: var(--text-dark); border-bottom: 1px solid var(--google-gray-300); }
-        
-        .table-container { flex: 1; overflow-y: auto; }
+        .table-view { flex: 1; overflow-y: auto; }
         table { width: 100%; border-collapse: collapse; }
-        thead th {
-            position: sticky; top: 0; background: white; text-align: left;
-            padding: 12px; font-size: 13px; color: var(--google-gray-500);
-            border-bottom: 1px solid var(--google-gray-300); font-weight: 500;
-        }
-        tbody td {
-            padding: 8px 12px; border-bottom: 1px solid var(--google-gray-200);
-            font-size: 14px; color: var(--text-dark); transition: background 0.1s;
-        }
-        tr:hover td { background: var(--google-gray-100); cursor: pointer; }
-        
-        .file-icon-cell { display: flex; align-items: center; }
-        .file-icon-cell i { font-size: 18px; margin-right: 12px; }
-        .fa-folder { color: #5f6368; }
-        .fa-file-pdf { color: #ea4335; }
-        .fa-file-excel { color: #1e8e3e; }
-        .fa-file-image { color: #f4b400; }
-        .fa-file-word { color: #4285f4; }
+        th { text-align: left; padding: 12px; font-size: 13px; color: #5f6368; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: #fff; }
+        td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+        tr:hover td { background: #f5f5f5; cursor: pointer; }
 
-        /* Modal Preview */
-        #preview-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85); display: none; flex-direction: column; z-index: 1000;
+        /* MODALS */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 1000; }
+        .smart-modal {
+            display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #fff; width: 450px; border-radius: 8px; box-shadow: 0 24px 38px rgba(0,0,0,0.2);
+            padding: 24px; z-index: 1001;
         }
-        .preview-header { height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; color: white; }
-        .preview-content { flex: 1; display: flex; justify-content: center; align-items: center; padding: 20px; }
-        .preview-content iframe { width: 80%; height: 100%; border: none; background: white; border-radius: 4px; }
+        .smart-modal h2 { margin-top: 0; font-family: 'Google Sans'; font-size: 20px; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; font-size: 12px; color: var(--g-blue); margin-bottom: 4px; font-weight: 500; }
+        .form-group input { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 4px; box-sizing: border-box; font-size: 14px; outline: none; }
+        .form-group input:focus { border-color: var(--g-blue); }
+        .btn-row { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+        .btn { padding: 8px 24px; border-radius: 4px; border: none; font-weight: 500; cursor: pointer; font-family: 'Google Sans'; }
+        .btn-cancel { background: none; color: #5f6368; }
+        .btn-confirm { background: var(--g-blue); color: #fff; }
 
-        /* Context Menu */
-        #ctx-menu {
-            position: fixed; background: white; box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            border-radius: 4px; padding: 6px 0; min-width: 180px; display: none; z-index: 500;
-        }
-        .ctx-item { padding: 10px 16px; font-size: 14px; display: flex; align-items: center; cursor: pointer; }
-        .ctx-item:hover { background: var(--google-gray-100); }
-        .ctx-item i { margin-right: 12px; width: 18px; color: var(--google-gray-500); }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            aside { display: none; }
-            .search-container { max-width: 100%; }
-        }
+        /* DROP ZONE */
+        .drop-zone { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(26, 115, 232, 0.1); border: 2px dashed var(--g-blue); display: none; align-items: center; justify-content: center; z-index: 50; }
     </style>
 </head>
 <body>
 
     <header>
-        <div class="header-left">
-            <a href="#" class="logo-box">
-                <i class="fab fa-xbox"></i>
-                <span>X-Commander</span>
-            </a>
+        <div class="logo-section">
+            <i class="fab fa-xbox"></i>
+            <span>X-Commander</span>
         </div>
         <div class="search-container">
             <div class="search-bar">
-                <i class="fas fa-search"></i>
-                <input type="text" placeholder="Поиск на Диске (Логистика, Мерч...)">
+                <i class="fas fa-search" style="color:#5f6368"></i>
+                <input type="text" placeholder="Поиск в Логистике и Мерче">
             </div>
         </div>
-        <div class="header-right">
-            <i class="fas fa-question-circle" style="font-size: 20px; color: var(--google-gray-500);"></i>
-            <i class="fas fa-cog" style="font-size: 20px; color: var(--google-gray-500);"></i>
-            <div class="avatar">X</div>
+        <div style="width: var(--sidebar-w); display:flex; justify-content: flex-end; align-items: center;">
+            <i class="fas fa-cog" style="margin-right:20px; color:#5f6368"></i>
+            <div style="width:32px; height:32px; background:var(--g-blue); border-radius:50%; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:500;">A</div>
         </div>
     </header>
 
     <div class="wrapper">
         <aside>
-            <div class="new-btn" onclick="openUpload()">
+            <div class="create-btn" onclick="openSmartUpload()">
                 <img src="https://upload.wikimedia.org/wikipedia/commons/9/9e/Plus_symbol.svg">
                 <span>Создать</span>
             </div>
-            <div class="nav-link active" onclick="navigate('root')"><i class="fas fa-hdd"></i> Мой диск</div>
-            <div class="nav-link" onclick="navigate('logistics')"><i class="fas fa-truck"></i> Логистика</div>
-            <div class="nav-link" onclick="navigate('merch')"><i class="fas fa-tshirt"></i> Мерч</div>
-            <div class="nav-link"><i class="fas fa-users"></i> Доступные мне</div>
+            <div class="nav-link active" onclick="loadFiles('${MY_ROOT_ID}', 'Мой диск')"><i class="fas fa-hdd"></i> Мой диск</div>
+            <div class="nav-link" onclick="loadFiles('${MY_ROOT_ID}', 'Логистика')"><i class="fas fa-truck"></i> Логистика</div>
+            <div class="nav-link" onclick="loadFiles('${MERCH_ROOT_ID}', 'Мерч X')"><i class="fas fa-box"></i> Мерч X</div>
             <div class="nav-link"><i class="fas fa-clock"></i> Недавние</div>
-            <div class="nav-link"><i class="fas fa-star"></i> Помеченные</div>
             <div class="nav-link"><i class="fas fa-trash-alt"></i> Корзина</div>
-            <div style="margin-top: auto; padding: 20px;">
-                <div style="height: 4px; background: #eee; border-radius: 2px;">
-                    <div style="width: 45%; height: 100%; background: var(--google-blue); border-radius: 2px;"></div>
-                </div>
-                <p style="font-size: 12px; color: var(--google-gray-500);">Хранилище: 6.8 ГБ из 15 ГБ</p>
+            <div style="margin-top:auto; padding: 24px; border-top: 1px solid var(--border)">
+                <div style="height:4px; background:#eee; border-radius:2px; margin-bottom:8px;"><div style="width:60%; height:100%; background:var(--g-blue); border-radius:2px;"></div></div>
+                <span style="font-size:12px; color:#5f6368">Использовано 9.2 ГБ из 15 ГБ</span>
             </div>
         </aside>
 
-        <main>
-            <div class="breadcrumb-row" id="breadcrumb">Мой диск</div>
-            <div class="table-container">
+        <main id="drop-target">
+            <div class="toolbar">
+                <div class="breadcrumb" id="current-path">Мой диск</div>
+            </div>
+            <div class="table-view">
                 <table>
                     <thead>
                         <tr>
-                            <th style="width: 40%;">Название</th>
+                            <th style="width:45%">Название</th>
                             <th>Владелец</th>
                             <th>Последнее изменение</th>
                             <th>Размер</th>
                         </tr>
                     </thead>
-                    <tbody id="file-list">
-                        </tbody>
+                    <tbody id="file-body"></tbody>
                 </table>
+            </div>
+            <div class="drop-zone" id="drop-zone">
+                <div style="text-align:center; color:var(--g-blue)">
+                    <i class="fas fa-cloud-upload-alt" style="font-size:48px"></i>
+                    <h2>Перетащите файлы для загрузки</h2>
+                </div>
             </div>
         </main>
     </div>
 
-    <input type="file" id="file-uploader" style="display:none" multiple onchange="handleUpload(this.files)">
-    
-    <div id="preview-overlay">
-        <div class="preview-header">
-            <span id="preview-filename">File Name</span>
-            <button onclick="closePreview()" style="background:none; border:none; color:white; font-size:24px; cursor:pointer;">&times;</button>
+    <div class="modal-overlay" id="modal-overlay" onclick="closeSmartUpload()"></div>
+    <div class="smart-modal" id="smart-modal">
+        <h2>Загрузка в X-Commander</h2>
+        <div class="form-group">
+            <label>УЛИЦА</label>
+            <input type="text" id="street" placeholder="Напр. Ленина">
         </div>
-        <div class="preview-content">
-            <iframe id="preview-frame"></iframe>
+        <div class="form-group">
+            <label>НОМЕР ДОМА</label>
+            <input type="text" id="house" placeholder="Напр. 45/1">
         </div>
-    </div>
-
-    <div id="ctx-menu">
-        <div class="ctx-item" onclick="alert('Перемещено в Логистику')"><i class="fas fa-truck"></i> В Логистику</div>
-        <div class="ctx-item" onclick="alert('Перемещено в Мерч')"><i class="fas fa-box"></i> В Мерч</div>
-        <div class="ctx-item"><i class="fas fa-download"></i> Скачать</div>
-        <div class="ctx-item" style="color: #d93025;"><i class="fas fa-trash"></i> Удалить</div>
+        <div class="form-group">
+            <label>ПОДЪЕЗД</label>
+            <input type="text" id="entrance" placeholder="Напр. 3">
+        </div>
+        <div class="form-group">
+            <label>ВЫБЕРИТЕ ФАЙЛ</label>
+            <input type="file" id="file-input">
+        </div>
+        <div class="btn-row">
+            <button class="btn btn-cancel" onclick="closeSmartUpload()">ОТМЕНА</button>
+            <button class="btn btn-confirm" onclick="startSmartUpload()">ЗАГРУЗИТЬ</button>
+        </div>
     </div>
 
     <script>
-        let currentFolder = 'root';
-        const fileList = document.getElementById('file-list');
+        let currentFolder = '${MY_ROOT_ID}';
 
-        async function fetchFiles(folderId = 'root') {
-            currentFolder = folderId;
-            const res = await fetch(\`/api/files?folderId=\${folderId}\`);
+        async function loadFiles(id, name) {
+            currentFolder = id;
+            document.getElementById('current-path').innerText = name;
+            const res = await fetch(\`/storage/api/files?folderId=\${id}\`);
             const files = await res.json();
-            renderFiles(files);
-        }
+            const body = document.getElementById('file-body');
+            body.innerHTML = '';
 
-        function renderFiles(files) {
-            fileList.innerHTML = '';
-            files.forEach(file => {
-                const isFolder = file.mimeType === 'application/vnd.google-apps.folder';
+            files.forEach(f => {
+                const isFolder = f.mimeType === 'application/vnd.google-apps.folder';
                 const row = document.createElement('tr');
-                
-                let iconClass = 'fa-file-alt';
-                if(isFolder) iconClass = 'fa-folder';
-                else if(file.mimeType.includes('pdf')) iconClass = 'fa-file-pdf';
-                else if(file.mimeType.includes('spreadsheet')) iconClass = 'fa-file-excel';
-                else if(file.mimeType.includes('image')) iconClass = 'fa-file-image';
-                else if(file.mimeType.includes('word')) iconClass = 'fa-file-word';
-
-                const size = file.size ? (file.size / (1024*1024)).toFixed(1) + ' МБ' : '—';
-                const date = new Date(file.modifiedTime).toLocaleDateString('ru-RU');
-
                 row.innerHTML = \`
-                    <td>
-                        <div class="file-icon-cell">
-                            <i class="fas \${iconClass}"></i>
-                            <span>\${file.name}</span>
-                        </div>
-                    </td>
+                    <td><i class="fas \${isFolder?'fa-folder':'fa-file-alt'}" style="margin-right:12px; color:\${isFolder?'#5f6368':'#4285f4'}"></i> \${f.name}</td>
                     <td>Я</td>
-                    <td>\${date}</td>
-                    <td>\${size}</td>
+                    <td>\${new Date(f.modifiedTime).toLocaleDateString()}</td>
+                    <td>\${f.size ? (f.size/1024/1024).toFixed(1) + ' МБ' : '—'}</td>
                 \`;
-
-                row.onclick = () => {
-                    if(isFolder) fetchFiles(file.id);
-                    else openPreview(file);
-                };
-                
-                row.oncontextmenu = (e) => {
-                    e.preventDefault();
-                    const menu = document.getElementById('ctx-menu');
-                    menu.style.display = 'block';
-                    menu.style.left = e.pageX + 'px';
-                    menu.style.top = e.pageY + 'px';
-                };
-
-                fileList.appendChild(row);
+                row.onclick = () => isFolder ? loadFiles(f.id, f.name) : null;
+                body.appendChild(row);
             });
         }
 
-        function openUpload() { document.getElementById('file-uploader').click(); }
-
-        async function handleUpload(files) {
-            for(let file of files) {
-                const fd = new FormData();
-                fd.append('file', file);
-                fd.append('folderId', currentFolder);
-                await fetch('/api/upload', { method: 'POST', body: fd });
-            }
-            fetchFiles(currentFolder);
+        function openSmartUpload() {
+            document.getElementById('modal-overlay').style.display = 'block';
+            document.getElementById('smart-modal').style.display = 'block';
         }
 
-        function openPreview(file) {
-            document.getElementById('preview-filename').innerText = file.name;
-            document.getElementById('preview-overlay').style.display = 'flex';
-            // Используем стандартный Google Viewer (требует публичного доступа или спец. прокси, здесь - концепт)
-            document.getElementById('preview-frame').src = 'about:blank'; 
+        function closeSmartUpload() {
+            document.getElementById('modal-overlay').style.display = 'none';
+            document.getElementById('smart-modal').style.display = 'none';
         }
 
-        function closePreview() { document.getElementById('preview-overlay').style.display = 'none'; }
+        async function startSmartUpload() {
+            const file = document.getElementById('file-input').files[0];
+            if(!file) return alert('Выберите файл');
 
-        window.onclick = () => document.getElementById('ctx-menu').style.display = 'none';
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('folderId', currentFolder);
+            fd.append('street', document.getElementById('street').value);
+            fd.append('house', document.getElementById('house').value);
+            fd.append('entrance', document.getElementById('entrance').value);
 
-        // Старт
-        fetchFiles();
+            closeSmartUpload();
+            const res = await fetch('/storage/api/upload', { method: 'POST', body: fd });
+            if(res.ok) loadFiles(currentFolder, document.getElementById('current-path').innerText);
+        }
+
+        // Drag-and-Drop Логика
+        const target = document.getElementById('drop-target');
+        const zone = document.getElementById('drop-zone');
+
+        target.ondragover = (e) => { e.preventDefault(); zone.style.display = 'flex'; };
+        zone.ondragleave = () => { zone.style.display = 'none'; };
+        zone.ondrop = (e) => {
+            e.preventDefault();
+            zone.style.display = 'none';
+            document.getElementById('file-input').files = e.dataTransfer.files;
+            openSmartUpload();
+        };
+
+        loadFiles('${MY_ROOT_ID}', 'Мой диск');
     </script>
 </body>
 </html>
-    `);
-});
-
-module.exports = router;
+        `);
+    });
+};
