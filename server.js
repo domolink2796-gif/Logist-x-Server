@@ -24,7 +24,7 @@ const BARCODE_DB_NAME = 'barcodes_db.json';
 const SHOP_ITEMS_DB = 'shop_items_db.json'; // База товаров в магазинах
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
-const SERVER_URL = 'https://logist-x-server-production.up.railway.app';
+const SERVER_URL = 'https://logist-x.store';
 const MAX_DISTANCE_METERS = 600; 
 
 // --- НАСТРОЙКИ РОБОКАССЫ ---
