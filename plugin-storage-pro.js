@@ -5,11 +5,11 @@ const path = require('path');
 
 /**
  * ============================================================================
- * TITANIUM X-PLATFORM v55.0 | THE GOLDEN MONOLITH REPAIRED
+ * TITANIUM X-PLATFORM v57.0 | THE COMPLETE MONOLITH (MASTER FIXED)
  * ----------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
- * ИСПРАВЛЕНО: Логотип, кнопка "Корзина", кнопки создания и загрузки.
+ * ФУНКЦИОНАЛ: UI + API + MOBILE ADAPTIVE + BRANDING + FILE MGMT
  * ============================================================================
  */
 
@@ -150,16 +150,16 @@ module.exports = function(app, context) {
         <div class="nav-item active" id="nav-root" onclick="navigate('root', 'Мой диск')">
             <i class="fa fa-hdd"></i> Мой диск
         </div>
-        <div class="nav-item" onclick="navigate('${MY_ROOT_ID}', 'Логистика')">
+        <div class="nav-item" id="nav-logist" onclick="navigate('${MY_ROOT_ID}', 'Логистика')">
             <i class="fa fa-truck-fast"></i> Логистика
         </div>
-        <div class="nav-item" onclick="navigate('${MERCH_ROOT_ID}', 'Мерчандайзинг')">
+        <div class="nav-item" id="nav-merch" onclick="navigate('${MERCH_ROOT_ID}', 'Мерчандайзинг')">
             <i class="fa fa-boxes-stacked"></i> Мерчандайзинг
         </div>
         <div class="nav-item" id="nav-trash" style="margin-top: auto;" onclick="navigate('trash', 'Корзина')">
             <i class="fa fa-trash-can"></i> Корзина
         </div>
-        <div style="padding: 20px; font-size: 10px; color: #ccc;">ULTIMATE v55.0 FULL BUILD</div>
+        <div style="padding: 20px; font-size: 10px; color: #ccc;">ULTIMATE v57.0 MASTER FIXED</div>
     </aside>
 
     <main>
@@ -182,9 +182,9 @@ module.exports = function(app, context) {
     <img src="${LOGO_URL}" alt="+">
 </div>
 
-<div id="new-menu">
-    <div class="menu-item" onclick="createFolder(event)"><i class="fa fa-folder-plus"></i> Новая папка</div>
-    <div class="menu-item" onclick="triggerUpload(event)"><i class="fa fa-file-upload"></i> Загрузить файл</div>
+<div id="new-menu" onclick="event.stopPropagation()">
+    <div class="menu-item" onclick="createFolder()"><i class="fa fa-folder-plus"></i> Новая папка</div>
+    <div class="menu-item" onclick="triggerUpload()"><i class="fa fa-file-upload"></i> Загрузить файл</div>
 </div>
 
 <div id="ctx-menu">
@@ -217,11 +217,12 @@ module.exports = function(app, context) {
             filesCache = await r.json();
             render();
             renderBC();
-            // Подсветка активного пункта
+            
+            // Подсветка меню
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             if(id === 'root') document.getElementById('nav-root').classList.add('active');
             if(id === 'trash') document.getElementById('nav-trash').classList.add('active');
-        } catch(e) { showToast("Ошибка загрузки данных"); }
+        } catch(e) { showToast("Ошибка загрузки"); }
     }
 
     function render() {
@@ -281,8 +282,7 @@ module.exports = function(app, context) {
         m.style.display = (m.style.display === 'block') ? 'none' : 'block'; 
     }
 
-    function triggerUpload(e) {
-        e.stopPropagation();
+    function triggerUpload() {
         document.getElementById('file-input').click();
         document.getElementById('new-menu').style.display = 'none';
     }
@@ -310,8 +310,7 @@ module.exports = function(app, context) {
         load(currentFolderId);
     }
 
-    async function createFolder(e) {
-        e.stopPropagation();
+    async function createFolder() {
         const n = prompt("Имя новой папки:");
         if(!n) return;
         document.getElementById('new-menu').style.display = 'none';
@@ -362,17 +361,15 @@ module.exports = function(app, context) {
 
     app.get('/storage/api/list', async (req, res) => {
         try {
-            let q = "";
             const folderId = req.query.folderId || 'root';
-            
+            let query = "";
             if (folderId === 'trash') {
-                q = "trashed = true";
+                query = "trashed = true";
             } else {
-                q = `'${folderId}' in parents and trashed = false`;
+                query = "'" + folderId + "' in parents and trashed = false";
             }
-
             const r = await drive.files.list({
-                q: q,
+                q: query,
                 fields: 'files(id, name, mimeType, size, modifiedTime)',
                 orderBy: 'folder, name'
             });
@@ -425,5 +422,5 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    console.log("✅ TITANIUM X-PLATFORM v55.0 FULLY LOADED");
-}; 
+    console.log("✅ TITANIUM X-PLATFORM v57.0 FULLY LOADED");
+};
