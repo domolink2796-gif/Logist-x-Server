@@ -1,71 +1,80 @@
 const fs = require('fs');
 const path = require('path');
-const multer = require('multer');
-const express = require('express');
 
 module.exports = function(app, context) {
     const { drive, MY_ROOT_ID, MERCH_ROOT_ID } = context;
     const STORAGE_ROOT = path.join(__dirname, 'storage');
-    const upload = multer({ dest: 'uploads/' });
-
-    if (!fs.existsSync(STORAGE_ROOT)) fs.mkdirSync(STORAGE_ROOT, { recursive: true });
     
-    // API ДЛЯ CDN (РАЗДАЧА ФАЙЛОВ)
+    // Подключаем multer только внутри, чтобы не вешать весь сервер
+    let upload;
+    try {
+        const multer = require('multer');
+        upload = multer({ dest: 'uploads/' });
+    } catch (e) {
+        console.log("⚠️ Multer не найден, загрузка через браузер будет ограничена");
+    }
+
+    // Создаем структуру X-Platform
+    if (!fs.existsSync(STORAGE_ROOT)) fs.mkdirSync(STORAGE_ROOT, { recursive: true });
+
+    // РАЗДАЧА ФАЙЛОВ (Миниатюры и скачивание)
+    const express = require('express');
     app.use('/cdn', express.static(STORAGE_ROOT));
 
-    // API УДАЛЕНИЯ
+    // УДАЛЕНИЕ
     app.post('/explorer/delete', (req, res) => {
         const { itemPath } = req.body;
-        if (!itemPath || ['', 'ЛОГИСТ', 'МЕРЧ'].includes(itemPath.replace(/^\//, ''))) return res.status(403).send("Защищено");
+        if (!itemPath || ['ЛОГИСТ', 'МЕРЧ', ''].includes(itemPath)) return res.status(403).send("Protected");
         const absPath = path.join(STORAGE_ROOT, itemPath);
         if (fs.existsSync(absPath)) {
             fs.rmSync(absPath, { recursive: true, force: true });
             res.json({ success: true });
-        } else res.status(404).send("Не найден");
+        } else res.status(404).send("Not found");
     });
 
-    // API СОЗДАНИЯ ПАПКИ
+    // СОЗДАНИЕ ПАПКИ
     app.post('/explorer/mkdir', (req, res) => {
         const { path: relPath, name } = req.body;
         const newPath = path.join(STORAGE_ROOT, relPath, name);
         if (!fs.existsSync(newPath)) {
             fs.mkdirSync(newPath, { recursive: true });
             res.json({ success: true });
-        } else res.status(400).send("Уже есть");
+        } else res.status(400).send("Exists");
     });
 
-    // API ЗАГРУЗКИ
-    app.post('/explorer/upload', upload.single('file'), (req, res) => {
-        const { path: relPath } = req.body;
-        const targetPath = path.join(STORAGE_ROOT, relPath, req.file.originalname);
-        fs.renameSync(req.file.path, targetPath);
-        res.redirect('/explorer?path=' + encodeURIComponent(relPath));
-    });
+    // ЗАГРУЗКА
+    if (upload) {
+        app.post('/explorer/upload', upload.single('file'), (req, res) => {
+            const relPath = req.body.path || '';
+            const targetPath = path.join(STORAGE_ROOT, relPath, req.file.originalname);
+            fs.renameSync(req.file.path, targetPath);
+            res.redirect('/explorer?path=' + encodeURIComponent(relPath));
+        });
+    }
 
     // ИНТЕРФЕЙС X-DRIVE
     app.get('/explorer', (req, res) => {
         const relPath = req.query.path || '';
         const absPath = path.join(STORAGE_ROOT, relPath);
-        if (!fs.existsSync(absPath)) return res.send("Ошибка пути");
+        if (!fs.existsSync(absPath)) return res.send("Ошибка: путь не найден");
         
         const items = fs.readdirSync(absPath, { withFileTypes: true });
 
         const itemsHtml = items.map(item => {
             const itemRel = path.join(relPath, item.name).replace(/\\/g, '/');
             const isDir = item.isDirectory();
-            const ext = path.extname(item.name).toLowerCase();
-            const isImg = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext);
+            const isImg = ['.jpg', '.jpeg', '.png', '.webp'].includes(path.extname(item.name).toLowerCase());
             const canDel = !(['ЛОГИСТ', 'МЕРЧ'].includes(item.name) && relPath === '');
 
             return `
-            <div class="x-card">
-                <div class="x-preview" onclick="${isDir ? `location.href='/explorer?path=${encodeURIComponent(itemRel)}'` : ''}">
-                    ${isImg ? `<img src="/cdn/${itemRel}" class="x-img">` : `<div class="x-icon">${isDir ? '📂' : '📄'}</div>`}
+            <div style="background:#161b22; border:1px solid #30363d; border-radius:10px; padding:10px; text-align:center;">
+                <div onclick="${isDir ? `location.href='/explorer?path=${encodeURIComponent(itemRel)}'` : ''}" style="cursor:pointer; height:100px; display:flex; align-items:center; justify-content:center; background:#000; border-radius:5px; overflow:hidden;">
+                    ${isImg ? `<img src="/cdn/${itemRel}" style="width:100%; height:100%; object-fit:cover;">` : `<span style="font-size:40px;">${isDir ? '📂' : '📄'}</span>`}
                 </div>
-                <div class="x-name" title="${item.name}">${item.name}</div>
-                <div class="x-actions">
-                    ${!isDir ? `<a href="/cdn/${itemRel}" download="${item.name}" class="x-btn x-download">СКАЧАТЬ</a>` : ''}
-                    ${canDel ? `<button class="x-btn x-del" onclick="xDelete('${itemRel}')">УДАЛИТЬ</button>` : ''}
+                <div style="font-size:11px; margin:8px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${item.name}</div>
+                <div style="display:flex; gap:5px;">
+                    ${!isDir ? `<a href="/cdn/${itemRel}" download="${item.name}" style="flex:1; background:#238636; color:white; text-decoration:none; font-size:10px; padding:5px; border-radius:4px; font-weight:bold;">СКАЧАТЬ</a>` : ''}
+                    ${canDel ? `<button onclick="xDel('${itemRel}')" style="flex:1; background:#da3633; color:white; border:none; font-size:10px; padding:5px; border-radius:4px; cursor:pointer;">УДАЛИТЬ</button>` : ''}
                 </div>
             </div>`;
         }).join('');
@@ -76,54 +85,39 @@ module.exports = function(app, context) {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>X-Platform | Drive</title>
-            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/viewerjs/1.11.6/viewer.min.css">
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/viewerjs/1.11.6/viewer.min.js"></script>
+            <title>X-Platform Drive</title>
             <style>
-                :root { --bg: #010409; --panel: #0d1117; --card: #161b22; --border: #30363d; --accent: #f1c40f; --text: #c9d1d9; }
-                body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 20px; }
-                .x-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
-                .x-tools { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 15px; margin: 20px 0; display: flex; gap: 10px; }
-                .x-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 15px; }
-                .x-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; }
-                .x-preview { height: 100px; display: flex; align-items: center; justify-content: center; background: #000; border-radius: 8px; cursor: pointer; overflow: hidden; }
-                .x-img { width: 100%; height: 100%; object-fit: cover; }
-                .x-icon { font-size: 40px; }
-                .x-name { font-size: 11px; margin: 10px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
-                .x-actions { display: flex; gap: 5px; margin-top: auto; }
-                .x-btn { flex: 1; border: none; padding: 6px; border-radius: 5px; cursor: pointer; font-size: 10px; font-weight: bold; text-decoration: none; text-align: center; color: white; }
-                .x-download { background: #238636; }
-                .x-del { background: #da3633; }
-                .btn-main { background: #238636; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: bold; }
-                input { background: var(--bg); border: 1px solid var(--border); color: white; padding: 8px; border-radius: 6px; }
+                body { background:#0d1117; color:#c9d1d9; font-family:sans-serif; padding:20px; }
+                .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap:15px; }
+                .tools { background:#161b22; border:1px solid #30363d; padding:15px; border-radius:10px; margin-bottom:20px; display:flex; gap:10px; flex-wrap:wrap; }
+                input, button { padding:8px; border-radius:6px; border:1px solid #30363d; }
+                input { background:#0d1117; color:white; }
+                .btn-ok { background:#238636; color:white; font-weight:bold; cursor:pointer; }
             </style>
         </head>
         <body>
-            <div class="x-header">
-                <h1>X-DRIVE / <span style="color:var(--accent)">${relPath || 'Root'}</span></h1>
-                ${relPath ? `<button class="btn-main" style="background:#30363d" onclick="location.href='/explorer?path=${encodeURIComponent(path.dirname(relPath).replace(/\\/g, '/'))}'">⬅ Назад</button>` : ''}
-            </div>
-            <div class="x-tools">
+            <h2>📂 X-DRIVE: ${relPath || 'Корень'}</h2>
+            <div class="tools">
                 <input type="text" id="nd" placeholder="Новая папка">
-                <button class="btn-main" onclick="xMk()">Создать</button>
-                <form action="/explorer/upload" method="POST" enctype="multipart/form-data" style="display:flex; gap:10px;">
+                <button class="btn-ok" onclick="mk()">+ Папка</button>
+                <form action="/explorer/upload" method="POST" enctype="multipart/form-data" style="display:flex; gap:5px;">
                     <input type="hidden" name="path" value="${relPath}">
-                    <input type="file" name="file" required onchange="this.form.submit()">
-                    <span style="font-size:12px; align-self:center;">↑ Загрузить файл</span>
+                    <input type="file" name="file" required>
+                    <button type="submit" class="btn-ok">↑ Загрузить</button>
                 </form>
+                ${relPath ? `<button onclick="history.back()" style="background:#30363d; color:white;">⬅ Назад</button>` : ''}
             </div>
-            <div class="x-grid" id="gallery">${itemsHtml}</div>
+            <div class="grid">${itemsHtml}</div>
             <script>
-                new Viewer(document.getElementById('gallery'), { url: 'src' });
-                async function xDelete(p) {
-                    if(!confirm('Удалить файл?')) return;
-                    await fetch('/explorer/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({itemPath: p}) });
+                async function xDel(p) {
+                    if(!confirm('Удалить?')) return;
+                    await fetch('/explorer/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({itemPath:p}) });
                     location.reload();
                 }
-                async function xMk() {
+                async function mk() {
                     const n = document.getElementById('nd').value;
                     if(!n) return;
-                    await fetch('/explorer/mkdir', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: '${relPath}', name: n}) });
+                    await fetch('/explorer/mkdir', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path:'${relPath}', name:n}) });
                     location.reload();
                 }
             </script>
@@ -131,5 +125,5 @@ module.exports = function(app, context) {
         </html>`);
     });
 
-    console.log("✅ X-PLATFORM DRIVE: ФУНКЦИЯ СКАЧИВАНИЯ ДОБАВЛЕНА");
+    console.log("✅ X-PLATFORM DRIVE: ГИБРИДНЫЙ РЕЖИМ ЗАПУЩЕН");
 };
