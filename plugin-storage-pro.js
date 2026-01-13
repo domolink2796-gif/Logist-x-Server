@@ -5,148 +5,368 @@ const path = require('path');
 
 /**
  * ============================================================================
- * TITANIUM X-PLATFORM v54.0 | THE COMPLETE MONOLITH
+ * TITANIUM X-PLATFORM v57.0 | THE ULTIMATE MONOLITH
  * ----------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
- * ФУНКЦИОНАЛ: UI + API + MOBILE ADAPTIVE + BRANDING + FILE MGMT
+ * ФУНКЦИОНАЛ: ПОЛНЫЙ (UI + API + UX + BRANDING + CONTEXT)
+ * СТАТУС: MAXIMUM PERFORMANCE (450+ LINES)
  * ============================================================================
  */
 
-// ПРЯМАЯ ССЫЛКА НА ЛОГОТИП
+// ПРЯМАЯ ССЫЛКА НА ТВОЙ ЛОГОТИП
 const LOGO_URL = "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png";
 
 module.exports = function(app, context) {
     const { drive, google, MY_ROOT_ID, MERCH_ROOT_ID } = context;
     const upload = multer({ dest: 'uploads/' });
 
-    // --- ПОЛНЫЙ ИНТЕРФЕЙС (HTML + CSS + JS) ---
+    // --- ГЕНЕРАЦИЯ ИНТЕРФЕЙСА ---
     const UI = `
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>X-PLATFORM | Cloud Storage</title>
+    <title>X-PLATFORM | Professional Cloud</title>
+    
     <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
     <style>
         :root {
-            --brand-bg: #0a0a0a;
-            --accent: #f0b90b;
-            --gray-text: #5f6368;
-            --main-text: #3c4043;
-            --border: #dadce0;
-            --sidebar-w: 280px;
-            --blue-link: #1a73e8;
+            --brand-dark: #0a0a0a;
+            --brand-accent: #f0b90b;
+            --text-main: #3c4043;
+            --text-secondary: #5f6368;
+            --border-light: #dadce0;
+            --bg-sidebar: #ffffff;
+            --bg-main: #ffffff;
+            --bg-hover: #f1f3f4;
+            --blue-active: #1a73e8;
+            --sidebar-width: 280px;
         }
 
+        /* RESET & BASE */
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; margin: 0; padding: 0; }
-        body, html { height: 100%; font-family: 'Roboto', sans-serif; color: var(--main-text); background: #fff; overflow: hidden; }
+        body, html { 
+            height: 100%; 
+            font-family: 'Roboto', sans-serif; 
+            color: var(--text-main); 
+            background: var(--bg-main); 
+            overflow: hidden; 
+        }
 
         /* HEADER */
         header {
-            height: 64px; padding: 0 20px; border-bottom: 2px solid var(--accent);
-            display: flex; align-items: center; justify-content: space-between;
-            background: var(--brand-bg); position: relative; z-index: 2000; color: #fff;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            height: 64px;
+            padding: 0 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--brand-dark);
+            color: #fff;
+            border-bottom: 2px solid var(--brand-accent);
+            position: relative;
+            z-index: 2000;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.4);
         }
-        .h-left { display: flex; align-items: center; gap: 15px; }
-        .burger { display: none; font-size: 24px; color: var(--accent); cursor: pointer; padding: 5px; }
-        .logo-box { display: flex; align-items: center; gap: 12px; font-family: 'Google Sans'; font-size: 20px; font-weight: 700; color: #fff; text-decoration: none; }
-        .logo-box img { height: 42px; width: auto; border-radius: 4px; }
 
-        /* WRAPPER */
-        .wrapper { display: flex; height: calc(100vh - 64px); position: relative; }
-
-        /* SIDEBAR */
-        aside { 
-            width: var(--sidebar-w); height: 100%; border-right: 1px solid #eee;
-            background: #fff; display: flex; flex-direction: column; padding: 20px 0;
-            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1500;
+        .header-left { display: flex; align-items: center; gap: 15px; }
+        .burger-menu { 
+            display: none; 
+            font-size: 24px; 
+            color: var(--brand-accent); 
+            cursor: pointer; 
+            padding: 5px; 
         }
-        
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: #fff;
+        }
+
+        .logo-container img {
+            height: 42px;
+            width: auto;
+            border-radius: 4px;
+            transition: transform 0.3s;
+        }
+
+        .logo-container span {
+            font-family: 'Google Sans', sans-serif;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 700;
+            color: var(--brand-accent);
+            font-size: 14px;
+        }
+
+        /* MAIN LAYOUT */
+        .app-wrapper {
+            display: flex;
+            height: calc(100vh - 64px);
+            position: relative;
+        }
+
+        /* SIDEBAR NAVIGATION */
+        aside {
+            width: var(--sidebar-width);
+            height: 100%;
+            background: var(--bg-sidebar);
+            border-right: 1px solid #eee;
+            display: flex;
+            flex-direction: column;
+            padding: 15px 0;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 1500;
+        }
+
         .nav-item {
-            height: 50px; margin: 2px 12px; border-radius: 25px;
-            display: flex; align-items: center; padding: 0 20px; cursor: pointer;
-            color: var(--main-text); text-decoration: none; font-size: 15px; font-weight: 500;
+            height: 48px;
+            margin: 4px 12px;
+            border-radius: 24px;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            cursor: pointer;
+            color: var(--text-main);
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.2s, color 0.2s;
         }
-        .nav-item i { width: 35px; font-size: 20px; color: var(--gray-text); }
-        .nav-item:hover { background: #f1f3f4; }
-        .nav-item.active { background: #e8f0fe; color: var(--blue-link); font-weight: 700; }
-        .nav-item.active i { color: var(--blue-link); }
 
-        /* MAIN CONTENT */
-        main { flex: 1; padding: 0 25px; overflow-y: auto; background: #fff; position: relative; }
-        .breadcrumbs { 
-            height: 56px; display: flex; align-items: center; font-size: 18px; 
-            font-family: 'Google Sans'; color: var(--gray-text); border-bottom: 1px solid #eee; 
-            margin-bottom: 15px; overflow-x: auto; white-space: nowrap;
+        .nav-item i {
+            width: 34px;
+            font-size: 18px;
+            color: var(--text-secondary);
         }
-        .bc-node { cursor: pointer; padding: 4px 8px; border-radius: 4px; }
+
+        .nav-item:hover { background: var(--bg-hover); }
+        .nav-item.active {
+            background: #e8f0fe;
+            color: var(--blue-active);
+            font-weight: 700;
+        }
+        .nav-item.active i { color: var(--blue-active); }
+
+        /* CONTENT AREA */
+        main {
+            flex: 1;
+            padding: 0 25px;
+            overflow-y: auto;
+            background: #fff;
+            position: relative;
+        }
+
+        .breadcrumb-strip {
+            height: 56px;
+            display: flex;
+            align-items: center;
+            font-family: 'Google Sans';
+            font-size: 18px;
+            color: var(--text-secondary);
+            border-bottom: 1px solid #eee;
+            margin-bottom: 10px;
+            white-space: nowrap;
+            overflow-x: auto;
+        }
+
+        .bc-node { 
+            cursor: pointer; 
+            padding: 4px 8px; 
+            border-radius: 4px; 
+            transition: 0.2s;
+        }
         .bc-node:hover { background: #eee; color: #000; }
-        
-        /* TABLE */
-        .file-table { width: 100%; border-collapse: collapse; }
-        .file-table th { text-align: left; padding: 12px 8px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--gray-text); position: sticky; top: 0; background: #fff; z-index: 10; }
-        .file-table td { padding: 16px 8px; border-bottom: 1px solid #eee; font-size: 15px; cursor: pointer; }
-        .file-row:hover { background: #f8f9fa; }
 
-        /* FAB */
-        .fab {
-            position: fixed; bottom: 30px; right: 30px; width: 64px; height: 64px;
-            border-radius: 20px; background: var(--brand-bg); border: 2px solid var(--accent);
-            display: flex; align-items: center; justify-content: center; z-index: 1000;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.4); cursor: pointer;
+        /* FILE TABLE */
+        .file-list-container { width: 100%; border-collapse: collapse; }
+        .file-list-container th {
+            text-align: left;
+            padding: 12px 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-light);
+            position: sticky;
+            top: 0;
+            background: #fff;
+            z-index: 10;
         }
-        .fab img { height: 38px; width: auto; }
 
-        /* MOBILE OVERLAY */
-        .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1400; }
-        .overlay.active { display: block; }
+        .file-row {
+            cursor: pointer;
+            border-bottom: 1px solid #f1f1f1;
+            transition: background 0.1s;
+        }
 
+        .file-row:hover { background: #f8f9fa; }
+        .file-row td { padding: 16px 8px; font-size: 15px; }
+
+        /* FLOATING ACTION BUTTON (FAB) */
+        .fab-trigger {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 64px;
+            height: 64px;
+            border-radius: 20px;
+            background: var(--brand-dark);
+            border: 2px solid var(--brand-accent);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 3000;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            cursor: pointer;
+            transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        .fab-trigger:active { transform: scale(0.9) rotate(5deg); }
+        .fab-trigger img { height: 38px; width: auto; }
+
+        /* FAB MENU */
+        #create-menu {
+            position: fixed;
+            display: none;
+            bottom: 105px;
+            right: 30px;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+            z-index: 4000;
+            width: 220px;
+            padding: 10px 0;
+            border: 1px solid #eee;
+            animation: popUp 0.2s ease-out;
+        }
+
+        @keyframes popUp {
+            from { opacity: 0; transform: translateY(15px) scale(0.95); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .menu-option {
+            padding: 12px 20px;
+            font-size: 15px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .menu-option:hover { background: var(--bg-hover); }
+        .menu-option i { width: 22px; font-size: 18px; color: var(--text-secondary); }
+
+        /* CONTEXT MENU */
+        #context-popup {
+            position: fixed;
+            display: none;
+            background: #fff;
+            box-shadow: 0 10px 35px rgba(0,0,0,0.25);
+            border-radius: 12px;
+            z-index: 5000;
+            min-width: 220px;
+            padding: 8px 0;
+            border: 1px solid #eee;
+        }
+
+        /* MODAL PREVIEW */
+        #preview-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.95);
+            z-index: 9999;
+            flex-direction: column;
+        }
+
+        .preview-bar {
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 25px;
+            color: #fff;
+            background: var(--brand-dark);
+        }
+
+        #preview-frame {
+            flex: 1;
+            border: none;
+            background: #fff;
+        }
+
+        /* MOBILE OPTIMIZATION */
         @media (max-width: 768px) {
-            .burger { display: block; }
-            aside { position: fixed; left: 0; transform: translateX(-100%); height: 100%; box-shadow: 10px 0 20px rgba(0,0,0,0.1); }
+            .burger-menu { display: block; }
+            aside {
+                position: fixed;
+                left: 0;
+                transform: translateX(-100%);
+                height: 100%;
+                box-shadow: 10px 0 25px rgba(0,0,0,0.15);
+            }
             aside.open { transform: translateX(0); }
-            .hide-mobile { display: none; }
+            .hide-on-mobile { display: none; }
+            .mobile-overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.5);
+                z-index: 1400;
+            }
+            .mobile-overlay.active { display: block; }
             main { padding: 0 15px; }
         }
 
-        /* CONTEXT & NEW MENU */
-        #ctx-menu, #new-menu {
-            position: fixed; display: none; background: #fff; box-shadow: 0 8px 24px rgba(0,0,0,0.2);
-            border-radius: 12px; z-index: 5000; min-width: 220px; padding: 8px 0; border: 1px solid #eee;
+        /* TOAST NOTIFICATION */
+        #toast-box {
+            position: fixed;
+            bottom: 110px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #323232;
+            color: #fff;
+            padding: 12px 28px;
+            border-radius: 30px;
+            display: none;
+            z-index: 10000;
+            font-size: 14px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.4);
         }
-        .menu-item { padding: 12px 20px; font-size: 15px; display: flex; align-items: center; gap: 15px; cursor: pointer; }
-        .menu-item:hover { background: #f1f3f4; }
-        .menu-item i { width: 20px; color: var(--gray-text); font-size: 18px; }
-
-        /* PREVIEW */
-        #pv-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 9999; flex-direction: column; }
-        .pv-h { height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; color: #fff; background: var(--brand-bg); }
-        #pv-f { flex: 1; border: none; background: #fff; }
-        
-        #toast { position: fixed; bottom: 110px; left: 50%; transform: translateX(-50%); background: #323232; color: #fff; padding: 12px 25px; border-radius: 25px; display: none; z-index: 10000; font-size: 14px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
     </style>
 </head>
 <body>
 
-<div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
+<div class="mobile-overlay" id="mobile-ovl" onclick="toggleSidebar()"></div>
 
 <header>
-    <div class="h-left">
-        <div class="burger" onclick="toggleSidebar()"><i class="fa fa-bars"></i></div>
-        <div class="logo-box">
-            <img src="${LOGO_URL}" alt="X">
-            <span>X-PLATFORM</span>
+    <div class="header-left">
+        <div class="burger-menu" onclick="toggleSidebar()">
+            <i class="fa fa-bars"></i>
         </div>
+        <a href="/storage" class="logo-container">
+            <img src="${LOGO_URL}" alt="X-Logo">
+            <span>X-PLATFORM</span>
+        </a>
     </div>
-    <div style="font-weight: 700; color: var(--accent); font-size: 14px;">НИКИТИН Е.А.</div>
+    <div class="user-info">
+        НИКИТИН Е.А.
+    </div>
 </header>
 
-<div class="wrapper">
-    <aside id="sidebar">
+<div class="app-wrapper">
+    <aside id="main-sidebar">
         <div class="nav-item active" id="nav-root" onclick="navigate('root', 'Мой диск')">
             <i class="fa fa-hdd"></i> Мой диск
         </div>
@@ -159,250 +379,350 @@ module.exports = function(app, context) {
         <div class="nav-item" style="margin-top: auto;">
             <i class="fa fa-trash-can"></i> Корзина
         </div>
-        <div style="padding: 20px; font-size: 10px; color: #ccc;">ULTIMATE v54.0 FULL BUILD</div>
+        <div style="padding: 20px; font-size: 10px; color: #bbb; text-align: center;">
+            TITANIUM ENGINE v57.0
+        </div>
     </aside>
 
-    <main>
-        <div class="breadcrumbs" id="bc-container">Мой диск</div>
-        <table class="file-table">
+    <main id="content-pane">
+        <div class="breadcrumb-strip" id="bc-view">Мой диск</div>
+        <table class="file-list-container">
             <thead>
                 <tr>
                     <th style="width: 60%">Название</th>
-                    <th class="hide-mobile">Изменено</th>
-                    <th class="hide-mobile">Размер</th>
+                    <th class="hide-on-mobile">Дата изменения</th>
+                    <th class="hide-on-mobile">Размер</th>
                 </tr>
             </thead>
-            <tbody id="file-list">
+            <tbody id="file-table-body">
                 </tbody>
         </table>
     </main>
 </div>
 
-<div class="fab" onclick="toggleNewMenu(event)">
-    <img src="${LOGO_URL}" alt="+">
+<div class="fab-trigger" onclick="toggleCreateMenu(event)">
+    <img src="${LOGO_URL}" alt="Action">
 </div>
 
-<div id="new-menu">
-    <div class="menu-item" onclick="createFolder()"><i class="fa fa-folder-plus"></i> Новая папка</div>
-    <div class="menu-item" onclick="document.getElementById('file-input').click()"><i class="fa fa-file-upload"></i> Загрузить файл</div>
-</div>
-
-<div id="ctx-menu">
-    <div class="menu-item" onclick="viewFile()"><i class="fa fa-eye"></i> Предпросмотр</div>
-    <div class="menu-item" onclick="renameItem()"><i class="fa fa-pen-to-square"></i> Переименовать</div>
-    <div class="menu-item" onclick="deleteItem()" style="color: #d93025;"><i class="fa fa-trash-can"></i> Удалить</div>
-</div>
-
-<div id="pv-modal">
-    <div class="pv-h">
-        <span id="pv-title" style="font-weight: 500;"></span>
-        <i class="fa fa-xmark" onclick="closePreview()" style="font-size: 28px; cursor: pointer; color: var(--accent);"></i>
+<div id="create-menu">
+    <div class="menu-option" onclick="uiCreateFolder()">
+        <i class="fa fa-folder-plus"></i> Создать папку
     </div>
-    <iframe id="pv-f"></iframe>
+    <div class="menu-option" onclick="document.getElementById('hidden-upload').click()">
+        <i class="fa fa-cloud-arrow-up"></i> Загрузить файл
+    </div>
 </div>
 
-<input type="file" id="file-input" style="display:none" multiple onchange="handleUpload(this.files)">
-<div id="toast"></div>
+<div id="context-popup">
+    <div class="menu-option" onclick="uiPreviewFile()">
+        <i class="fa fa-eye"></i> Предпросмотр
+    </div>
+    <div class="menu-option" onclick="uiRenameFile()">
+        <i class="fa fa-pen-to-square"></i> Переименовать
+    </div>
+    <div class="menu-option" onclick="uiDeleteFile()" style="color: #d93025;">
+        <i class="fa fa-trash-can"></i> Удалить
+    </div>
+</div>
+
+<div id="preview-overlay">
+    <div class="preview-bar">
+        <span id="preview-title" style="font-weight: 500; font-family: 'Google Sans';"></span>
+        <i class="fa fa-xmark" onclick="closePreview()" style="font-size: 28px; cursor: pointer; color: var(--brand-accent);"></i>
+    </div>
+    <iframe id="preview-frame"></iframe>
+</div>
+
+<input type="file" id="hidden-upload" style="display:none" multiple onchange="handleFileUpload(this.files)">
+<div id="toast-box"></div>
 
 <script>
-    let currentFolderId = 'root'; 
-    let path = [{id:'root', name:'Мой диск'}];
-    let selectedFile = null; 
-    let filesCache = [];
+    /**
+     * CLIENT-SIDE ENGINE
+     */
+    let currentId = 'root';
+    let pathHistory = [{id: 'root', name: 'Мой диск'}];
+    let selectedFileObject = null;
+    let localFilesCache = [];
 
-    async function load(id) {
-        currentFolderId = id;
+    // Инициализация загрузки
+    async function loadDirectory(id) {
+        currentId = id;
         try {
-            const r = await fetch('/storage/api/list?folderId=' + id);
-            filesCache = await r.json();
-            render();
-            renderBC();
-        } catch(e) { showToast("Ошибка загрузки данных"); }
+            const response = await fetch('/storage/api/list?folderId=' + id);
+            if (!response.ok) throw new Error('Network fail');
+            localFilesCache = await response.json();
+            renderTable();
+            renderBreadcrumbs();
+        } catch (err) {
+            showToast("Ошибка связи с сервером");
+        }
     }
 
-    function render() {
-        const body = document.getElementById('file-list');
-        body.innerHTML = filesCache.length ? '' : '<tr><td colspan="3" style="text-align:center; padding:80px; color:#999;">Папка пуста</td></tr>';
-        
-        filesCache.forEach(f => {
-            const tr = document.createElement('tr'); 
+    // Отрисовка таблицы
+    function renderTable() {
+        const tbody = document.getElementById('file-table-body');
+        tbody.innerHTML = '';
+
+        if (localFilesCache.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:100px; color:#999; font-size: 14px;">Папка пуста</td></tr>';
+            return;
+        }
+
+        localFilesCache.forEach(file => {
+            const isFolder = file.mimeType.includes('folder');
+            const tr = document.createElement('tr');
             tr.className = 'file-row';
-            const isDir = f.mimeType.includes('folder');
             
+            const sizeStr = file.size ? (file.size / (1024 * 1024)).toFixed(2) + ' MB' : '—';
+            const dateStr = new Date(file.modifiedTime).toLocaleDateString('ru-RU');
+
             tr.innerHTML = \`
-                <td><i class="fa \${isDir?'fa-folder':'fa-file-lines'}" style="margin-right:12px; color:\${isDir?'#fbc02d':'#1a73e8'}; font-size:20px;"></i> \${f.name}</td>
-                <td class="hide-mobile">\${new Date(f.modifiedTime).toLocaleDateString()}</td>
-                <td class="hide-mobile">\${f.size ? (f.size/1024/1024).toFixed(1)+' MB' : '—'}</td>
+                <td>
+                    <i class="fa \${isFolder ? 'fa-folder' : 'fa-file-lines'}" 
+                       style="margin-right:15px; color:\${isFolder ? '#fbc02d' : '#455a64'}; font-size:20px;"></i>
+                    \${file.name}
+                </td>
+                <td class="hide-on-mobile">\${dateStr}</td>
+                <td class="hide-on-mobile">\${sizeStr}</td>
             \`;
 
-            tr.onclick = () => isDir ? navigate(f.id, f.name) : viewFile(f.id, f.name);
-            
+            // Обработка клика
+            tr.onclick = () => {
+                if (isFolder) navigate(file.id, file.name);
+                else uiPreviewFile(file.id, file.name);
+            };
+
+            // Контекстное меню
             tr.oncontextmenu = (e) => {
                 e.preventDefault();
-                selectedFile = f;
-                const m = document.getElementById('ctx-menu');
-                m.style.display = 'block'; 
-                m.style.left = e.clientX + 'px'; 
-                m.style.top = e.clientY + 'px';
+                selectedFileObject = file;
+                const menu = document.getElementById('context-popup');
+                menu.style.display = 'block';
+                menu.style.left = e.clientX + 'px';
+                menu.style.top = e.clientY + 'px';
             };
-            body.appendChild(tr);
+
+            tbody.appendChild(tr);
         });
     }
 
+    // Навигация
     function navigate(id, name) {
-        const idx = path.findIndex(x => x.id === id);
-        if(idx !== -1) path = path.slice(0, idx+1);
-        else path.push({id, name});
-        load(id);
+        const index = pathHistory.findIndex(p => p.id === id);
+        if (index !== -1) {
+            pathHistory = pathHistory.slice(0, index + 1);
+        } else {
+            pathHistory.push({id, name});
+        }
+        loadDirectory(id);
         toggleSidebar(true);
     }
 
-    function renderBC() {
-        document.getElementById('bc-container').innerHTML = path.map(p => 
-            \`<span class="bc-node" onclick="navigate('\${p.id}', '\${p.name}')">\${p.name}</span>\`
-        ).join(' <i class="fa fa-chevron-right" style="font-size:10px; margin:0 5px; opacity:0.3;"></i> ');
+    // Отрисовка хлебных крошек
+    function renderBreadcrumbs() {
+        const container = document.getElementById('bc-view');
+        container.innerHTML = pathHistory.map((node, i) => {
+            const isLast = i === pathHistory.length - 1;
+            return \`<span class="bc-node" onclick="navigate('\${node.id}', '\${node.name}')">\${node.name}</span>\`;
+        }).join(' <i class="fa fa-chevron-right" style="font-size:10px; margin:0 8px; opacity:0.3;"></i> ');
     }
 
-    function toggleSidebar(close) {
-        const s = document.getElementById('sidebar'); 
-        const o = document.getElementById('overlay');
-        if(close) { s.classList.remove('open'); o.classList.remove('active'); return; }
-        s.classList.toggle('open'); 
-        o.classList.toggle('active');
-    }
-
-    function toggleNewMenu(e) { 
-        e.stopPropagation(); 
-        const m = document.getElementById('new-menu'); 
-        m.style.display = (m.style.display === 'block') ? 'none' : 'block'; 
-    }
-
-    function viewFile(id, name) {
-        const tid = id || selectedFile.id;
-        document.getElementById('pv-title').innerText = name || selectedFile.name;
-        document.getElementById('pv-f').src = 'https://drive.google.com/file/d/' + tid + '/preview';
-        document.getElementById('pv-modal').style.display = 'flex';
-    }
-
-    function closePreview() { 
-        document.getElementById('pv-modal').style.display = 'none'; 
-        document.getElementById('pv-f').src = ''; 
-    }
-
-    async function handleUpload(files) {
-        for(let f of files) {
-            showToast("Загрузка: " + f.name);
-            const fd = new FormData(); 
-            fd.append('file', f); 
-            fd.append('folderId', currentFolderId);
-            await fetch('/storage/api/upload', {method: 'POST', body: fd});
+    // Управление сайдбаром
+    function toggleSidebar(forceClose = false) {
+        const sb = document.getElementById('main-sidebar');
+        const ovl = document.getElementById('mobile-ovl');
+        if (forceClose) {
+            sb.classList.remove('open');
+            ovl.classList.remove('active');
+        } else {
+            sb.classList.toggle('open');
+            ovl.classList.toggle('active');
         }
-        load(currentFolderId);
     }
 
-    async function createFolder() {
-        const n = prompt("Имя новой папки:");
-        if(!n) return;
-        await fetch('/storage/api/mkdir', {
-            method: 'POST', 
-            headers: {'Content-Type': 'application/json'}, 
-            body: JSON.stringify({parentId: currentFolderId, name: n})
-        });
-        load(currentFolderId);
+    // Меню "Создать"
+    function toggleCreateMenu(e) {
+        e.stopPropagation();
+        const menu = document.getElementById('create-menu');
+        menu.style.display = (menu.style.display === 'block') ? 'none' : 'block';
     }
 
-    async function deleteItem() {
-        if(!confirm("Удалить '" + selectedFile.name + "'?")) return;
-        await fetch('/storage/api/delete/' + selectedFile.id, {method: 'DELETE'});
-        load(currentFolderId);
+    // Предпросмотр
+    function uiPreviewFile(id, name) {
+        const targetId = id || selectedFileObject.id;
+        const targetName = name || selectedFileObject.name;
+        document.getElementById('preview-title').innerText = targetName;
+        document.getElementById('preview-frame').src = 'https://drive.google.com/file/d/' + targetId + '/preview';
+        document.getElementById('preview-overlay').style.display = 'flex';
     }
 
-    async function renameItem() {
-        const n = prompt("Новое имя:", selectedFile.name);
-        if(!n || n === selectedFile.name) return;
-        await fetch('/storage/api/rename', {
-            method: 'POST', 
-            headers: {'Content-Type': 'application/json'}, 
-            body: JSON.stringify({id: selectedFile.id, name: n})
-        });
-        load(currentFolderId);
+    function closePreview() {
+        document.getElementById('preview-overlay').style.display = 'none';
+        document.getElementById('preview-frame').src = '';
     }
 
-    function showToast(m) {
-        const t = document.getElementById('toast');
-        t.innerText = m; t.style.display = 'block';
+    // API: Загрузка
+    async function handleFileUpload(files) {
+        for (const file of files) {
+            showToast("Загрузка: " + file.name);
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('folderId', currentId);
+            try {
+                await fetch('/storage/api/upload', { method: 'POST', body: formData });
+            } catch (err) { showToast("Ошибка загрузки"); }
+        }
+        loadDirectory(currentId);
+    }
+
+    // API: Создание папки
+    async function uiCreateFolder() {
+        const folderName = prompt("Название папки:");
+        if (!folderName) return;
+        try {
+            await fetch('/storage/api/mkdir', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ parentId: currentId, name: folderName })
+            });
+            loadDirectory(currentId);
+        } catch (e) { showToast("Ошибка API"); }
+    }
+
+    // API: Переименование
+    async function uiRenameFile() {
+        const newName = prompt("Новое название:", selectedFileObject.name);
+        if (!newName || newName === selectedFileObject.name) return;
+        try {
+            await fetch('/storage/api/rename', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ id: selectedFileObject.id, name: newName })
+            });
+            loadDirectory(currentId);
+        } catch (e) { showToast("Ошибка переименования"); }
+    }
+
+    // API: Удаление
+    async function uiDeleteFile() {
+        if (!confirm("Удалить '" + selectedFileObject.name + "'?")) return;
+        try {
+            await fetch('/storage/api/delete/' + selectedFileObject.id, { method: 'DELETE' });
+            loadDirectory(currentId);
+        } catch (e) { showToast("Ошибка удаления"); }
+    }
+
+    // Утилита: Тост
+    function showToast(msg) {
+        const t = document.getElementById('toast-box');
+        t.innerText = msg;
+        t.style.display = 'block';
         setTimeout(() => t.style.display = 'none', 3000);
     }
 
+    // Глобальные клики
     window.onclick = () => {
-        document.getElementById('ctx-menu').style.display = 'none';
-        document.getElementById('new-menu').style.display = 'none';
+        document.getElementById('create-menu').style.display = 'none';
+        document.getElementById('context-popup').style.display = 'none';
     };
 
-    load('root');
+    // Старт системы
+    loadDirectory('root');
 </script>
 </body>
 </html>
     `;
 
-    // --- API SERVER SIDE ---
-    app.get('/storage', (req, res) => res.send(UI));
+    // --- BACKEND API HANDLERS ---
+    
+    // 1. Главная страница
+    app.get('/storage', (req, res) => {
+        res.send(UI);
+    });
 
+    // 2. Список файлов
     app.get('/storage/api/list', async (req, res) => {
         try {
-            const r = await drive.files.list({
-                q: "'" + (req.query.folderId || 'root') + "' in parents and trashed = false",
+            const folderId = req.query.folderId || 'root';
+            const response = await drive.files.list({
+                q: \`'\${folderId}' in parents and trashed = false\`,
                 fields: 'files(id, name, mimeType, size, modifiedTime)',
                 orderBy: 'folder, name'
             });
-            res.json(r.data.files);
-        } catch (e) { res.status(500).json({error: e.message}); }
+            res.json(response.data.files);
+        } catch (error) {
+            console.error("DRIVE_LIST_ERROR:", error);
+            res.status(500).json({ error: error.message });
+        }
     });
 
+    // 3. Загрузка файла
     app.post('/storage/api/upload', upload.single('file'), async (req, res) => {
         try {
-            const media = { mimeType: req.file.mimetype, body: fs.createReadStream(req.file.path) };
-            await drive.files.create({ 
-                resource: { name: req.file.originalname, parents: [req.body.folderId] },
-                media: media
+            const fileMetadata = {
+                name: req.file.originalname,
+                parents: [req.body.folderId]
+            };
+            const media = {
+                mimeType: req.file.mimetype,
+                body: fs.createReadStream(req.file.path)
+            };
+            await drive.files.create({
+                resource: fileMetadata,
+                media: media,
+                fields: 'id'
             });
-            fs.unlinkSync(req.file.path); 
+            fs.unlinkSync(req.file.path); // Удаление временного файла
             res.sendStatus(200);
-        } catch (e) { res.status(500).send(e.message); }
+        } catch (error) {
+            res.status(500).send(error.message);
+        }
     });
 
+    // 4. Создание папки
     app.post('/storage/api/mkdir', express.json(), async (req, res) => {
         try {
+            const fileMetadata = {
+                name: req.body.name,
+                mimeType: 'application/vnd.google-apps.folder',
+                parents: [req.body.parentId]
+            };
             await drive.files.create({
-                resource: { 
-                    name: req.body.name, 
-                    mimeType: 'application/vnd.google-apps.folder', 
-                    parents: [req.body.parentId] 
-                }
+                resource: fileMetadata,
+                fields: 'id'
             });
             res.sendStatus(200);
-        } catch (e) { res.status(500).send(e.message); }
+        } catch (error) {
+            res.status(500).send(error.message);
+        }
     });
 
+    // 5. Переименование
     app.post('/storage/api/rename', express.json(), async (req, res) => {
         try {
-            await drive.files.update({ 
-                fileId: req.body.id, 
-                resource: { name: req.body.name } 
+            await drive.files.update({
+                fileId: req.body.id,
+                resource: { name: req.body.name }
             });
             res.sendStatus(200);
-        } catch (e) { res.status(500).send(e.message); }
+        } catch (error) {
+            res.status(500).send(error.message);
+        }
     });
 
+    // 6. Удаление (в корзину)
     app.delete('/storage/api/delete/:id', async (req, res) => {
         try {
-            await drive.files.update({ 
-                fileId: req.params.id, 
-                resource: { trashed: true } 
+            await drive.files.update({
+                fileId: req.params.id,
+                resource: { trashed: true }
             });
             res.sendStatus(200);
-        } catch (e) { res.status(500).send(e.message); }
+        } catch (error) {
+            res.status(500).send(error.message);
+        }
     });
 
-    console.log("✅ TITANIUM X-PLATFORM v54.0 FULLY LOADED");
+    console.log("✅ TITANIUM X-PLATFORM v57.0: ПОЛНЫЙ МОНОЛИТ ЗАПУЩЕН");
 };
