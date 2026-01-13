@@ -5,11 +5,13 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const { Readable } = require('stream');
 const crypto = require('crypto');
+const cookieParser = require('cookie-parser');
 
 // Подключаем fetch для работы с картами (Geocoding)
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const app = express();
+app.use(cookieParser());
 app.use(cors());
 app.use(bodyParser.json({ limit: '150mb' }));
 app.use(bodyParser.urlencoded({ limit: '150mb', extended: true }));
@@ -862,13 +864,6 @@ try {
 } catch (e) {
     console.log("❌ Ошибка в файле plugin-merch-sun.js: " + e.message);
 }
-// Добавь это между Солнцем и Проводником
-try {
- //   require('./plugin-final-upload.js')(app, pluginContext);
-} catch (e) {
-    console.log("❌ Ошибка в plugin-final-upload.js: " + e.message);
-}
-
 
 // --- 2. ПЛАГИН ХРАНИЛИЩА (АВТОДЕПЛОЙ + ДИСК) ---
 try {
