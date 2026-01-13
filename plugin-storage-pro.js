@@ -1,83 +1,110 @@
 const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
-const multer = require('multer');
+const multer = require('multer'); // Нужен для загрузки файлов через браузер
 
 module.exports = function(app, context) {
-    // Создаем главную папку хранилища
+    const { drive, MY_ROOT_ID, MERCH_ROOT_ID } = context;
     const STORAGE_ROOT = path.join(__dirname, 'storage');
-    const LOGIST_DIR = path.join(STORAGE_ROOT, 'ЛОГИСТ');
-    const MERCH_DIR = path.join(STORAGE_ROOT, 'МЕРЧ');
+    const LOG_FILE = path.join(__dirname, 'activity_log.json');
 
-    [STORAGE_ROOT, LOGIST_DIR, MERCH_DIR].forEach(dir => {
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    });
-
+    // Настройка загрузки файлов через форму
     const upload = multer({ dest: 'uploads/' });
 
-    // --- 1. АВТОДЕПЛОЙ ---
-    setInterval(() => {
-        exec('git fetch origin main', () => {
-            exec('git status -uno', (err, out) => {
-                if (out && out.includes('behind')) {
-                    console.log("📡 Обнаружено обновление на GitHub, скачиваю...");
-                    exec('git pull origin main', () => { exec('pm2 restart logist-final'); });
-                }
-            });
-        });
-    }, 300000);
+    // Инициализация
+    if (!fs.existsSync(STORAGE_ROOT)) fs.mkdirSync(STORAGE_ROOT, { recursive: true });
+    ['ЛОГИСТ', 'МЕРЧ'].forEach(dir => {
+        const p = path.join(STORAGE_ROOT, dir);
+        if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+    });
 
-    // --- 2. УМНОЕ ЗЕРКАЛО (СИНХРОНИЗАЦИЯ ИМЕН) ---
-    const folderNames = new Map();
-    folderNames.set(context.MY_ROOT_ID, 'ЛОГИСТ');
-    folderNames.set(context.MERCH_ROOT_ID, 'МЕРЧ');
+    // Функция записи логов (для будущей автономности)
+    function writeLog(action, details) {
+        let logs = [];
+        if (fs.existsSync(LOG_FILE)) logs = JSON.parse(fs.readFileSync(LOG_FILE));
+        logs.push({ date: new Date().toLocaleString(), action, details });
+        fs.writeFileSync(LOG_FILE, JSON.stringify(logs.slice(-1000), null, 2));
+    }
 
-    // Перехватываем создание папок, чтобы знать их реальные имена
+    const folderMap = new Map();
+    folderMap.set(MY_ROOT_ID, 'ЛОГИСТ');
+    folderMap.set(MERCH_ROOT_ID, 'МЕРЧ');
+
+    // --- ПЕРЕХВАТЫ ДЛЯ СИНХРОНИЗАЦИИ ---
     const originalGetOrCreate = context.getOrCreateFolder;
     context.getOrCreateFolder = async function(rawName, parentId) {
         const folderId = await originalGetOrCreate.apply(null, arguments);
         const name = String(rawName).trim();
-        
-        // Строим путь
-        const parentPath = folderNames.get(parentId) || '';
+        const parentPath = folderMap.get(parentId) || '';
         const currentPath = path.join(parentPath, name);
-        folderNames.set(folderId, currentPath);
+        folderMap.set(folderId, currentPath);
 
         const absPath = path.join(STORAGE_ROOT, currentPath);
-        if (!fs.existsSync(absPath)) fs.mkdirSync(absPath, { recursive: true });
-        
+        if (!fs.existsSync(absPath)) {
+            fs.mkdirSync(absPath, { recursive: true });
+            writeLog('CREATE_DIR', currentPath);
+        }
         return folderId;
     };
 
-    // Перехватываем создание файлов
-    const originalCreateFile = context.drive.files.create;
-    context.drive.files.create = async function(params) {
-        const result = await originalCreateFile.apply(context.drive.files, arguments);
+    const originalCreateFile = drive.files.create;
+    drive.files.create = async function(params) {
+        const result = await originalCreateFile.apply(drive.files, arguments);
         try {
             if (params.media && params.media.body) {
                 const fileName = params.resource ? params.resource.name : `file_${Date.now()}`;
-                const parentId = (params.resource && params.resource.parents) ? params.resource.parents[0] : null;
-                
-                const relPath = folderNames.get(parentId) || 'Разное';
+                const parentId = params.resource.parents ? params.resource.parents[0] : null;
+                const relPath = folderMap.get(parentId) || 'Разное';
                 const targetDir = path.join(STORAGE_ROOT, relPath);
-                
                 if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+                const filePath = path.join(targetDir, fileName);
                 
-                // Сохраняем файл физически
-                const dest = fs.createWriteStream(path.join(targetDir, fileName));
+                const dest = fs.createWriteStream(filePath);
                 params.media.body.pipe(dest);
+                writeLog('SAVE_FILE', filePath);
             }
         } catch (e) { console.log("Ошибка зеркала:", e.message); }
         return result;
     };
 
-    // --- 3. ИНТЕРФЕЙС ПРОВОДНИКА ---
+    // --- API УПРАВЛЕНИЯ ---
     app.use('/cdn', require('express').static(STORAGE_ROOT));
 
+    // Удаление
+    app.post('/explorer/delete', (req, res) => {
+        const { itemPath } = req.body;
+        if (['', 'ЛОГИСТ', 'МЕРЧ'].includes(itemPath)) return res.status(403).send("Запрещено");
+        const absPath = path.join(STORAGE_ROOT, itemPath);
+        if (fs.existsSync(absPath)) {
+            fs.rmSync(absPath, { recursive: true, force: true });
+            writeLog('DELETE', itemPath);
+            res.json({ success: true });
+        } else res.status(404).send("Не найдено");
+    });
+
+    // Создание папки вручную
+    app.post('/explorer/mkdir', (req, res) => {
+        const { path: relPath, name } = req.body;
+        const newPath = path.join(STORAGE_ROOT, relPath, name);
+        if (!fs.existsSync(newPath)) {
+            fs.mkdirSync(newPath, { recursive: true });
+            writeLog('MKDIR_MANUAL', path.join(relPath, name));
+            res.json({ success: true });
+        } else res.status(400).send("Уже есть");
+    });
+
+    // Загрузка файла вручную
+    app.post('/explorer/upload', upload.single('file'), (req, res) => {
+        const { path: relPath } = req.body;
+        const targetPath = path.join(STORAGE_ROOT, relPath, req.file.originalname);
+        fs.renameSync(req.file.path, targetPath);
+        writeLog('UPLOAD_MANUAL', path.join(relPath, req.file.originalname));
+        res.redirect('/explorer?path=' + encodeURIComponent(relPath));
+    });
+
+    // --- ИНТЕРФЕЙС ---
     app.get('/explorer', (req, res) => {
         const relPath = req.query.path || '';
         const absPath = path.join(STORAGE_ROOT, relPath);
-        
         if (!fs.existsSync(absPath)) return res.send("Путь не найден");
         const items = fs.readdirSync(absPath, { withFileTypes: true });
 
@@ -87,54 +114,58 @@ module.exports = function(app, context) {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Logist-X Explorer Pro</title>
+            <title>Logist-X | AUTONOMOUS</title>
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/viewerjs/1.11.6/viewer.min.css">
             <script src="https://cdnjs.cloudflare.com/ajax/libs/viewerjs/1.11.6/viewer.min.js"></script>
             <style>
-                body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
-                .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; }
-                .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 20px; }
-                
-                .item-card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 15px; text-align: center; transition: 0.2s; position: relative; cursor: pointer; }
-                .item-card:hover { border-color: #f1c40f; background: #1c2128; transform: translateY(-3px); }
-                
-                .icon-box { font-size: 60px; margin-bottom: 10px; display: block; height: 80px; display: flex; align-items: center; justify-content: center; }
-                .img-preview { width: 100%; height: 80px; object-fit: cover; border-radius: 6px; }
-                
-                .name { font-size: 13px; font-weight: 600; word-break: break-all; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; height: 36px; }
-                .btn { background: #238636; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; border: none; font-weight: bold; cursor: pointer; }
-                .btn-back { background: #30363d; }
-                .download-link { font-size: 11px; color: #58a6ff; text-decoration: none; margin-top: 8px; display: inline-block; }
+                body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; margin:0; padding:20px; }
+                .header { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #30363d; padding-bottom:15px; margin-bottom:20px; }
+                .controls { background:#161b22; padding:15px; border-radius:10px; margin-bottom:20px; border:1px solid #30363d; display:flex; gap:10px; flex-wrap:wrap; }
+                .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:15px; }
+                .item-card { background:#161b22; border:1px solid #30363d; border-radius:12px; padding:10px; text-align:center; transition:0.2s; position:relative; }
+                .item-card:hover { border-color:#f1c40f; }
+                .img-preview { width:100%; height:100px; object-fit:cover; border-radius:8px; cursor:pointer; }
+                .folder-icon { font-size:45px; cursor:pointer; }
+                .name { font-size:11px; margin:8px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+                .btn { padding:6px 12px; border-radius:6px; cursor:pointer; border:none; font-weight:bold; font-size:12px; }
+                .btn-add { background:#238636; color:white; }
+                .btn-del { background:#da3633; color:white; font-size:10px; width:100%; }
+                .btn-back { background:#f1c40f; color:black; text-decoration:none; padding:10px 20px; }
+                input { background:#0d1117; border:1px solid #30363d; color:white; padding:6px; border-radius:6px; }
             </style>
         </head>
         <body>
             <div class="header">
-                <div>
-                    <h1 style="margin:0; color:#f1c40f;">📁 Logist-X Cloud</h1>
-                    <small style="opacity:0.5;">/${relPath}</small>
-                </div>
-                ${relPath ? `<a href="/explorer?path=${path.dirname(relPath)}" class="btn btn-back">⬅ Назад</a>` : ''}
+                <div><h1>📂 Logist-X Cloud <span style="color:#f1c40f">PRO</span></h1><small>storage/\${relPath}</small></div>
+                \${relPath ? \`<a href="/explorer?path=\${path.dirname(relPath)}" class="btn-back">⬅ НАЗАД</a>\` : ''}
+            </div>
+
+            <div class="controls">
+                <input type="text" id="newFolderName" placeholder="Имя папки">
+                <button class="btn btn-add" onclick="mkdir()">+ Папка</button>
+                <form action="/explorer/upload" method="POST" enctype="multipart/form-data" style="display:inline-flex; gap:10px;">
+                    <input type="hidden" name="path" value="\${relPath}">
+                    <input type="file" name="file" required>
+                    <button type="submit" class="btn btn-add">↑ Загрузить файл</button>
+                </form>
             </div>
 
             <div class="grid" id="gallery">
         `;
 
         items.forEach(item => {
-            const itemRel = path.join(relPath, item.name);
+            const itemRel = path.join(relPath, item.name).replace(/\\\\/g, '/');
             const isDir = item.isDirectory();
-            const ext = path.extname(item.name).toLowerCase();
-            const isImg = ['.jpg','.jpeg','.png','.webp'].includes(ext);
-            
-            const fileUrl = `/cdn/${itemRel}`;
-            const link = isDir ? `/explorer?path=${encodeURIComponent(itemRel)}` : fileUrl;
+            const isImg = ['.jpg','.jpeg','.png'].includes(path.extname(item.name).toLowerCase());
+            const canDelete = !['ЛОГИСТ', 'МЕРЧ'].includes(item.name) || relPath !== '';
 
             html += `
-                <div class="item-card" onclick="${isImg ? '' : `location.href='${link}'`}">
-                    <div class="icon-box">
-                        ${isImg ? `<img src="${fileUrl}" class="img-preview" data-name="${item.name}">` : (isDir ? '📂' : '📄')}
+                <div class="item-card">
+                    <div onclick="\${isDir ? \`location.href='/explorer?path=\${encodeURIComponent(itemRel)}'\` : ''}">
+                        \${isImg ? \`<img src="/cdn/\${itemRel}" class="img-preview">\` : \`<div class="folder-icon">\${isDir ? '📂' : '📄'}</div>\`}
                     </div>
-                    <div class="name">${item.name}</div>
-                    ${!isDir ? `<a href="${fileUrl}" download class="download-link">Скачать</a>` : ''}
+                    <div class="name">\${item.name}</div>
+                    \${canDelete ? \`<button class="btn-del" onclick="del('\${itemRel}')">УДАЛИТЬ</button>\` : ''}
                 </div>
             `;
         });
@@ -142,21 +173,21 @@ module.exports = function(app, context) {
         html += `
             </div>
             <script>
-                // Инициализация мощного просмотрщика Viewer.js
-                const gallery = new Viewer(document.getElementById('gallery'), {
-                    url: 'src',
-                    title: (image) => image.alt || image.getAttribute('data-name'),
-                    toolbar: {
-                        zoomIn: 4, zoomOut: 4, oneToOne: 4, reset: 4,
-                        prev: 4, play: { show: 4, size: 'large' }, next: 4,
-                        rotateLeft: 4, rotateRight: 4, flipHorizontal: 4, flipVertical: 4,
-                    },
-                });
+                new Viewer(document.getElementById('gallery'), { url: 'src' });
+                async function del(p) {
+                    if(!confirm('Удалить?')) return;
+                    await fetch('/explorer/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({itemPath:p}) });
+                    location.reload();
+                }
+                async function mkdir() {
+                    const name = document.getElementById('newFolderName').value;
+                    if(!name) return;
+                    await fetch('/explorer/mkdir', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path:'\${relPath}', name}) });
+                    location.reload();
+                }
             </script>
         </body>
         </html>`;
         res.send(html);
     });
-
-    app.get('/', (req, res) => res.redirect('/explorer'));
 };
