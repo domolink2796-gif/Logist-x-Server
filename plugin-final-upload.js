@@ -12,50 +12,53 @@ module.exports = function(app, ctx) {
             let keys = await readDatabase();
             const curW = worker || workerName;
             
-            // 1. Ищем ключ
+            // 1. Ищем ключ или воркера
             let kIdx = keys.findIndex(k => k.key === licenseKey);
             if (kIdx === -1) kIdx = keys.findIndex(k => k.workers && k.workers.includes(curW));
             
-            if (kIdx === -1) return res.status(403).json({ success: false, error: "Ключ не найден" });
+            if (kIdx === -1) return res.status(403).json({ success: false, error: "Доступ запрещен" });
 
             let kData = keys[kIdx];
             const projR = (kData.type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
 
-            // 2. Получаем ID папки объекта
-            let oId = kData.folderId;
-            if (!oId) {
-                oId = await getOrCreateFolder(kData.name, projR);
-                keys[kIdx].folderId = oId;
-                await saveDatabase(keys); 
-            }
-
-            // 3. Создаем структуру: Сотрудник -> Клиент -> Дата
+            // 2. Определяем путь в иерархии
+            const oId = kData.folderId || await getOrCreateFolder(kData.name, projR);
             const wId = await getOrCreateFolder(curW, oId);
             const folderName = (client && client.trim() !== "") ? client.trim() : "Общее";
             const finalId = await getOrCreateFolder(folderName, wId);
-            const dId = await getOrCreateFolder(new Date().toISOString().split('T')[0], finalId);
+            const dateStr = new Date().toISOString().split('T')[0];
+            const dId = await getOrCreateFolder(dateStr, finalId);
 
-            // 4. Загрузка фото
+            // 3. ЗАГРУЗКА ФОТО (Двойное сохранение)
             if (image) {
                 const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
                 const fileName = `${address} под ${entrance}.jpg`;
-                
-                // В Google Диск
+
+                // А) Сохранение в Google Диск
                 await drive.files.create({
                     resource: { name: fileName, parents: [dId] },
                     media: { mimeType: 'image/jpeg', body: Readable.from(buf) }
                 });
+
+                // Б) Сохранение локально для X-Drive (X-Platform)
+                // Мы берем путь, который нам подготовил getOrCreateFolder (он прокидывается через контекст)
+                // Но для надежности сохраним в структуру: storage/ЛОГИСТ(или МЕРЧ)/Объект/Воркер/Клиент/Дата/
+                const relPath = path.join((kData.type === 'merch' ? 'МЕРЧ' : 'ЛОГИСТ'), kData.name, curW, folderName, dateStr);
+                const absPath = path.join(__dirname, 'storage', relPath);
+                
+                if (!fs.existsSync(absPath)) fs.mkdirSync(absPath, { recursive: true });
+                fs.writeFileSync(path.join(absPath, fileName), buf);
             }
 
-            // 5. Запись в таблицу
-            await appendToReport(wId, curW, city, new Date().toISOString().split('T')[0], address, entrance, client, workType, price, lat, lon);
+            // 4. Запись в таблицы
+            await appendToReport(wId, curW, city, dateStr, address, entrance, client, workType, price, lat, lon);
 
             res.json({ success: true });
         } catch (e) {
-            console.error("Ошибка загрузки:", e.message);
-            res.status(500).json({ success: false, error: "Ошибка сервера" });
+            console.error("Ошибка X-Upload:", e.message);
+            res.status(500).json({ success: false });
         }
     });
 
-    console.log("✅ ПЛАГИН ЗАГРУЗКИ ПО КЛЮЧАМ ПОДКЛЮЧЕН");
+    console.log("✅ ПЛАГИН X-UPLOAD (ФИНАЛ) СИНХРОНИЗИРОВАН С X-DRIVE");
 };
