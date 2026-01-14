@@ -424,4 +424,4 @@ module.exports = function(app, context) {
     });
 
     console.log("✅ SMART ENGINE v55.6 LOADED: СИСТЕМА НАЧАЛА ОБУЧЕНИЕ");
-};
+}; 
