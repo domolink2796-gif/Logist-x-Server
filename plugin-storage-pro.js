@@ -1,11 +1,11 @@
 /**
  * =========================================================================================
- * TITANIUM X-PLATFORM v110.0 | THE HYPER-MONOLITH MASTER CORE
+ * TITANIUM X-PLATFORM v130.0 | THE HYPER-MONOLITH MASTER CORE
  * -----------------------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
- * БАЗА: gold_manager2.js + ГЛУБОКАЯ ИНТЕГРАЦИЯ server.js (3000+ СТРОК)
- * СТАТУС: MAXIMUM PRODUCTION GRADE | SELF-LEARNING ARCHITECTURE
+ * БАЗА: gold_manager2.js + ГЛУБОКАЯ ИНТЕГРАЦИЯ server.js
+ * СТАТУС: MAXIMUM ENTERPRISE WEIGHT | SELF-LEARNING ARCHITECTURE
  * -----------------------------------------------------------------------------------------
  */
 
@@ -17,7 +17,7 @@ const path = require('path');
 const LOGO_URL = "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png";
 
 module.exports = function(app, context) {
-    // Импорт всех зависимостей и функций из твоего основного server.js
+    // Импорт всех инструментов из твоего основного server.js
     const { 
         drive, google, MY_ROOT_ID, MERCH_ROOT_ID, 
         readDatabase, saveDatabase, getOrCreateFolder,
@@ -25,19 +25,19 @@ module.exports = function(app, context) {
         saveBarcodeDb, savePlanogramDb, saveShopItemsDb
     } = context;
 
-    // Настройка Multer для работы с тяжелыми медиа-файлами (видео и 4К фото)
+    // Настройка Multer для работы с тяжелыми медиа-файлами (до 500MB)
     const upload = multer({ 
         dest: 'uploads/',
-        limits: { fileSize: 500 * 1024 * 1024 } // Лимит увеличен до 500MB
+        limits: { fileSize: 500 * 1024 * 1024 }
     });
 
     /**
      * -------------------------------------------------------------------------------------
-     * [РАЗДЕЛ 1]: НЕЙРОННЫЙ ДВИЖОК ОБУЧЕНИЯ (X-NEURAL CORE v110)
+     * [РАЗДЕЛ 1]: НЕЙРОННЫЙ ДВИЖОК ОБУЧЕНИЯ (X-NEURAL CORE v130)
      * -------------------------------------------------------------------------------------
-     * Ядро системы. Анализирует каждое движение, "выучивая" логику твоего бизнеса.
+     * Система анализирует каждое действие, обучаясь логике именования объектов.
      */
-    async function xNeuralLearn(file, pId, action) {
+    async function xNeuralProcess(file, pId, action) {
         try {
             const memoryPath = path.join(__dirname, 'server_memory.json');
             let db = [];
@@ -48,361 +48,272 @@ module.exports = function(app, context) {
                 } catch(e) { db = []; }
             }
 
-            // Ищем связь с объектами из базы ключей (keys_database.json)
+            // Связь с базой ключей (keys_database.json)
             const keys = (typeof readDatabase === 'function') ? await readDatabase() : [];
             const owner = keys.find(k => k.folderId === pId || k.folderId === file.id);
             
             const n = file.name || "UNNAMED_ASSET";
             
-            // ПЕРЕДОВОЙ АНАЛИЗАТОР АДРЕСНОЙ ЛОГИКИ
-            // Распознает: "ул. Ленина 10 п 2 эт 4", "Мира_5_под3", "Советская 22 корпус 1"
-            let intelligentData = {
-                street: null, house: null, block: null, entrance: null, floor: null,
-                isLogistAsset: false, isMerchAsset: false
-            };
-
-            const fullRegex = /([^0-9_]+)\s*(\d+)\s*(?:к|корп|корпус)?\s*(\d+)?\s*(?:п|под|подъезд|эт|этаж)?\s*(\d+)?\s*(?:эт|этаж)?\s*(\d+)?/i;
-            const match = n.match(fullRegex);
+            // ПАРСИНГ АДРЕСНОЙ ЛОГИКИ
+            let addr = { street: null, house: null, block: null, ent: null, fl: null };
+            const reg = /([^0-9_]+)\s*(\d+)\s*(?:к|корп|корпус)?\s*(\d+)?\s*(?:п|под|подъезд|эт|этаж)?\s*(\d+)?\s*(?:эт|этаж)?\s*(\d+)?/i;
+            const m = n.match(reg);
             
-            if (match) {
-                intelligentData.street = match[1].trim();
-                intelligentData.house = match[2];
-                intelligentData.block = match[3] || null;
-                intelligentData.entrance = match[4] || "1";
-                intelligentData.floor = match[5] || null;
-                intelligentData.isLogistAsset = true;
+            if (m) {
+                addr.street = m[1].trim();
+                addr.house = m[2];
+                addr.block = m[3] || null;
+                addr.ent = m[4] || "1";
+                addr.fl = m[5] || null;
             }
 
-            // Детектор Мерчандайзинга (Планограммы и Штрихкоды)
-            if (n.toLowerCase().includes('план') || n.toLowerCase().includes('barcode')) {
-                intelligentData.isMerchAsset = true;
-            }
-
-            const neuralRecord = {
-                header: {
-                    v: "110.0",
-                    ts: new Date().toISOString(),
-                    action: action,
-                    uid: 'X-CORE-' + Math.random().toString(36).substr(2, 10).toUpperCase()
-                },
-                item: {
-                    id: file.id,
-                    name: n,
-                    mime: file.mimeType,
-                    size: file.size || 0,
-                    pId: pId
-                },
+            const record = {
+                v: "130.0",
+                ts: new Date().toISOString(),
+                event: action,
+                item: { id: file.id, name: n, mime: file.mimeType, size: file.size || 0 },
                 brain: {
-                    project: owner ? owner.type : 'legacy_manual',
-                    objectName: owner ? owner.name : 'Unlinked_Object',
-                    extracted: intelligentData
+                    project: owner ? owner.type : 'manual',
+                    object: owner ? owner.name : 'Unknown',
+                    addr: addr
                 },
-                migration: {
-                    vPath: `/${owner?owner.type:'root'}/${owner?owner.name:'manual'}/${n}`,
-                    priority: (intelligentData.isLogistAsset ? 1 : 5)
-                }
+                map: `/${owner ? owner.type : 'root'}/${n}`
             };
 
-            db.push(neuralRecord);
-            // Лимит 1 000 000 записей для полноценной "вечной" памяти сервера
-            if (db.length > 1000000) db.shift();
-            
+            db.push(record);
+            if (db.length > 800000) db.shift();
             fs.writeFileSync(memoryPath, JSON.stringify(db, null, 2));
-            console.log(`🧠 [X-NEURAL] ОБУЧЕНО: ${n} | ТИП: ${neuralRecord.brain.project}`);
+            console.log(`🧠 [X-NEURAL] LEARNED: ${n}`);
         } catch (e) { console.error("X-NEURAL ERROR:", e.message); }
     }
 
     /**
      * -------------------------------------------------------------------------------------
-     * [РАЗДЕЛ 2]: ГИПЕР-ИНТЕРФЕЙС (ULTIMATE HYPER-UI)
+     * [РАЗДЕЛ 2]: ТИТАНОВЫЙ ИНТЕРФЕЙС (ULTIMATE HYPER-UI)
      * -------------------------------------------------------------------------------------
-     * Профессиональная среда управления. Спроектирована для работы на смартфонах.
+     * Полная мобильная адаптация под "Приложение".
      */
     const UI = `
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>X-PLATFORM HYPER CORE | v110.0</title>
-    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@500;700&family=Roboto:wght@300;400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#050505">
+    <title>X-PLATFORM TITAN</title>
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@500;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root {
-            --b: #020202; --g: #f0b90b; --s: #ffffff; --t: #1a1a1b; --gr: #5f6368; 
-            --bl: #1a73e8; --br: #dadce0; --dg: #d93025; --sg: #1e8e3e;
-            --sh: 0 15px 50px rgba(0,0,0,0.15); --sh-h: 0 25px 80px rgba(0,0,0,0.6);
-        }
-
+        :root { --b: #050505; --g: #f0b90b; --s: #ffffff; --t: #1a1a1b; --gr: #5f6368; --bl: #1a73e8; --br: #dadce0; }
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; outline: none; }
-        body, html { height: 100%; font-family: 'Roboto', sans-serif; background: #fff; color: var(--t); overflow: hidden; }
+        body, html { height: 100%; width: 100%; font-family: 'Roboto', sans-serif; background: #fff; color: var(--t); overflow: hidden; position: fixed; }
 
-        /* HEADER DESIGN */
         header {
             height: 75px; background: var(--b); border-bottom: 5px solid var(--g);
-            display: flex; align-items: center; justify-content: space-between; padding: 0 45px;
-            z-index: 5000; position: relative; color: #fff; box-shadow: 0 15px 50px rgba(0,0,0,0.8);
+            display: flex; align-items: center; justify-content: space-between; padding: 0 25px;
+            z-index: 5000; position: relative; color: #fff; padding-top: env(safe-area-inset-top);
         }
-        .logo-group { display: flex; align-items: center; gap: 20px; cursor: pointer; transition: 0.4s; }
-        .logo-group:hover { transform: scale(1.05); }
-        .logo-group img { height: 54px; border-radius: 14px; filter: drop-shadow(0 0 15px var(--g)); }
-        .logo-group b { font-family: 'Google Sans'; font-size: 32px; font-weight: 700; letter-spacing: -1.5px; }
+        .logo { display: flex; align-items: center; gap: 15px; cursor: pointer; }
+        .logo img { height: 48px; border-radius: 12px; filter: drop-shadow(0 0 10px var(--g)); }
+        .logo b { font-family: 'Google Sans'; font-size: 26px; font-weight: 700; }
 
-        .auth-panel { text-align: right; border-left: 2px solid #444; padding-left: 30px; }
-        .auth-panel b { color: var(--g); font-size: 20px; display: block; font-weight: 900; }
-        .auth-panel small { font-size: 11px; opacity: 0.7; letter-spacing: 2px; text-transform: uppercase; }
-
-        .shell { display: flex; height: calc(100vh - 75px); }
-
-        /* SIDEBAR DESIGN */
+        .shell { display: flex; height: calc(100% - 75px); width: 100%; }
         aside {
-            width: 320px; background: var(--s); border-right: 1px solid var(--br);
-            display: flex; flex-direction: column; padding: 30px 0; transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 2000; overflow-y: auto;
+            width: 300px; background: #fff; border-right: 1px solid var(--br);
+            display: flex; flex-direction: column; padding: 25px 0; transition: 0.4s; z-index: 4000;
         }
-        .nav-label { padding: 15px 45px; font-size: 12px; font-weight: 800; color: var(--gr); text-transform: uppercase; letter-spacing: 2px; }
+        @media (max-width: 768px) { aside { position: absolute; left: -300px; height: 100%; box-shadow: 20px 0 60px rgba(0,0,0,0.3); } aside.open { left: 0; } }
+
         .nav-link {
-            height: 60px; margin: 4px 22px; border-radius: 30px; display: flex; align-items: center;
-            padding: 0 35px; cursor: pointer; transition: 0.3s; color: var(--t); font-size: 17px; font-weight: 500;
+            height: 56px; margin: 4px 18px; border-radius: 28px; display: flex; align-items: center;
+            padding: 0 25px; cursor: pointer; font-size: 16px; font-weight: 500; transition: 0.25s;
         }
-        .nav-link i { width: 45px; font-size: 26px; color: var(--gr); text-align: center; }
-        .nav-link:hover { background: #f2f2f2; transform: translateX(10px); }
-        .nav-link.active { background: #e8f0fe; color: var(--bl); font-weight: 700; box-shadow: var(--sh); }
-        .nav-link.active i { color: var(--bl); }
+        .nav-link i { width: 40px; font-size: 24px; color: var(--gr); text-align: center; }
+        .nav-link.active { background: #e8f0fe; color: var(--bl); font-weight: 700; }
 
-        /* MAIN AREA */
-        main { flex: 1; overflow-y: auto; padding: 0 60px; background: #fff; position: relative; }
-
+        main { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; background: #fff; }
         .toolbar {
-            height: 90px; border-bottom: 1px solid var(--br); display: flex; align-items: center;
-            justify-content: space-between; position: sticky; top: 0; background: rgba(255,255,255,0.98); backdrop-filter: blur(30px); z-index: 1000;
+            height: 80px; border-bottom: 1px solid var(--br); display: flex; align-items: center;
+            padding: 0 25px; position: sticky; top: 0; background: rgba(255,255,255,0.95); backdrop-filter: blur(20px); z-index: 1000;
         }
-        .bc { font-family: 'Google Sans'; font-size: 24px; color: var(--gr); display: flex; align-items: center; gap: 18px; }
-        .bc-n { cursor: pointer; padding: 10px 20px; border-radius: 15px; transition: 0.2s; }
-        .bc-n:hover { background: #f1f3f4; color: #000; }
+        .bc { font-family: 'Google Sans'; font-size: 20px; color: var(--gr); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-        .search { background: #f1f3f4; border-radius: 20px; padding: 15px 30px; display: flex; align-items: center; gap: 20px; width: 450px; transition: 0.3s; border: 2px solid transparent; }
-        .search:focus-within { background: #fff; border-color: var(--bl); box-shadow: 0 0 0 6px rgba(26,115,232,0.15); }
-        .search input { border: none; background: transparent; font-size: 18px; width: 100%; color: #000; }
+        .grid { width: 100%; border-collapse: collapse; }
+        .grid td { padding: 22px 20px; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
+        .f-item { display: flex; align-items: center; gap: 18px; }
+        .f-icon { font-size: 28px; width: 40px; text-align: center; }
+        .f-name { font-weight: 500; font-size: 17px; }
+        .f-meta { font-size: 12px; color: var(--gr); margin-top: 4px; }
 
-        /* FILE GRID */
-        .grid { width: 100%; border-collapse: collapse; margin-top: 40px; table-layout: fixed; }
-        .grid th { text-align: left; padding: 25px; font-size: 15px; color: var(--gr); border-bottom: 3px solid var(--br); font-weight: 900; text-transform: uppercase; }
-        .grid td { padding: 30px 25px; border-bottom: 1px solid #f2f2f2; font-size: 18px; cursor: pointer; transition: 0.2s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .f-row:hover { background: #f9f9f9; transform: scale(1.015); box-shadow: var(--sh); z-index: 10; border-radius: 15px; }
-
-        /* THE TITANIUM FAB */
         .fab {
-            position: fixed; bottom: 60px; right: 60px; width: 95px; height: 95px;
-            border-radius: 35px; background: var(--b); border: 6px solid var(--g);
+            position: fixed; bottom: 40px; right: 30px; width: 80px; height: 80px;
+            border-radius: 28px; background: var(--b); border: 3px solid var(--g);
             display: flex; align-items: center; justify-content: center; z-index: 6000;
-            box-shadow: 0 30px 80px rgba(0,0,0,0.6); cursor: pointer; transition: 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.5); transition: 0.4s;
         }
-        .fab:hover { transform: scale(1.15) rotate(180deg); }
-        .fab img { width: 58px; height: 58px; }
+        .fab img { width: 48px; }
 
         #pop, #ctx {
             position: fixed; display: none; background: #fff; border: 1px solid var(--br);
-            border-radius: 35px; box-shadow: 0 40px 120px rgba(0,0,0,0.5); z-index: 8000; min-width: 360px; padding: 30px 0;
-            animation: popIn 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            border-radius: 25px; box-shadow: 0 20px 70px rgba(0,0,0,0.4); z-index: 8000; min-width: 300px; overflow: hidden;
+            animation: popIn 0.3s;
         }
-        #pop { bottom: 175px; right: 60px; }
+        #pop { bottom: 135px; right: 30px; }
+        @keyframes popIn { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
 
-        @keyframes popIn { from { opacity: 0; transform: translateY(60px) scale(0.8); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        .m-row { padding: 20px 30px; display: flex; align-items: center; gap: 20px; cursor: pointer; font-size: 18px; font-weight: 600; }
+        .m-row:active { background: #f1f3f4; }
+        .m-row i { font-size: 22px; color: var(--gr); width: 30px; text-align: center; }
 
-        .m-item { padding: 22px 50px; display: flex; align-items: center; gap: 30px; cursor: pointer; font-size: 19px; font-weight: 700; transition: 0.2s; }
-        .m-item:hover { background: #f1f3f4; color: var(--bl); padding-left: 65px; }
-        .m-item i { width: 40px; color: var(--gr); font-size: 26px; text-align: center; }
+        #viewer { display: none; position: fixed; inset: 0; background: #000; z-index: 9000; flex-direction: column; }
+        .v-h { height: 80px; display: flex; align-items: center; justify-content: space-between; padding: 0 30px; color: #fff; background: var(--b); padding-top: env(safe-area-inset-top); }
 
-        #theater { display: none; position: fixed; inset: 0; background: #000; z-index: 9999; flex-direction: column; }
-        .t-h { height: 90px; display: flex; align-items: center; justify-content: space-between; padding: 0 50px; color: #fff; background: var(--b); }
-        .t-f { flex: 1; border: none; background: #fff; }
-
-        #toast { position: fixed; bottom: 180px; left: 50%; transform: translateX(-50%); background: #111; color: #fff; padding: 28px 80px; border-radius: 100px; display: none; z-index: 12000; font-size: 20px; font-weight: 900; border-bottom: 8px solid var(--g); box-shadow: var(--sh-h); }
-        
-        @media (max-width: 768px) {
-            aside { position: fixed; left: -320px; height: 100%; box-shadow: 50px 0 100px rgba(0,0,0,0.6); }
-            aside.open { left: 0; }
-            .m-hide { display: none; }
-            main { padding: 0 35px; }
-            .search { width: 250px; }
-            .logo-group b { font-size: 24px; }
-        }
+        #toast { position: fixed; bottom: 140px; left: 50%; transform: translateX(-50%); background: #111; color: #fff; padding: 20px 50px; border-radius: 100px; display: none; z-index: 10000; font-weight: 700; border-bottom: 4px solid var(--g); }
     </style>
 </head>
 <body>
-
 <header>
-    <div class="logo-group" onclick="document.getElementById('side').classList.toggle('open')">
-        <img src="${LOGO_URL}">
-        <b>X-PLATFORM</b>
+    <div class="logo" onclick="document.getElementById('sidebar').classList.toggle('open')">
+        <img src="${LOGO_URL}"> <b>X-PLATFORM</b>
     </div>
-    <div class="auth-panel">
-        <b>НИКИТИН ЕВГЕНИЙ</b>
-        <small>Ultimate Hyper Core v110.0</small>
-    </div>
+    <div style="font-weight: 900; color: var(--g);">ЕВГЕНИЙ</div>
 </header>
 
 <div class="shell">
-    <aside id="side">
-        <div class="nav-label">Хранилище Проектов</div>
-        <div class="nav-link active" id="n-root" onclick="nav('root', 'Мой диск')"><i class="fa fa-cloud-bolt"></i> Мой диск</div>
-        <div class="nav-link" onclick="nav('sharedWithMe', 'Общий доступ')"><i class="fa fa-user-gear"></i> Общий доступ</div>
-
-        <div class="nav-label">Вертикали Бизнеса</div>
-        <div class="nav-link" onclick="nav('${MY_ROOT_ID}', 'Логистика X')"><i class="fa fa-truck-monster"></i> Логистика X</div>
-        <div class="nav-link" onclick="nav('${MERCH_ROOT_ID}', 'Мерчандайзинг')"><i class="fa fa-box-archive"></i> Мерчандайзинг</div>
-
-        <div class="nav-label" style="margin-top:auto">Администрирование</div>
-        <div class="nav-link" onclick="nav('trash', 'Корзина')"><i class="fa fa-dumpster-fire"></i> Корзина</div>
-        <div style="padding: 40px;"><div style="font-size: 11px; color: #aaa; background: #fdfdfd; padding: 20px; border-radius: 20px; text-align: center; border: 1px dashed #eee;"><i class="fa fa-brain-circuit"></i> X-NEURAL v110 MASTER ACTIVE</div></div>
+    <aside id="sidebar">
+        <div class="nav-link active" id="n-root" onclick="nav('root', 'Мой диск')"><i class="fa fa-cloud"></i> Мой диск</div>
+        <div class="nav-link" onclick="nav('${MY_ROOT_ID}', 'Логистика')"><i class="fa fa-truck-fast"></i> Логистика X</div>
+        <div class="nav-link" onclick="nav('${MERCH_ROOT_ID}', 'Мерч')"><i class="fa fa-boxes-packing"></i> Мерчандайзинг</div>
+        <div class="nav-link" style="margin-top:auto" onclick="nav('trash', 'Корзина')"><i class="fa fa-dumpster-fire"></i> Корзина</div>
+        <div style="padding: 20px; text-align: center;"><small style="color:#aaa">🧠 X-NEURAL v130 MASTER</small></div>
     </aside>
-
-    <main id="drop-zone">
-        <div class="toolbar">
-            <div class="bc" id="bc">Мой диск</div>
-            <div class="search">
-                <i class="fa fa-magnifying-glass" style="color:var(--gr)"></i>
-                <input type="text" placeholder="Поиск объектов, адресов и тегов..." oninput="filter(this.value)">
-            </div>
-        </div>
-        <table class="grid">
-            <thead>
-                <tr><th onclick="srt('name')">ОБЪЕКТ / ASSET <i class="fa fa-sort"></i></th><th class="m-hide">ДАТА ИЗМЕНЕНИЯ</th><th class="m-hide">РАЗМЕР</th></tr>
-            </thead>
-            <tbody id="f-body"></tbody>
-        </table>
+    
+    <main>
+        <div class="toolbar"><div class="bc" id="bc">Мой диск</div></div>
+        <table class="grid"><tbody id="f-body"></tbody></table>
     </main>
 </div>
 
 <div class="fab" onclick="toggleP(event)"><img src="${LOGO_URL}"></div>
 
 <div id="pop">
-    <div class="m-item" onclick="mkdir()"><i class="fa fa-folder-plus"></i> Создать объект</div>
-    <div class="m-item" onclick="upTrigger()"><i class="fa fa-cloud-arrow-up"></i> Загрузить отчеты</div>
-    <div class="m-item" onclick="location.reload()"><i class="fa fa-arrows-spin"></i> Синхронизация</div>
+    <div class="m-row" onclick="mkdir()"><i class="fa fa-folder-plus"></i> Создать объект</div>
+    <div class="m-row" onclick="document.getElementById('fin').click()"><i class="fa fa-cloud-arrow-up"></i> Загрузить отчеты</div>
+    <div class="m-row" onclick="location.reload()"><i class="fa fa-arrows-rotate"></i> Синхронизация</div>
 </div>
 
 <div id="ctx">
-    <div class="m-item" onclick="pv()"><i class="fa fa-circle-play"></i> Предпросмотр</div>
-    <div class="m-item" onclick="rn()"><i class="fa fa-i-cursor"></i> Переименовать</div>
-    <div class="m-item" onclick="inf()"><i class="fa fa-database"></i> Аналитика CORE</div>
-    <div class="m-item" onclick="dl()" style="color:var(--dg);"><i class="fa fa-trash-can"></i> Удалить</div>
+    <div class="m-row" onclick="pv()"><i class="fa fa-circle-play"></i> Предпросмотр</div>
+    <div class="m-row" onclick="rn()"><i class="fa fa-pen-to-square"></i> Переименовать</div>
+    <div class="m-row" onclick="dl()" style="color:red"><i class="fa fa-trash-can"></i> Удалить</div>
 </div>
 
-<div id="theater">
-    <div class="t-h"><span id="t-n" style="font-weight:700; font-size:28px;"></span><i class="fa fa-circle-xmark" onclick="closeT()" style="font-size:60px; cursor:pointer; color:var(--g);"></i></div>
-    <iframe id="t-f" class="t-f"></iframe>
+<div id="viewer">
+    <div class="v-h"><span id="v-t" style="font-weight:700"></span><i class="fa fa-circle-xmark" onclick="closePv()" style="font-size:45px; color:var(--g)"></i></div>
+    <iframe id="v-f" style="flex:1; border:none; background:#fff"></iframe>
 </div>
 
-<input type="file" id="f-in" style="display:none" multiple onchange="startUp(this.files)">
+<input type="file" id="fin" style="display:none" multiple onchange="hUp(this.files)">
 <div id="toast"></div>
 
 <script>
-    let cur = 'root'; let pathArr = [{id:'root', name:'Мой диск'}]; let cache = []; let sel = null;
+    let curId = 'root'; let pathArr = [{id:'root', name:'Мой диск'}]; let cache = []; let sel = null;
 
-    async function load(id) {
-        cur = id; const body = document.getElementById('f-body');
-        body.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:250px; color:#aaa;"><i class="fa fa-atom fa-spin fa-6x"></i><br><br>Синхронизация HYPER CORE v110...</td></tr>';
+    async function sync(id) {
+        curId = id; const b = document.getElementById('f-body');
+        b.innerHTML = '<tr><td style="text-align:center; padding:150px; color:#aaa;"><i class="fa fa-atom fa-spin fa-4x"></i><br><br>Синхронизация X-CORE...</td></tr>';
         try {
-            const r = await fetch('/storage/api/v110/list?folderId=' + id);
-            cache = await r.json(); render(); updateBC();
-            document.querySelectorAll('.nav-link').forEach(btn => btn.classList.remove('active'));
+            const r = await fetch('/storage/api/list?folderId=' + id);
+            cache = await r.json();
+            render();
+            document.getElementById('bc').innerText = pathArr.map(p => p.name).join(' > ');
+            document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
             if(id === 'root') document.getElementById('n-root').classList.add('active');
-        } catch(e) { msg("CORE SYNC FAILED"); }
+        } catch(e) { b.innerHTML = '<tr><td style="text-align:center; padding:150px; color:red;">Критическая ошибка синхронизации</td></tr>'; }
     }
 
-    function render(files = cache) {
-        const t = document.getElementById('f-body'); t.innerHTML = files.length ? '' : '<tr><td colspan="3" style="text-align:center; padding:200px; color:#aaa;">Сектор пуст</td></tr>';
-        files.forEach(f => {
-            const tr = document.createElement('tr'); tr.className = 'f-row'; const isD = f.mimeType.includes('folder');
-            tr.innerHTML = \`<td><i class="fa \text-isD ? 'fa-folder-open' : 'fa-file-shield'}" style="margin-right:30px; color:\${isD ? '#fbc02d' : '#1a73e8'}; font-size:32px;"></i> \${f.name}</td>
-                             <td class="m-hide" style="color:var(--gr)">\${new Date(f.modifiedTime).toLocaleDateString('ru-RU')}</td>
-                             <td class="m-hide" style="color:var(--gr)">\${f.size?(f.size/1024/1024).toFixed(2)+' MB':'-'}</td>\`;
+    function render() {
+        const body = document.getElementById('f-body');
+        body.innerHTML = cache.length ? '' : '<tr><td style="text-align:center; padding:100px; color:#aaa;">Сектор пуст</td></tr>';
+        cache.forEach(f => {
+            const tr = document.createElement('tr'); const isD = f.mimeType.includes('folder');
+            tr.innerHTML = \`<td>
+                <div class="f-item">
+                    <i class="fa \${isD?'fa-folder-open':'fa-file-shield'} f-icon" style="color:\${isD?'#fbc02d':'#1a73e8'}"></i>
+                    <div>
+                        <div class="f-name">\${f.name}</div>
+                        <div class="f-meta">\${isD?'Папка':(f.size? (f.size/1024/1024).toFixed(2)+' MB' : '—')} | \${new Date(f.modifiedTime).toLocaleDateString()}</div>
+                    </div>
+                </div>
+            </td>\`;
             tr.onclick = () => isD ? nav(f.id, f.name) : pv(f.id, f.name);
-            tr.oncontextmenu = (e) => { e.preventDefault(); sel = f; const m = document.getElementById('ctx'); m.style.display='block'; m.style.left=e.clientX+'px'; m.style.top=e.clientY+'px'; };
-            t.appendChild(tr);
+            tr.oncontextmenu = (e) => { e.preventDefault(); sel = f; const m = document.getElementById('ctx'); m.style.display='block'; m.style.left='20px'; m.style.bottom='150px'; };
+            body.appendChild(tr);
         });
     }
 
-    function nav(id, n) { const idx = pathArr.findIndex(p => p.id === id); if(idx!==-1) pathArr = pathArr.slice(0, idx + 1); else pathArr.push({id, name:n}); load(id); if(window.innerWidth < 768) document.getElementById('side').classList.remove('open'); }
-    function updateBC() { document.getElementById('bc').innerHTML = pathArr.map(p => \`<span class="bc-n" onclick="nav('\${p.id}','\${p.name}')">\${p.name}</span>\`).join(' <i class="fa fa-chevron-right" style="font-size:16px; opacity:0.3;"></i> '); }
-    function filter(q) { render(cache.filter(f => f.name.toLowerCase().includes(q.toLowerCase()))); }
-    function toggleP(e) { e.stopPropagation(); const m = document.getElementById('pop'); m.style.display = (m.style.display === 'block') ? 'none' : 'block'; }
-    function upTrigger() { document.getElementById('f-in').click(); document.getElementById('pop').style.display='none'; }
-    async function startUp(files) { for(let f of files) { msg("🚀 HYPER-UPLOAD: " + f.name); const fd = new FormData(); fd.append('file', f); fd.append('folderId', cur); await fetch('/storage/api/v110/upload', {method:'POST', body:fd}); } load(cur); }
-    async function mkdir() { const n = prompt("Имя нового объекта:"); if(n) { await fetch('/storage/api/v110/mkdir', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({parentId:cur, name:n})}); load(cur); } }
-    function pv(id, n) { const tid = id || sel.id; const tname = n || (sel?sel.name:'Asset'); document.getElementById('t-n').innerText = tname; document.getElementById('t-f').src = 'https://drive.google.com/file/d/' + tid + '/preview'; document.getElementById('theater').style.display = 'flex'; }
-    function closeT() { document.getElementById('theater').style.display = 'none'; document.getElementById('t-f').src = ''; }
-    async function dl() { if(confirm("X-CORE: Удалить '"+sel.name+"'?")) { await fetch('/storage/api/v110/delete/'+sel.id, {method:'DELETE'}); load(cur); } }
-    async function rn() { const n = prompt("Новое имя:", sel.name); if(n) { await fetch('/storage/api/v110/rename', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:sel.id, name:n})}); load(cur); } }
-    function inf() { alert(\`HYPER CORE v110 ANALYTICS:\\nName: \${sel.name}\\nGoogle ID: \${sel.id}\\nStatus: NEURAL LEARNED\\nPriority: HIGH\`); }
+    function nav(id, n) { const i = pathArr.findIndex(x=>x.id===id); if(i!==-1) pathArr=pathArr.slice(0,i+1); else pathArr.push({id,n}); sync(id); if(window.innerWidth < 768) document.getElementById('sidebar').classList.remove('open'); }
+    function toggleP(e) { e.stopPropagation(); const m = document.getElementById('pop'); m.style.display = m.style.display==='block'?'none':'block'; }
+    function pv(id, n) { document.getElementById('v-t').innerText = n||sel.name; document.getElementById('v-f').src = 'https://drive.google.com/file/d/'+(id||sel.id)+'/preview'; document.getElementById('viewer').style.display = 'flex'; }
+    function closePv() { document.getElementById('viewer').style.display = 'none'; document.getElementById('v-f').src = ''; }
+    async function hUp(files) { for(let f of files) { msg("🚀 ЗАГРУЗКА: "+f.name); const fd = new FormData(); fd.append('file',f); fd.append('folderId',curId); await fetch('/storage/api/upload',{method:'POST',body:fd}); } sync(curId); }
+    async function mkdir() { const n = prompt("Имя объекта:"); if(n) { await fetch('/storage/api/mkdir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({parentId:curId,name:n})}); sync(curId); } }
+    async function dl() { if(confirm("X-CORE: Удалить?")) { await fetch('/storage/api/delete/'+sel.id,{method:'DELETE'}); sync(curId); } }
+    async function rn() { const n = prompt("Новое имя:", sel.name); if(n) { await fetch('/storage/api/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:sel.id,name:n})}); sync(curId); } }
     function msg(t) { const b = document.getElementById('toast'); b.innerText = t; b.style.display = 'block'; setTimeout(() => b.style.display = 'none', 6000); }
-    
-    // Drag and Drop (Enterprise Ready)
-    const dz = document.getElementById('drop-zone');
-    dz.ondragover = (e) => { e.preventDefault(); dz.style.background = '#f4f8ff'; };
-    dz.ondragleave = () => { dz.style.background = '#fff'; };
-    dz.ondrop = (e) => { e.preventDefault(); dz.style.background = '#fff'; startUp(e.dataTransfer.files); };
-
-    window.onclick = () => { document.getElementById('pop').style.display = 'none'; document.getElementById('ctx').style.display = 'none'; };
-    load('root');
+    window.onclick = () => { document.getElementById('pop').style.display='none'; document.getElementById('ctx').style.display='none'; };
+    sync('root');
 </script>
 </body>
-</html>`;
+</html>
+    `;
 
-    // --- [РАЗДЕЛ 3]: BACKEND HYPER-API MASTER ---
-
+    // --- БЛОК 3: BACKEND API (ULTIMATE SYNCHRONIZER) ---
     app.get('/', (req, res) => res.send(UI));
     app.get('/storage', (req, res) => res.send(UI));
 
-    // API: Глубокое сканирование и синхронизация
-    app.get('/storage/api/v110/list', async (req, res) => {
+    app.get('/storage/api/list', async (req, res) => {
         try {
             const folderId = req.query.folderId || 'root';
-            let q = (folderId === 'trash') ? "trashed = true" : `'${folderId}' in parents and trashed = false`;
-            if (folderId === 'sharedWithMe') q = "sharedWithMe = true and trashed = false";
-
-            const r = await drive.files.list({
-                q: q, fields: 'files(id, name, mimeType, size, modifiedTime, parents)', orderBy: 'folder, name'
-            });
-
-            // ОБУЧЕНИЕ: Каждая папка сканируется нейросетью
-            for (const f of r.data.files) { await xNeuralLearn(f, folderId, 'SCAN_AUTO_SYNC'); }
+            const q = (folderId === 'trash') ? "trashed = true" : `'${folderId}' in parents and trashed = false`;
+            const r = await drive.files.list({ q, fields: 'files(id, name, mimeType, size, modifiedTime)', orderBy: 'folder, name' });
+            for(let f of r.data.files) { await xNeuralProcess(f, folderId, 'SCAN_SYNC'); }
             res.json(r.data.files);
         } catch (e) { res.status(500).json({error: e.message}); }
     });
 
-    app.post('/storage/api/v110/upload', upload.single('file'), async (req, res) => {
+    app.post('/storage/api/upload', upload.single('file'), async (req, res) => {
         try {
-            const r = await drive.files.create({
+            const r = await drive.files.create({ 
                 resource: { name: req.file.originalname, parents: [req.body.folderId] },
                 media: { mimeType: req.file.mimetype, body: fs.createReadStream(req.file.path) },
                 fields: 'id, name, mimeType, parents, size'
             });
-            await xNeuralLearn(r.data, req.body.folderId, 'REPORT_UPLOAD');
+            await xNeuralProcess(r.data, req.body.folderId, 'USER_UPLOAD');
             if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); res.sendStatus(200);
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    app.post('/storage/api/v110/mkdir', express.json(), async (req, res) => {
+    app.post('/storage/api/mkdir', express.json(), async (req, res) => {
         try {
-            const r = await drive.files.create({
+            const r = await drive.files.create({ 
                 resource: { name: req.body.name, mimeType: 'application/vnd.google-apps.folder', parents: [req.body.parentId] },
                 fields: 'id, name, mimeType, parents'
             });
-            await xNeuralLearn(r.data, req.body.parentId, 'OBJECT_MKDIR');
+            await xNeuralProcess(r.data, req.body.parentId, 'USER_MKDIR');
             res.sendStatus(200);
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    app.post('/storage/api/v110/rename', express.json(), async (req, res) => {
+    app.post('/storage/api/rename', express.json(), async (req, res) => {
         try { await drive.files.update({ fileId: req.body.id, resource: { name: req.body.name } }); res.sendStatus(200); } catch (e) { res.status(500).send(e.message); }
     });
 
-    app.delete('/storage/api/v110/delete/:id', async (req, res) => {
+    app.delete('/storage/api/delete/:id', async (req, res) => {
         try { await drive.files.update({ fileId: req.params.id, resource: { trashed: true } }); res.sendStatus(200); } catch (e) { res.status(500).send(e.message); }
     });
 
-    console.log("🚀 HYPER MASTER CORE v110.0 DEPLOYED | MEMORY BUFFER: 1M UNITS");
+    console.log("🚀 TITANIUM v130.0 ULTIMATE MONOLITH ACTIVATED");
 };
