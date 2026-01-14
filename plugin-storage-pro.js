@@ -5,11 +5,12 @@ const path = require('path');
 
 /**
  * ============================================================================
- * TITANIUM X-PLATFORM v55.1 | THE GOLDEN MONOLITH REPAIRED
+ * TITANIUM X-PLATFORM v55.5 | THE FULL GOLDEN MONOLITH
  * ----------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
- * ИСПРАВЛЕНО: Позиционирование меню FAB (создание папки и загрузка)
+ * * ОПИСАНИЕ: Полная версия проводника.
+ * ИСПРАВЛЕНО: Главный экран (вместо белого), меню кнопки FAB.
  * ============================================================================
  */
 
@@ -104,11 +105,10 @@ module.exports = function(app, context) {
             main { padding: 0 15px; }
         }
 
-        /* NEW MENU POSITIONING FIX */
         #new-menu {
-            position: fixed; display: none; background: #fff; box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+            position: fixed; display: none; bottom: 100px; right: 30px; 
+            background: #fff; box-shadow: 0 8px 24px rgba(0,0,0,0.2);
             border-radius: 12px; z-index: 5000; min-width: 220px; padding: 8px 0; border: 1px solid #eee;
-            bottom: 100px; right: 30px; /* Появляется над кнопкой FAB */
         }
         #ctx-menu {
             position: fixed; display: none; background: #fff; box-shadow: 0 8px 24px rgba(0,0,0,0.2);
@@ -154,7 +154,7 @@ module.exports = function(app, context) {
         <div class="nav-item" id="nav-trash" style="margin-top: auto;" onclick="navigate('trash', 'Корзина')">
             <i class="fa fa-trash-can"></i> Корзина
         </div>
-        <div style="padding: 20px; font-size: 10px; color: #ccc;">ULTIMATE v55.1 FULL BUILD</div>
+        <div style="padding: 20px; font-size: 10px; color: #ccc;">ULTIMATE v55.5 FULL BUILD</div>
     </aside>
 
     <main>
@@ -263,9 +263,10 @@ module.exports = function(app, context) {
     function toggleSidebar(close) {
         const s = document.getElementById('sidebar'); 
         const o = document.getElementById('overlay');
-        if(close) { if(s) s.classList.remove('open'); if(o) o.classList.remove('active'); return; }
+        if(!s) return;
+        if(close) { s.classList.remove('open'); if(o) o.classList.remove('active'); return; }
         s.classList.toggle('open'); 
-        o.classList.toggle('active');
+        if(o) o.classList.toggle('active');
     }
 
     function toggleNewMenu(e) { 
@@ -275,14 +276,15 @@ module.exports = function(app, context) {
     }
 
     function triggerUpload(e) {
-        e.stopPropagation();
+        if(e) e.stopPropagation();
         document.getElementById('file-input').click();
         document.getElementById('new-menu').style.display = 'none';
     }
 
     function viewFile(id, name) {
         const tid = id || selectedFile.id;
-        document.getElementById('pv-title').innerText = name || (selectedFile?selectedFile.name:'');
+        const tname = name || (selectedFile?selectedFile.name:'');
+        document.getElementById('pv-title').innerText = tname;
         document.getElementById('pv-f').src = 'https://drive.google.com/file/d/' + tid + '/preview';
         document.getElementById('pv-modal').style.display = 'flex';
     }
@@ -304,7 +306,7 @@ module.exports = function(app, context) {
     }
 
     async function createFolder(e) {
-        e.stopPropagation();
+        if(e) e.stopPropagation();
         const n = prompt("Имя новой папки:");
         if(!n) return;
         document.getElementById('new-menu').style.display = 'none';
@@ -351,6 +353,9 @@ module.exports = function(app, context) {
     `;
 
     // --- API SERVER SIDE ---
+
+    // ГЛАВНЫЙ ВХОД: Теперь открывает проводник сразу по домену
+    app.get('/', (req, res) => res.send(UI));
     app.get('/storage', (req, res) => res.send(UI));
 
     app.get('/storage/api/list', async (req, res) => {
@@ -375,7 +380,7 @@ module.exports = function(app, context) {
                 resource: { name: req.file.originalname, parents: [req.body.folderId] },
                 media: media
             });
-            fs.unlinkSync(req.file.path); 
+            if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); 
             res.sendStatus(200);
         } catch (e) { res.status(500).send(e.message); }
     });
@@ -413,5 +418,5 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    console.log("✅ TITANIUM X-PLATFORM v55.1 FULLY LOADED");
+    console.log("✅ TITANIUM X-PLATFORM v55.5 FULLY LOADED ON ROOT");
 };
