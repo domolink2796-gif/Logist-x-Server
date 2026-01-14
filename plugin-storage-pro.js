@@ -1,16 +1,24 @@
 /**
  * =========================================================================================
- * TITANIUM X-PLATFORM v162.0 | GIGANT-STATION (ULTIMATE ENTERPRISE CORE)
+ * TITANIUM X-PLATFORM v153.0 | MAXIMUS EDITION (FULL UNPACKED CORE)
  * -----------------------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
- * ПАТЕНТ: № 0849-643-137 (РЦИС.РФ)
  * -----------------------------------------------------------------------------------------
- * СТРУКТУРА:
- * 1. [CORE INFRASTRUCTURE]: Управление локальными и облачными узлами.
- * 2. [DOCUMENT PROCESSORS]: Автономная визуализация XLSX, DOCX, PDF.
- * 3. [IMAGE OPTIMIZER]: Sharp-движок для мгновенной генерации превью.
- * 4. [HYBRID UI SYSTEM]: Высокоуровневый интерфейс управления.
+ * ПОЛНАЯ РАЗВЕРТКА СИСТЕМЫ:
+ * * [1] NEURAL ARCHITECT (НЕЙРОННОЕ ЯДРО):
+ * - Полная репликация структуры папок Google Drive.
+ * - Создание физических зеркал файлов на диске сервера.
+ * - Индексация для мгновенного поиска.
+ *
+ * [2] DATABASE SYNC (ЗЕРКАЛО БАЗ ДАННЫХ):
+ * - Автоматическое вытягивание barcodes.json и planograms.json.
+ * - Синхронизация ключей keys_database.json.
+ *
+ * [3] UI/UX MODULE (ИНТЕРФЕЙС):
+ * - QR-Teleport (Генератор кодов).
+ * - Multi-Touch (Мультивыбор файлов).
+ * - PWA Core (Установка на iPhone/Android).
  * =========================================================================================
  */
 
@@ -20,508 +28,675 @@ const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
 
-// --- [ПОДКЛЮЧЕНИЕ ТЯЖЕЛОВЕСНЫХ МОДУЛЕЙ] ---
-let XLSX, mammoth, sharp, PDFDocument;
-try { XLSX = require('xlsx'); } catch(e) { console.warn("[WARN] XLSX не найден"); }
-try { mammoth = require('mammoth'); } catch(e) { console.warn("[WARN] MAMMOTH не найден"); }
-try { sharp = require('sharp'); } catch(e) { console.warn("[WARN] SHARP не найден"); }
-
-// --- [ГЛОБАЛЬНАЯ КОНФИГУРАЦИЯ БИЗНЕС-ЛОГИКИ] ---
+// --- [CONFIGURATION] НАСТРОЙКИ СИСТЕМЫ ---
 const CONFIG = {
-    CORE: {
-        NAME: "X-PLATFORM GIGANT",
-        VERSION: "162.0.1",
-        OWNER: "Nikitin E.A.",
-        PATENT: "0849-643-137"
-    },
-    SECURITY: {
-        ADMIN_PASS: "admin",
-        AUTH_KEY: "titanium_gigant_session_v162",
-        UPLOAD_LIMIT: 1024 * 1024 * 1024 // 1 Гигабайт
-    },
+    PASSWORD: "admin",           // Пароль доступа
+    SESSION_KEY: "titanium_x_session_v153",
+    LOGO: "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png",
     PATHS: {
-        ROOT: __dirname,
         STORAGE: path.join(__dirname, 'local_storage'),
-        PRIVATE: path.join(__dirname, 'local_storage', 'PRIVATE_CORE'),
-        LOGIST: path.join(__dirname, 'local_storage', 'LOGIST_CORE'),
-        MERCH: path.join(__dirname, 'local_storage', 'MERCH_CORE'),
-        CACHE: path.join(__dirname, 'local_storage', 'SYSTEM_CACHE'),
-        LOGS: path.join(__dirname, 'local_storage', 'SYSTEM_LOGS')
-    },
-    UI: {
-        GOLD: "#f0b90b",
-        DARK_BG: "#000000",
-        LOGO: "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png"
+        DB_MIRROR: path.join(__dirname, 'db_mirror'),
+        NEURAL_MAP: path.join(__dirname, 'titanium_neural_map.json'),
+        LOGS: path.join(__dirname, 'titanium_system.log')
     }
 };
 
-/**
- * [BOOTSTRAP]: Инициализация серверных узлов.
- * Создает физическую структуру папок на диске сервера.
- */
-function initOmniStructure() {
-    console.log("--------------------------------------------------");
-    console.log(">>> INITIALIZING X-PLATFORM INFRASTRUCTURE...");
-    const folders = Object.values(CONFIG.PATHS).filter(p => typeof p === 'string' && p.includes('local_storage'));
-    folders.forEach(dir => {
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-            console.log(`[BOOT] NODE CREATED: \${path.basename(dir)}`);
-        }
-    });
-    console.log(">>> ALL NODES OPERATIONAL. READY TO WORK.");
-    console.log("--------------------------------------------------");
+// --- [INIT] ИНИЦИАЛИЗАЦИЯ ФАЙЛОВОЙ СИСТЕМЫ ---
+[CONFIG.PATHS.STORAGE, CONFIG.PATHS.DB_MIRROR].forEach(dir => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
+
+// Загрузка нейронной карты из памяти (если есть)
+let NEURAL_MEMORY = { map: {}, stats: { total_files: 0, last_sync: 0 } };
+if (fs.existsSync(CONFIG.PATHS.NEURAL_MAP)) {
+    try {
+        NEURAL_MEMORY = JSON.parse(fs.readFileSync(CONFIG.PATHS.NEURAL_MAP, 'utf8'));
+        console.log(`[TITANIUM]: Neural Memory Loaded. Objects: ${Object.keys(NEURAL_MEMORY.map).length}`);
+    } catch (e) {
+        console.error("[TITANIUM]: Memory corrupted, starting fresh.");
+    }
 }
-initOmniStructure();
 
 module.exports = function(app, context) {
-    const { drive, MY_ROOT_ID, MERCH_ROOT_ID } = context;
+    const { 
+        drive, MY_ROOT_ID, MERCH_ROOT_ID, 
+        readDatabase, readBarcodeDb, readPlanogramDb 
+    } = context;
+
     const upload = multer({ dest: 'uploads/' });
 
     /**
      * =====================================================================================
-     * [ЧАСТЬ 1]: АВТОНОМНЫЕ ДВИЖКИ ВИЗУАЛИЗАЦИИ (SERVER-SIDE RENDERING)
+     * РАЗДЕЛ 1: NEURAL ARCHITECT (МОЗГ СИСТЕМЫ)
      * =====================================================================================
      */
 
-    
+    // Логирование событий
+    function logSystem(msg) {
+        const entry = `[${new Date().toISOString()}] ${msg}\n`;
+        fs.appendFileSync(CONFIG.PATHS.LOGS, entry);
+    }
 
-    // --- ОБРАБОТЧИК XLSX: ПЕРЕВОД ТАБЛИЦ В ВЕБ-СЕТКУ ---
-    app.get('/storage/api/render-excel', async (req, res) => {
+    // Сохранение состояния памяти на диск
+    function saveMemoryState() {
+        fs.writeFile(CONFIG.PATHS.NEURAL_MAP, JSON.stringify(NEURAL_MEMORY, null, 2), () => {});
+    }
+
+    // Рекурсивное определение пути (чтобы знать, в какой папке лежит файл)
+    async function resolveDeepPath(folderId) {
+        let chain = [];
         try {
-            const fPath = req.query.path;
-            if (!XLSX || !fs.existsSync(fPath)) return res.status(404).send("Движок или файл недоступен.");
+            let current = folderId;
+            const stopIds = [MY_ROOT_ID, MERCH_ROOT_ID, 'root', undefined, null];
+            
+            while (current && !stopIds.includes(current)) {
+                // Сначала ищем в памяти (быстро)
+                if (NEURAL_MEMORY.map[current]) {
+                    chain.unshift(NEURAL_MEMORY.map[current].name);
+                    current = NEURAL_MEMORY.map[current].parentId;
+                } else {
+                    // Если нет в памяти, спрашиваем Google API
+                    const info = await drive.files.get({ fileId: current, fields: 'id, name, parents' });
+                    if (!info.data.name) break;
+                    chain.unshift(info.data.name);
+                    current = (info.data.parents) ? info.data.parents[0] : null;
+                }
+                if (chain.length > 20) break; // Защита от зацикливания
+            }
+        } catch (e) {
+            logSystem(`Path Error: ${e.message}`);
+        }
+        return chain;
+    }
 
-            const workbook = XLSX.readFile(fPath);
-            const sheet = workbook.Sheets[workbook.SheetNames[0]];
-            const html = XLSX.utils.sheet_to_html(sheet);
+    // ГЛАВНЫЙ ПРОЦЕССОР ОБУЧЕНИЯ
+    async function titaniumNeuralProcess(asset, action = 'sync', buffer = null) {
+        // Выполняем в фоне (setImmediate), чтобы не тормозить UI
+        setImmediate(async () => {
+            try {
+                if (action === 'delete') {
+                    // Удаление из памяти и с диска
+                    const entry = NEURAL_MEMORY.map[asset.id];
+                    if (entry && entry.localPath && fs.existsSync(entry.localPath)) {
+                        fs.unlinkSync(entry.localPath);
+                    }
+                    delete NEURAL_MEMORY.map[asset.id];
+                    logSystem(`Object Deleted: ${asset.id}`);
+                } else {
+                    // Синхронизация и обучение
+                    const { id, name, parentId, mimeType } = asset;
+                    
+                    // 1. Понимаем, к какому проекту относится (Логист или Мерч)
+                    let folderChain = await resolveDeepPath(parentId);
+                    const isMerch = (parentId === MERCH_ROOT_ID || folderChain.some(n => n && n.toLowerCase().includes('мерч')));
+                    const projectNode = isMerch ? 'MERCH_CORE' : 'LOGIST_CORE';
 
-            res.send(\`
-                <!DOCTYPE html>
-                <html><head><meta charset="UTF-8">
-                <style>
-                    body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #fff; padding: 20px; color: #333; }
-                    table { border-collapse: collapse; width: 100%; border: 1px solid #ddd; font-size: 13px; box-shadow: 0 5px 15px rgba(0,0,0,0.05); }
-                    th { background: \${CONFIG.UI.GOLD}; color: #000; padding: 15px; border: 1px solid #ccc; font-weight: 800; }
-                    td { border: 1px solid #eee; padding: 12px; }
-                    tr:nth-child(even) { background: #fafafa; }
-                    .header { font-weight: 900; border-bottom: 3px solid \${CONFIG.UI.GOLD}; padding-bottom: 10px; margin-bottom: 25px; color: #444; font-size: 16px; }
-                </style></head><body>
-                    <div class="header">X-PLATFORM XLSX VIEWER | АВТОНОМНОЕ ЯДРО</div>
-                    \${html}
-                </body></html>
-            \`);
-        } catch (e) { res.status(500).send("Ошибка рендеринга Excel: " + e.message); }
-    });
+                    // 2. Строим путь на диске сервера
+                    const localDirPath = path.join(CONFIG.PATHS.STORAGE, projectNode, ...folderChain);
+                    const localFilePath = path.join(localDirPath, name || `asset_${id}`);
 
-    // --- ОБРАБОТЧИК DOCX: ПЕРЕВОД ТЕКСТА В ЧИСТЫЙ HTML ---
-    app.get('/storage/api/render-word', async (req, res) => {
+                    // 3. Создаем физическую папку
+                    if (!fs.existsSync(localDirPath)) {
+                        fs.mkdirSync(localDirPath, { recursive: true });
+                    }
+
+                    // 4. Если передан контент файла - сохраняем его
+                    if (buffer) {
+                        fs.writeFileSync(localFilePath, buffer);
+                    }
+
+                    // 5. Записываем в Нейронную Память
+                    NEURAL_MEMORY.map[id] = { 
+                        localPath: fs.existsSync(localFilePath) ? localFilePath : null, 
+                        name: name, 
+                        mimeType: mimeType,
+                        parentId: parentId,
+                        isLocal: fs.existsSync(localFilePath),
+                        project: projectNode,
+                        updatedAt: Date.now()
+                    };
+                }
+
+                // Сохраняем и запускаем зеркалирование баз
+                saveMemoryState();
+                if (action !== 'delete') await mirrorSystemDatabases();
+
+            } catch (e) {
+                logSystem(`Neural Process Error: ${e.message}`);
+            }
+        });
+    }
+
+    // ЗЕРКАЛИРОВАНИЕ БАЗ ДАННЫХ (Для server.js)
+    async function mirrorSystemDatabases() {
         try {
-            const fPath = req.query.path;
-            if (!mammoth || !fs.existsSync(fPath)) return res.status(404).send("Ошибка открытия документа.");
-            const result = await mammoth.convertToHtml({path: fPath});
-            res.send(\`
-                <div style="padding:60px; font-family: 'Georgia', serif; line-height: 1.8; max-width: 850px; margin: auto; background: #fff; box-shadow: 0 0 30px rgba(0,0,0,0.1); font-size: 18px;">
-                    <div style="color:\${CONFIG.UI.GOLD}; font-family:sans-serif; font-weight:900; font-size:12px; margin-bottom:30px; border-bottom:1px solid #eee; padding-bottom:10px">X-PLATFORM DOC-READER</div>
-                    \${result.value}
-                </div>
-            \`);
-        } catch (e) { res.status(500).send("Ошибка рендеринга Word: " + e.message); }
-    });
+            const keys = await readDatabase();
+            if (!keys) return;
 
-    // --- ОБРАБОТЧИК МЕДИА: ГЕНЕРАЦИЯ ПРЕДПРОСМОТРА (SHARP ENGINE) ---
-    app.get('/storage/api/render-thumb', async (req, res) => {
-        try {
-            const p = req.query.path;
-            if (!sharp || !fs.existsSync(p)) return res.sendFile(p);
-            const buffer = await sharp(p).resize(450, 450, { fit: 'inside' }).webp({quality: 80}).toBuffer();
-            res.setHeader('Content-Type', 'image/webp');
-            res.send(buffer);
-        } catch (e) { res.sendStatus(500); }
-    });
+            // Сохраняем ключи
+            fs.writeFileSync(path.join(CONFIG.PATHS.DB_MIRROR, 'keys_database.json'), JSON.stringify(keys, null, 2));
+
+            // Проходим по каждому ключу и скачиваем базы
+            for (let k of keys) {
+                if (k.folderId) {
+                    const keyDir = path.join(CONFIG.PATHS.DB_MIRROR, k.key);
+                    if (!fs.existsSync(keyDir)) fs.mkdirSync(keyDir, { recursive: true });
+
+                    try {
+                        const [bDb, pDb] = await Promise.all([
+                            readBarcodeDb(k.folderId), 
+                            readPlanogramDb(k.folderId)
+                        ]);
+
+                        if (bDb) fs.writeFileSync(path.join(keyDir, 'barcodes.json'), JSON.stringify(bDb, null, 2));
+                        if (pDb) fs.writeFileSync(path.join(keyDir, 'planograms.json'), JSON.stringify(pDb, null, 2));
+                    } catch (err) {
+                        // Игнорируем ошибки конкретных баз, чтобы не остановить процесс
+                    }
+                }
+            }
+        } catch (e) {
+            logSystem(`DB Mirror Error: ${e.message}`);
+        }
+    }
 
     /**
      * =====================================================================================
-     * [ЧАСТЬ 2]: СИСТЕМНЫЕ API ВЗАИМОДЕЙСТВИЯ (HYBRID GATEWAY)
+     * РАЗДЕЛ 2: API GATEWAY (СВЯЗЬ С ВНЕШНИМ МИРОМ)
      * =====================================================================================
      */
 
-    const checkAuth = (req) => {
-        return req.headers.cookie && req.headers.cookie.includes(\`\${CONFIG.SECURITY.AUTH_KEY}=granted\`);
-    };
+    // Middleware проверки пароля
+    function checkAuth(req) {
+        const cookie = req.headers.cookie;
+        return cookie && cookie.includes(`${CONFIG.SESSION_KEY}=granted`);
+    }
+    const protect = (req, res, next) => checkAuth(req) ? next() : res.status(401).json({error: "Access Denied"});
 
-    // --- ЛИСТИНГ: УМНОЕ РАЗДЕЛЕНИЕ ОБЛАКА И ЛОКАЛЬНОГО ДИСКА ---
-    app.get('/storage/api/list-full', async (req, res) => {
-        if (!checkAuth(req)) return res.status(401).json({error: "No Access"});
-        try {
-            const fId = req.query.folderId || 'root';
-            let results = { files: [], parentId: null, isLocal: false };
-
-            // ЛОКАЛЬНАЯ ЛОГИКА (PRIVATE / MIRRORS)
-            if (fId === 'private_root' || fId.includes('local_storage')) {
-                const target = (fId === 'private_root') ? CONFIG.PATHS.PRIVATE : fId;
-                const entries = fs.readdirSync(target, { withFileTypes: true });
-                results.files = entries.map(e => {
-                    const fp = path.join(target, e.name);
-                    const s = fs.statSync(fp);
-                    return {
-                        id: fp, name: e.name, size: s.size,
-                        mimeType: e.isDirectory() ? 'folder' : 'file',
-                        isLocal: true, mtime: s.mtime
-                    };
-                });
-                results.parentId = (fId === 'private_root') ? 'root' : path.dirname(target);
-                results.isLocal = true;
-                return res.json(results);
-            }
-
-            // ОБЛАЧНАЯ ЛОГИКА (GOOGLE DRIVE)
-            const gId = (fId === 'root') ? MY_ROOT_ID : fId;
-            const driveR = await drive.files.list({
-                q: \`'\${gId}' in parents and trashed = false\`,
-                fields: 'files(id, name, mimeType, size, modifiedTime)',
-                orderBy: 'folder, name'
-            });
-            results.files = driveR.data.files;
-            results.parentId = (fId === 'root' ? null : 'root');
-            res.json(results);
-        } catch (e) { res.status(500).json({error: e.message}); }
-    });
-
-    // --- СОЗДАНИЕ ПАПОК (MKDIR ENGINE) ---
-    app.post('/storage/api/make-folder', express.json(), async (req, res) => {
-        if (!checkAuth(req)) return res.sendStatus(401);
-        try {
-            const { name, parentId } = req.body;
-            
-            // Если создаем в локальной зоне
-            if (parentId === 'private_root' || parentId.includes('local_storage')) {
-                const base = (parentId === 'private_root') ? CONFIG.PATHS.PRIVATE : parentId;
-                const newPath = path.join(base, name);
-                if (!fs.existsSync(newPath)) fs.mkdirSync(newPath, { recursive: true });
-                return res.json({ success: true, mode: 'local' });
-            }
-
-            // Если создаем в облаке
-            const gParent = (parentId === 'root') ? MY_ROOT_ID : parentId;
-            const gRes = await drive.files.create({
-                resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: [gParent] },
-                fields: 'id'
-            });
-            res.json(gRes.data);
-        } catch (e) { res.status(500).send(e.message); }
-    });
-
-    // --- УДАЛЕНИЕ ОБЪЕКТОВ ---
-    app.post('/storage/api/delete-items', express.json(), async (req, res) => {
-        if (!checkAuth(req)) return res.sendStatus(401);
-        try {
-            const { ids } = req.body;
-            for (let id of ids) {
-                if (fs.existsSync(id)) {
-                    if (fs.statSync(id).isDirectory()) fs.rmSync(id, { recursive: true });
-                    else fs.unlinkSync(id);
-                } else {
-                    await drive.files.delete({ fileId: id });
-                }
-            }
+    // 1. Авторизация
+    app.post('/storage/auth', express.json(), (req, res) => {
+        if (req.body.password === CONFIG.PASSWORD) {
+            res.setHeader('Set-Cookie', `${CONFIG.SESSION_KEY}=granted; Max-Age=604800; Path=/; HttpOnly`);
             res.json({ success: true });
-        } catch (e) { res.status(500).send(e.message); }
+        } else {
+            res.json({ success: false });
+        }
     });
 
-    // --- ЗАГРУЗКА ФАЙЛОВ ---
-    app.post('/storage/api/upload-hybrid', upload.single('file'), async (req, res) => {
-        if (!checkAuth(req)) return res.sendStatus(401);
+    // 2. Получение списка файлов (Гибридный режим)
+    app.get('/storage/api/list', protect, async (req, res) => {
         try {
-            const { folderId } = req.body;
-            if (folderId === 'private_root' || folderId.includes('local_storage')) {
-                const base = (folderId === 'private_root') ? CONFIG.PATHS.PRIVATE : folderId;
-                fs.renameSync(req.file.path, path.join(base, req.file.originalname));
-                return res.sendStatus(200);
+            const folderId = req.query.folderId || 'root';
+            let parentId = null;
+
+            // Определяем родителя для кнопки "Назад"
+            if (folderId !== 'root') {
+                try {
+                    const meta = await drive.files.get({ fileId: folderId, fields: 'parents' });
+                    if (meta.data.parents) parentId = meta.data.parents[0];
+                } catch(e) {}
             }
-            const gParent = (folderId === 'root') ? MY_ROOT_ID : folderId;
-            await drive.files.create({
-                resource: { name: req.file.originalname, parents: [gParent] },
-                media: { body: fs.createReadStream(req.file.path) }
+
+            // Прямой запрос к Google (Гарантия актуальности)
+            const r = await drive.files.list({ 
+                q: `'${folderId}' in parents and trashed = false`, 
+                fields: 'files(id, name, mimeType, size, iconLink)', 
+                orderBy: 'folder, name' 
             });
-            fs.unlinkSync(req.file.path);
+
+            // Отправляем файлы Нейронке на обучение
+            r.data.files.forEach(f => titaniumNeuralProcess({ ...f, parentId: folderId }, 'sync'));
+
+            res.json({ files: r.data.files, parentId });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // 3. Проксирование медиа (Stream)
+    app.get('/storage/api/proxy/:id', protect, async (req, res) => {
+        try {
+            const response = await drive.files.get({ fileId: req.params.id, alt: 'media' }, { responseType: 'stream' });
+            const meta = await drive.files.get({ fileId: req.params.id, fields: 'mimeType' });
+            res.setHeader('Content-Type', meta.data.mimeType);
+            response.data.pipe(res);
+        } catch (e) { res.status(404).send("Stream Unavailable"); }
+    });
+
+    // 4. Скачивание файлов
+    app.get('/storage/api/download/:id', async (req, res) => {
+        try {
+            const meta = await drive.files.get({ fileId: req.params.id, fields: 'name, mimeType' });
+            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(meta.data.name)}"`);
+            const response = await drive.files.get({ fileId: req.params.id, alt: 'media' }, { responseType: 'stream' });
+            response.data.pipe(res);
+        } catch (e) { res.status(500).send("Download Failed"); }
+    });
+
+    // 5. Загрузка новых файлов
+    app.post('/storage/api/upload', upload.single('file'), protect, async (req, res) => {
+        try {
+            const filePath = req.file.path;
+            const r = await drive.files.create({ 
+                resource: { name: req.file.originalname, parents: [req.body.folderId] },
+                media: { mimeType: req.file.mimetype, body: fs.createReadStream(filePath) },
+                fields: 'id, name, mimeType'
+            });
+
+            // Обучаем систему новому файлу + сохраняем локально
+            const buffer = fs.readFileSync(filePath);
+            await titaniumNeuralProcess({ ...r.data, parentId: req.body.folderId }, 'sync', buffer);
+
+            fs.unlinkSync(filePath); // Удаляем временный файл
             res.sendStatus(200);
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    // --- АВТОРИЗАЦИЯ MASTER-ACCESS ---
-    app.post('/storage/master-login', express.json(), (req, res) => {
-        if (req.body.password === CONFIG.SECURITY.ADMIN_PASS) {
-            res.setHeader('Set-Cookie', \`\${CONFIG.SECURITY.AUTH_KEY}=granted; Max-Age=604800; Path=/; HttpOnly; SameSite=Strict\`);
-            res.json({ success: true });
-        } else res.json({ success: false });
+    // 6. Удаление файлов
+    app.post('/storage/api/delete', express.json(), protect, async (req, res) => {
+        try {
+            const ids = req.body.ids || [req.body.id];
+            for (let id of ids) {
+                await drive.files.delete({ fileId: id });
+                await titaniumNeuralProcess({ id }, 'delete'); // Забываем навсегда
+            }
+            res.sendStatus(200);
+        } catch (e) { res.status(500).send(e.message); }
+    });
+
+    // 7. Создание папок
+    app.post('/storage/api/mkdir', express.json(), protect, async (req, res) => {
+        try {
+            const r = await drive.files.create({ 
+                resource: { name: req.body.name, mimeType: 'application/vnd.google-apps.folder', parents: [req.body.parentId] },
+                fields: 'id, name, mimeType'
+            });
+            await titaniumNeuralProcess({ ...r.data, parentId: req.body.parentId }, 'sync');
+            res.json(r.data);
+        } catch (e) { res.status(500).send(e.message); }
+    });
+
+    // --- MANIFEST PWA (Для установки на телефон) ---
+    app.get('/storage/manifest.json', (req, res) => {
+        res.json({
+            "name": "Logist X Cloud",
+            "short_name": "Logist X",
+            "start_url": "/storage",
+            "display": "standalone",
+            "background_color": "#000000",
+            "theme_color": "#000000",
+            "icons": [{ "src": CONFIG.LOGO, "sizes": "512x512", "type": "image/png" }]
+        });
+    });
+
+    // Отдача HTML интерфейса
+    app.get('/storage', (req, res) => {
+        if (!checkAuth(req)) return res.send(UI_COMPONENTS.LOGIN);
+        res.send(UI_COMPONENTS.DASHBOARD);
     });
 
     /**
      * =====================================================================================
-     * [ЧАСТЬ 3]: ВЫСОКОУРОВНЕВЫЙ ИНТЕРФЕЙС (ULTIMATE DASHBOARD UI)
+     * РАЗДЕЛ 3: UI ENGINE (ГРАФИЧЕСКИЙ ИНТЕРФЕЙС)
      * =====================================================================================
      */
-
-    app.get('/storage', (req, res) => {
-        if (!checkAuth(req)) return res.send(UI_AUTH_PAGE());
-        res.send(UI_DASHBOARD_PAGE());
-    });
-
-    function UI_AUTH_PAGE() {
-        return \`
+    const UI_COMPONENTS = {
+        LOGIN: `
         <!DOCTYPE html>
-        <html>
+        <html lang="ru">
         <head>
             <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-            <title>TITANIUM LOGIN</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+            <title>LOGIN | TITANIUM</title>
             <style>
-                body { background: #000; color: #fff; font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-                .card { background: #111; padding: 60px 40px; border-radius: 45px; border: 1px solid #222; text-align: center; width: 100%; max-width: 380px; box-shadow: 0 40px 100px rgba(0,0,0,0.8); }
-                .logo { width: 100px; height: 100px; border-radius: 25px; margin-bottom: 30px; box-shadow: 0 0 30px rgba(240,185,11,0.2); }
-                input { width: 100%; padding: 22px; background: #222; border: 1px solid #333; color: #fff; border-radius: 20px; text-align: center; font-size: 22px; margin: 30px 0; outline: none; transition: 0.3s; }
-                input:focus { border-color: \${CONFIG.UI.GOLD}; }
-                button { width: 100%; padding: 22px; background: \${CONFIG.UI.GOLD}; border: none; border-radius: 20px; font-weight: 900; font-size: 16px; color: #000; cursor: pointer; transition: 0.3s; }
-                button:active { transform: scale(0.96); }
+                body { background: #000; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+                .login-card { background: #111; padding: 40px; border-radius: 20px; border: 1px solid #333; text-align: center; width: 300px; }
+                input { width: 100%; padding: 15px; margin: 15px 0; background: #222; border: 1px solid #444; color: #fff; border-radius: 10px; font-size: 16px; box-sizing: border-box; text-align: center; }
+                button { width: 100%; padding: 15px; background: #f0b90b; border: none; border-radius: 10px; font-weight: bold; font-size: 16px; cursor: pointer; }
             </style>
         </head>
         <body>
-            <div class="card">
-                <img src="\${CONFIG.UI.LOGO}" class="logo">
-                <h1 style="letter-spacing:-2px; font-weight:900">X-PLATFORM</h1>
-                <input type="password" id="p" placeholder="SECURITY CODE">
-                <button onclick="login()">AUTHORIZE SYSTEM</button>
+            <div class="login-card">
+                <img src="${CONFIG.LOGO}" width="80" style="border-radius:15px; margin-bottom:20px;">
+                <h3 style="margin:0 0 20px 0">TITANIUM MAXIMUS</h3>
+                <input type="password" id="pass" placeholder="Код доступа">
+                <button onclick="doLogin()">ВОЙТИ</button>
             </div>
             <script>
-                async function login() {
-                    const p = document.getElementById('p').value;
-                    const r = await fetch('/storage/master-login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({password: p}) });
+                async function doLogin() {
+                    const p = document.getElementById('pass').value;
+                    const r = await fetch('/storage/auth', { 
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ password: p })
+                    });
                     const d = await r.json();
-                    if(d.success) location.reload(); else alert('ACCESS DENIED');
+                    if(d.success) location.reload();
+                    else alert('Ошибка доступа');
                 }
             </script>
         </body>
-        </html>\`;
-    }
+        </html>
+        `,
 
-    function UI_DASHBOARD_PAGE() {
-        return \`
+        DASHBOARD: `
         <!DOCTYPE html>
         <html lang="ru">
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-            <title>Titanium Master</title>
+            
+            <link rel="manifest" href="/storage/manifest.json">
+            <meta name="apple-mobile-web-app-capable" content="yes">
+            <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+            <meta name="theme-color" content="#000000">
+            <link rel="apple-touch-icon" href="${CONFIG.LOGO}">
+
+            <title>Logist X</title>
+            
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
             <style>
-                :root { --gold: \${CONFIG.UI.GOLD}; --bg: #000; --panel: #111; --border: #222; --safe-top: env(safe-area-inset-top); --safe-bot: env(safe-area-inset-bottom); }
-                * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-                
-                body { background: var(--bg); color: #fff; font-family: -apple-system, sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+                :root { 
+                    --gold: #f0b90b; 
+                    --bg: #000000; 
+                    --card: #151515;
+                    --safe-top: env(safe-area-inset-top); 
+                    --safe-bot: env(safe-area-inset-bottom); 
+                }
+                body { background: var(--bg); color: #fff; font-family: 'Inter', sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
                 
                 /* HEADER */
-                header { padding: calc(15px + var(--safe-top)) 25px 15px; background: rgba(18,18,18,0.9); backdrop-filter: blur(25px); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; z-index: 1000; }
-                .brand { display: flex; align-items: center; gap: 15px; font-weight: 900; font-size: 20px; color: var(--gold); }
-                .brand img { width: 36px; border-radius: 10px; }
+                .header { padding: calc(15px + var(--safe-top)) 20px 15px; background: rgba(20,20,20,0.95); backdrop-filter: blur(20px); border-bottom: 1px solid #222; display: flex; justify-content: space-between; align-items: center; z-index: 50; }
+                .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 16px; }
+                .brand img { width: 32px; border-radius: 8px; box-shadow: 0 0 15px rgba(240,185,11,0.2); }
+                .head-actions { display: flex; gap: 20px; font-size: 18px; color: #888; }
+                .head-actions i { cursor: pointer; transition: 0.2s; }
+                .head-actions i:active { color: var(--gold); }
 
-                /* NAVIGATION SCROLLER */
-                .nav-scroller { padding: 15px 20px; display: flex; gap: 12px; overflow-x: auto; scrollbar-width: none; background: #080808; border-bottom: 1px solid #111; }
-                .nav-scroller::-webkit-scrollbar { display: none; }
-                .nav-item { padding: 12px 28px; background: #1a1a1a; border-radius: 35px; font-size: 14px; white-space: nowrap; border: 1px solid var(--border); font-weight: 700; transition: 0.3s; }
-                .nav-item.active { border-color: var(--gold); color: var(--gold); background: rgba(240,185,11,0.1); }
-                .nav-item.private-btn { border-color: #ff3d00; color: #ff3d00; }
+                /* MAIN AREA */
+                .viewport { flex: 1; overflow-y: auto; padding-bottom: 120px; }
+                
+                .nav-pills { padding: 15px 20px; display: flex; gap: 10px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+                .pill { padding: 10px 18px; background: #1a1a1a; border-radius: 25px; font-size: 13px; white-space: nowrap; border: 1px solid #333; transition: 0.2s; font-weight: 600; }
+                .pill.active { border-color: var(--gold); color: var(--gold); background: rgba(240,185,11,0.1); }
+                
+                /* LIST ITEMS */
+                .f-row { display: flex; align-items: center; padding: 16px 20px; border-bottom: 1px solid #1a1a1a; gap: 15px; transition: 0.2s; }
+                .f-row:active { background: #111; }
+                
+                .f-icon { width: 44px; height: 44px; border-radius: 12px; background: #151515; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #555; flex-shrink: 0; }
+                .is-dir .f-icon { color: var(--gold); background: rgba(240,185,11,0.1); }
+                
+                .f-details { flex: 1; min-width: 0; }
+                .f-name { font-weight: 600; font-size: 15px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .f-size { font-size: 12px; color: #666; font-weight: 500; }
+                
+                /* MULTI-SELECT CHECKBOX */
+                .check-circle { width: 24px; height: 24px; border: 2px solid #444; border-radius: 50%; display: none; align-items: center; justify-content: center; transition: 0.2s; }
+                .mode-select .check-circle { display: flex; }
+                .row-selected .check-circle { background: var(--gold); border-color: var(--gold); }
+                .row-selected .check-circle::after { content: '✓'; color: #000; font-weight: 900; font-size: 14px; }
 
-                /* MAIN CONTENT AREA */
-                main { flex: 1; overflow-y: auto; padding-bottom: 160px; background: linear-gradient(180deg, #080808 0%, #000 100%); }
-                .item-row { display: flex; align-items: center; padding: 22px 25px; border-bottom: 1px solid #111; gap: 20px; position: relative; transition: 0.2s; }
-                .item-row:active { background: #0a0a0a; }
-                .item-icon { width: 56px; height: 56px; border-radius: 20px; background: #151515; display: flex; align-items: center; justify-content: center; font-size: 26px; color: #444; flex-shrink: 0; box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
-                .is-dir .item-icon { color: var(--gold); background: rgba(240,185,11,0.08); }
-                .is-xlsx .item-icon { color: #2e7d32; background: rgba(46,125,50,0.1); }
-                .is-pdf .item-icon { color: #c62828; background: rgba(198,40,40,0.1); }
-                .item-info { flex: 1; min-width: 0; }
-                .item-name { font-weight: 800; font-size: 16px; margin-bottom: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-                .item-meta { font-size: 11px; color: #555; text-transform: uppercase; font-weight: 800; letter-spacing: 1px; }
+                /* FLOATING ACTION BUTTON */
+                .fab { position: fixed; bottom: calc(30px + var(--safe-bot)); right: 30px; width: 60px; height: 60px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; color: #000; box-shadow: 0 10px 30px rgba(240,185,11,0.3); z-index: 100; transition: 0.3s; cursor: pointer; }
+                .fab:active { transform: scale(0.9); }
 
-                /* FLOATING ACTION SYSTEM */
-                .fab-stack { position: fixed; bottom: calc(40px + var(--safe-bot)); right: 30px; display: flex; flex-direction: column; gap: 20px; z-index: 2000; }
-                .fab { width: 72px; height: 72px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #000; box-shadow: 0 20px 50px rgba(0,0,0,0.6); border: none; transition: 0.3s; }
-                .fab.sub { width: 58px; height: 58px; background: #222; color: #fff; font-size: 22px; }
+                /* BATCH BAR */
+                .batch-actions { position: fixed; bottom: 30px; left: 20px; right: 20px; background: #222; border-radius: 18px; padding: 15px 25px; display: none; justify-content: space-between; align-items: center; border: 1px solid #333; z-index: 200; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+                .batch-txt { font-weight: 700; color: #fff; }
 
-                /* MASTER OVERLAY VIEWER */
-                #master-viewer { position: fixed; inset: 0; background: #000; z-index: 9999; display: none; flex-direction: column; }
-                .v-header { padding: calc(20px + var(--safe-top)) 25px 20px; background: #000; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #222; }
-                .v-container { flex: 1; background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-                iframe { width: 100%; height: 100%; border: none; }
-                img, video { max-width: 100%; max-height: 100%; object-fit: contain; }
+                /* MODALS */
+                .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 2000; display: none; align-items: center; justify-content: center; backdrop-filter: blur(8px); }
+                .modal-box { background: #1a1a1a; width: 85%; max-width: 350px; padding: 30px; border-radius: 25px; text-align: center; border: 1px solid #333; }
 
-                /* BATCH OPERATIONS BAR */
-                .batch-bar { position: fixed; bottom: 45px; left: 25px; right: 25px; background: #1a1a1a; padding: 25px 35px; border-radius: 30px; border: 1px solid #333; display: none; justify-content: space-between; align-items: center; z-index: 3000; box-shadow: 0 -10px 40px rgba(0,0,0,0.5); }
-                .batch-count { font-weight: 900; font-size: 18px; color: var(--gold); }
+                /* VIEWER */
+                #media-viewer { position: fixed; inset: 0; background: #000; z-index: 3000; display: none; flex-direction: column; }
+                .viewer-close { position: absolute; top: calc(20px + var(--safe-top)); right: 20px; font-size: 32px; padding: 20px; z-index: 10; cursor: pointer; opacity: 0.7; }
+                .viewer-body { flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+                .viewer-body img, .viewer-body video { max-width: 100%; max-height: 100%; object-fit: contain; }
             </style>
         </head>
         <body>
-            <header>
-                <div class="brand"><img src="\${CONFIG.UI.LOGO}"> X-STATION v162</div>
-                <div style="display:flex; gap:25px; font-size:20px; color:#555">
-                    <i class="fa fa-sync-alt" onclick="reload()"></i>
-                    <i class="fa fa-layer-group" onclick="toggleMultiMode()"></i>
-                </div>
-            </header>
+
+        <div class="header">
+            <div class="brand"><img src="${CONFIG.LOGO}"> TITANIUM</div>
+            <div class="head-actions">
+                <i class="fa fa-sync-alt" onclick="reloadFolder()" title="Обновить"></i>
+                <i class="fa fa-check-double" id="btn-select" onclick="toggleSelectMode()" title="Выбор"></i>
+            </div>
+        </div>
+
+        <div class="viewport">
+            <div class="nav-pills">
+                <div class="pill" id="btn-up" onclick="goLevelUp()" style="display:none"><i class="fa fa-arrow-left"></i></div>
+                <div class="pill active" onclick="navigate('root')">Главная</div>
+                <div class="pill" onclick="navigate('${MY_ROOT_ID}')">Логистика</div>
+                <div class="pill" onclick="navigate('${MERCH_ROOT_ID}')">Мерч</div>
+            </div>
             
-            <div class="nav-scroller">
-                <div class="nav-item active" id="tab-root" onclick="nav('root')">ОБЛАКО</div>
-                <div class="nav-item" id="tab-logist" onclick="nav('\${MY_ROOT_ID}')">ЛОГИСТИКА</div>
-                <div class="nav-item" id="tab-merch" onclick="nav('\${MERCH_ROOT_ID}')">МЕРЧ</div>
-                <div class="nav-item private-btn" id="tab-private" onclick="nav('private_root')">🔒 ЛИЧНЫЙ СЕЙФ</div>
-            </div>
+            <div id="file-list"></div>
+        </div>
 
-            <main>
-                <div id="file-list" class="file-list"></div>
-            </main>
+        <div class="batch-actions" id="batch-bar">
+            <span class="batch-txt" id="selected-count">0 выбрано</span>
+            <i class="fa fa-trash" style="color:#e53935; font-size: 22px; cursor: pointer;" onclick="deleteSelected()"></i>
+        </div>
 
-            <div class="batch-bar" id="batch-menu">
-                <div class="batch-count" id="sel-count">0 ВЫБРАНО</div>
-                <i class="fa fa-trash-alt" style="color:#ff3d00; font-size:28px" onclick="deleteBatch()"></i>
-            </div>
+        <div class="fab" id="fab-main" onclick="document.getElementById('file-input').click()">
+            <i class="fa fa-plus"></i>
+        </div>
+        <input type="file" id="file-input" style="display:none" multiple onchange="uploadFiles(this.files)">
 
-            <div class="fab-stack" id="fab-group">
-                <button class="fab sub" onclick="makeNewFolder()"><i class="fa fa-folder-plus"></i></button>
-                <button class="fab" onclick="document.getElementById('file-up').click()"><i class="fa fa-plus"></i></button>
-            </div>
-            <input type="file" id="file-up" style="display:none" multiple onchange="startUpload(this.files)">
-
-            <div id="master-viewer">
-                <div class="v-header">
-                    <div id="v-title" style="font-weight:900; color:var(--gold); font-size:15px; letter-spacing:1px">PREVIEW CORE</div>
-                    <i class="fa fa-times" style="font-size:38px; color:#fff" onclick="closeViewer()"></i>
+        <div class="modal-overlay" id="qr-modal" onclick="closeQR()">
+            <div class="modal-box" onclick="event.stopPropagation()">
+                <h3 style="margin-top:0">QR SHARE</h3>
+                <div style="background:#fff; padding:15px; border-radius:15px; display:inline-block; margin: 15px 0;">
+                    <div id="qr-target"></div>
                 </div>
-                <div class="v-container" id="v-view"></div>
+                <div style="color:#777; font-size:12px">Наведите камеру для скачивания</div>
             </div>
+        </div>
 
-            <script>
-                let currentId = 'root', selectedItems = new Set(), multiMode = false;
+        <div id="media-viewer">
+            <i class="fa fa-times viewer-close" onclick="closeViewer()"></i>
+            <div class="viewer-body" id="viewer-content"></div>
+        </div>
 
-                async function nav(id) {
-                    currentId = id; selectedItems.clear(); updateBatchUI();
-                    const list = document.getElementById('file-list');
-                    list.innerHTML = '<div style="padding:150px; text-align:center; opacity:0.1"><i class="fa fa-circle-notch fa-spin fa-5x"></i></div>';
+        <script>
+            let currentFolder = 'root';
+            let parentFolder = null;
+            let selection = new Set();
+            let isSelectMode = false;
+
+            // --- NAVIGATION ---
+            async function navigate(folderId) {
+                currentFolder = folderId;
+                selection.clear(); updateSelectionUI();
+                
+                const listEl = document.getElementById('file-list');
+                listEl.innerHTML = '<div style="text-align:center; padding:50px; opacity:0.5"><i class="fa fa-circle-notch fa-spin fa-2x"></i></div>';
+                
+                try {
+                    const res = await fetch('/storage/api/list?folderId=' + folderId);
+                    if (res.status === 401) return location.reload();
+                    const data = await res.json();
                     
-                    document.querySelectorAll('.nav-item').forEach(t => t.classList.remove('active'));
-                    if(id === 'root') document.getElementById('tab-root').classList.add('active');
-                    else if(id === '\${MY_ROOT_ID}') document.getElementById('tab-logist').classList.add('active');
-                    else if(id.includes('private')) document.getElementById('tab-private').classList.add('active');
+                    parentFolder = data.parentId;
+                    renderFiles(data.files);
+                    
+                    document.getElementById('btn-up').style.display = (folderId === 'root') ? 'none' : 'block';
+                } catch (e) {
+                    listEl.innerHTML = '<div style="text-align:center; padding:50px; color:#e53935">Ошибка соединения</div>';
+                }
+            }
 
-                    try {
-                        const r = await fetch('/storage/api/list-full?folderId=' + id);
-                        const data = await r.json();
-                        render(data.files);
-                    } catch(e) { list.innerHTML = '<div style="padding:100px;text-align:center">SERVER CONNECTION ERROR</div>'; }
+            function goLevelUp() {
+                if (parentFolder) navigate(parentFolder);
+                else navigate('root');
+            }
+
+            function reloadFolder() { navigate(currentFolder); }
+
+            // --- RENDERING ---
+            function renderFiles(files) {
+                const listEl = document.getElementById('file-list');
+                listEl.innerHTML = '';
+
+                if (files.length === 0) {
+                    listEl.innerHTML = '<div style="text-align:center; padding:50px; color:#555">Папка пуста</div>';
+                    return;
                 }
 
-                function render(files) {
-                    const list = document.getElementById('file-list');
-                    list.innerHTML = '';
-                    if(!files.length) {
-                        list.innerHTML = '<div style="padding:150px; text-align:center; opacity:0.2; font-weight:900; font-size:20px">ПАПКА ПУСТА</div>';
-                        return;
-                    }
+                files.forEach(file => {
+                    const isDir = file.mimeType.includes('folder');
+                    const div = document.createElement('div');
+                    div.className = 'f-row ' + (isDir ? 'is-dir' : '');
                     
-                    files.forEach(f => {
-                        const isD = f.mimeType.includes('folder') || f.mimeType === 'folder';
-                        const ext = f.name.split('.').pop().toLowerCase();
-                        const div = document.createElement('div');
-                        div.className = 'item-row ' + (isD ? 'is-dir ' : '') + 'is-' + ext;
-                        
-                        div.innerHTML = \`
-                            <div class="item-icon"><i class="fa \${isD ? 'fa-folder' : getIcon(ext)}"></i></div>
-                            <div class="item-info">
-                                <div class="item-name">\${f.name}</div>
-                                <div class="item-meta">\${isD ? 'Папка' : formatSize(f.size)}</div>
-                            </div>
-                            <i class="fa fa-qrcode" style="color:#222; font-size:24px" onclick="event.stopPropagation(); showQR('\${f.id}')"></i>
-                        \`;
+                    div.innerHTML = \`
+                        <div class="check-circle"></div>
+                        <div class="f-icon">
+                            <i class="fa \${getIconClass(file.mimeType, isDir)}"></i>
+                        </div>
+                        <div class="f-details">
+                            <div class="f-name">\${file.name}</div>
+                            <div class="f-size">\${formatSize(file.size)}</div>
+                        </div>
+                        <div style="color:#666; font-size:18px; \${isSelectMode ? 'display:none' : ''}" onclick="event.stopPropagation()">
+                            \${!isDir ? \`<i class="fa fa-qrcode" onclick="openQR('\${file.id}')"></i>\` : ''}
+                        </div>
+                    \`;
 
-                        div.onclick = () => {
-                            if(multiMode) toggleItem(f.id, div);
-                            else isD ? nav(f.id) : openViewer(f.id, f.name, f.mimeType);
-                        };
-                        list.appendChild(div);
-                    });
-                }
-
-                function getIcon(e) {
-                    if(['xlsx','xls','csv'].includes(e)) return 'fa-file-excel';
-                    if(['docx','doc'].includes(e)) return 'fa-file-word';
-                    if(['pdf'].includes(e)) return 'fa-file-pdf';
-                    if(['jpg','png','jpeg','webp'].includes(e)) return 'fa-file-image';
-                    if(['mp4','mov'].includes(e)) return 'fa-file-video';
-                    return 'fa-file-alt';
-                }
-
-                function openViewer(id, name, mime) {
-                    const v = document.getElementById('master-viewer'), con = document.getElementById('v-view');
-                    document.getElementById('v-title').innerText = name.toUpperCase();
-                    v.style.display = 'flex';
-                    
-                    const isLocal = id.includes('/') || id.includes('\\\\');
-                    if(isLocal) {
-                        const ext = name.split('.').pop().toLowerCase();
-                        if(['jpg','png','webp','jpeg'].includes(ext)) {
-                            con.innerHTML = \`<img src="/storage/api/render-thumb?path=\${encodeURIComponent(id)}">\`;
-                        } else if(['xlsx','xls','csv'].includes(ext)) {
-                            con.innerHTML = \`<iframe src="/storage/api/render-excel?path=\${encodeURIComponent(id)}"></iframe>\`;
-                        } else if(['docx'].includes(ext)) {
-                            con.innerHTML = \`<iframe src="/storage/api/render-word?path=\${encodeURIComponent(id)}"></iframe>\`;
+                    // Handle Click
+                    div.onclick = () => {
+                        if (isSelectMode) {
+                            toggleSelection(file.id, div);
                         } else {
-                            con.innerHTML = '<div style="color:#000; font-weight:bold; text-align:center; padding:50px">PREVIEW UNAVAILABLE</div>';
+                            if (isDir) navigate(file.id);
+                            else openViewer(file.id, file.mimeType);
                         }
-                    } else {
-                        con.innerHTML = \`<iframe src="https://drive.google.com/file/d/\${id}/preview"></iframe>\`;
-                    }
-                }
+                    };
 
-                async function makeNewFolder() {
-                    const n = prompt('ИМЯ НОВОЙ ПАПКИ:'); if(!n) return;
-                    await fetch('/storage/api/make-folder', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:n, parentId:currentId}) });
-                    reload();
-                }
+                    // Handle Long Press
+                    let pressTimer;
+                    div.addEventListener('touchstart', () => {
+                        pressTimer = setTimeout(() => {
+                            if (!isSelectMode) toggleSelectMode();
+                        }, 600);
+                    });
+                    div.addEventListener('touchend', () => clearTimeout(pressTimer));
 
-                async function startUpload(files) {
-                    for(let f of files) {
-                        const fd = new FormData(); fd.append('file', f); fd.append('folderId', currentId);
-                        await fetch('/storage/api/upload-hybrid', {method:'POST', body:fd});
-                    }
-                    reload();
-                }
+                    listEl.appendChild(div);
+                });
+            }
 
-                async function deleteBatch() {
-                    if(!selectedItems.size || !confirm('УДАЛИТЬ ВЫБРАННОЕ?')) return;
-                    await fetch('/storage/api/delete-items', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: Array.from(selectedItems)}) });
-                    toggleMultiMode(); reload();
-                }
+            // --- SELECTION LOGIC ---
+            function toggleSelectMode() {
+                isSelectMode = !isSelectMode;
+                document.body.classList.toggle('mode-select', isSelectMode);
+                
+                const selBtn = document.getElementById('btn-select');
+                selBtn.style.color = isSelectMode ? '#f0b90b' : '#888';
+                
+                document.getElementById('batch-bar').style.display = isSelectMode ? 'flex' : 'none';
+                document.getElementById('fab-main').style.display = isSelectMode ? 'none' : 'flex';
+                
+                selection.clear();
+                updateSelectionUI();
+                navigate(currentFolder); // Rerender to show checks
+            }
 
-                function toggleItem(id, el) {
-                    if(selectedItems.has(id)) { selectedItems.delete(id); el.style.background = 'transparent'; }
-                    else { selectedItems.add(id); el.style.background = 'rgba(240,185,11,0.08)'; }
-                    updateBatchUI();
+            function toggleSelection(id, element) {
+                if (selection.has(id)) {
+                    selection.delete(id);
+                    element.classList.remove('row-selected');
+                } else {
+                    selection.add(id);
+                    element.classList.add('row-selected');
                 }
+                updateSelectionUI();
+            }
 
-                function toggleMultiMode() {
-                    multiMode = !multiMode;
-                    document.getElementById('batch-menu').style.display = multiMode ? 'flex' : 'none';
-                    document.getElementById('fab-group').style.display = multiMode ? 'none' : 'flex';
-                    if(!multiMode) { selectedItems.clear(); reload(); }
+            function updateSelectionUI() {
+                document.getElementById('selected-count').innerText = selection.size + ' выбрано';
+            }
+
+            async function deleteSelected() {
+                if (selection.size === 0) return;
+                if (!confirm(\`Удалить объекты (\${selection.size})?\`)) return;
+
+                await fetch('/storage/api/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ids: Array.from(selection) })
+                });
+
+                toggleSelectMode(); // Exit mode
+                reloadFolder();
+            }
+
+            // --- UPLOAD ---
+            async function uploadFiles(files) {
+                for (let file of files) {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('folderId', currentFolder);
+                    await fetch('/storage/api/upload', { method: 'POST', body: formData });
                 }
+                reloadFolder();
+            }
 
-                function updateBatchUI() { document.getElementById('sel-count').innerText = selectedItems.size + ' ВЫБРАНО'; }
-                function formatSize(b) { if(!b) return '0 B'; const i = Math.floor(Math.log(b)/Math.log(1024)); return (b/Math.pow(1024,i)).toFixed(1)+' '+['B','KB','MB','GB'][i]; }
-                function closeViewer() { document.getElementById('master-viewer').style.display='none'; document.getElementById('v-view').innerHTML=''; }
-                function reload() { nav(currentId); }
-                nav('root');
-            </script>
+            // --- VIEWERS ---
+            function openQR(id) {
+                const modal = document.getElementById('qr-modal');
+                const target = document.getElementById('qr-target');
+                target.innerHTML = '';
+                const url = window.location.origin + '/storage/api/download/' + id;
+                new QRCode(target, { text: url, width: 200, height: 200 });
+                modal.style.display = 'flex';
+            }
+            function closeQR() { document.getElementById('qr-modal').style.display = 'none'; }
+
+            function openViewer(id, mime) {
+                const viewer = document.getElementById('media-viewer');
+                const body = document.getElementById('viewer-content');
+                const url = '/storage/api/proxy/' + id;
+
+                if (mime.includes('image')) {
+                    body.innerHTML = \`<img src="\${url}">\`;
+                    viewer.style.display = 'flex';
+                } else if (mime.includes('video')) {
+                    body.innerHTML = \`<video controls autoplay src="\${url}"></video>\`;
+                    viewer.style.display = 'flex';
+                } else {
+                    window.location.href = '/storage/api/download/' + id;
+                }
+            }
+            function closeViewer() { 
+                document.getElementById('media-viewer').style.display = 'none'; 
+                document.getElementById('viewer-content').innerHTML = '';
+            }
+
+            // --- UTILS ---
+            function getIconClass(mime, isDir) {
+                if (isDir) return 'fa-folder';
+                if (mime.includes('image')) return 'fa-file-image';
+                if (mime.includes('video')) return 'fa-file-video';
+                if (mime.includes('pdf')) return 'fa-file-pdf';
+                return 'fa-file';
+            }
+
+            function formatSize(bytes) {
+                if (!bytes) return '';
+                return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+            }
+
+            // START
+            navigate('root');
+        </script>
         </body>
-        </html>\`;
-    }
+        </html>
+        `
+    };
 };
