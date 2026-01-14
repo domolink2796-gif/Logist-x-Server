@@ -870,7 +870,13 @@ try {
 } catch (e) {
     console.log("⚠️ Плагин Storage Pro ошибка: " + e.message);
 }
-
+// --- [НОВОЕ] 3. ГЛОБАЛЬНЫЙ СКАНЕР ---
+try { 
+    require('./plugin-neural-scanner.js')(app, pluginContext);
+    console.log("✅ ПЛАГИН NEURAL SCANNER ПОДКЛЮЧЕН");
+} catch (e) {
+    console.log("⚠️ Ошибка сканера: " + e.message);
+}
 // --- ЗАПУСК БОТА ---
 bot.launch().then(() => {
     console.log('✅ Бот запущен');
