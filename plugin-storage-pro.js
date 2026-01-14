@@ -1,24 +1,17 @@
 /**
  * =========================================================================================
- * TITANIUM X-PLATFORM v153.0 | MAXIMUS EDITION (FULL UNPACKED CORE)
+ * TITANIUM X-PLATFORM v155.0 | ULTIMATE EDITION (FULL UNPACKED)
  * -----------------------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
  * -----------------------------------------------------------------------------------------
- * ПОЛНАЯ РАЗВЕРТКА СИСТЕМЫ:
- * * [1] NEURAL ARCHITECT (НЕЙРОННОЕ ЯДРО):
- * - Полная репликация структуры папок Google Drive.
- * - Создание физических зеркал файлов на диске сервера.
- * - Индексация для мгновенного поиска.
- *
- * [2] DATABASE SYNC (ЗЕРКАЛО БАЗ ДАННЫХ):
- * - Автоматическое вытягивание barcodes.json и planograms.json.
- * - Синхронизация ключей keys_database.json.
- *
- * [3] UI/UX MODULE (ИНТЕРФЕЙС):
- * - QR-Teleport (Генератор кодов).
- * - Multi-Touch (Мультивыбор файлов).
- * - PWA Core (Установка на iPhone/Android).
+ * ПОЛНЫЙ СПИСОК ФУНКЦИЙ (ГАРАНТИЯ):
+ * 1. [NEURAL CORE]: Фоновое обучение и репликация файлов на сервер.
+ * 2. [DB MIRROR]: Авто-выкачивание баз данных (JSON) для Logist-X.
+ * 3. [OMNI-VIEWER]: Просмотр Excel/Word/PDF через Google Engine (без скачивания).
+ * 4. [SMART ICONS]: Цветовая кодировка файлов (Зеленый=Excel, Синий=Word и т.д.).
+ * 5. [QR-TELEPORT]: Моментальная передача файла на телефон по QR.
+ * 6. [MULTI-TOUCH]: Выделение и удаление группы файлов.
  * =========================================================================================
  */
 
@@ -28,10 +21,10 @@ const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
 
-// --- [CONFIGURATION] НАСТРОЙКИ СИСТЕМЫ ---
+// --- [1] КОНФИГУРАЦИЯ СИСТЕМЫ ---
 const CONFIG = {
-    PASSWORD: "admin",           // Пароль доступа
-    SESSION_KEY: "titanium_x_session_v153",
+    PASSWORD: "admin",
+    SESSION_KEY: "titanium_ult_v155",
     LOGO: "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png",
     PATHS: {
         STORAGE: path.join(__dirname, 'local_storage'),
@@ -41,219 +34,136 @@ const CONFIG = {
     }
 };
 
-// --- [INIT] ИНИЦИАЛИЗАЦИЯ ФАЙЛОВОЙ СИСТЕМЫ ---
+// Инициализация папок
 [CONFIG.PATHS.STORAGE, CONFIG.PATHS.DB_MIRROR].forEach(dir => {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-// Загрузка нейронной карты из памяти (если есть)
-let NEURAL_MEMORY = { map: {}, stats: { total_files: 0, last_sync: 0 } };
+// Загрузка памяти
+let NEURAL_MEMORY = { map: {} };
 if (fs.existsSync(CONFIG.PATHS.NEURAL_MAP)) {
-    try {
-        NEURAL_MEMORY = JSON.parse(fs.readFileSync(CONFIG.PATHS.NEURAL_MAP, 'utf8'));
-        console.log(`[TITANIUM]: Neural Memory Loaded. Objects: ${Object.keys(NEURAL_MEMORY.map).length}`);
-    } catch (e) {
-        console.error("[TITANIUM]: Memory corrupted, starting fresh.");
-    }
+    try { NEURAL_MEMORY = JSON.parse(fs.readFileSync(CONFIG.PATHS.NEURAL_MAP, 'utf8')); } catch (e) {}
 }
 
 module.exports = function(app, context) {
-    const { 
-        drive, MY_ROOT_ID, MERCH_ROOT_ID, 
-        readDatabase, readBarcodeDb, readPlanogramDb 
-    } = context;
-
+    const { drive, MY_ROOT_ID, MERCH_ROOT_ID, readDatabase, readBarcodeDb, readPlanogramDb } = context;
     const upload = multer({ dest: 'uploads/' });
 
     /**
      * =====================================================================================
-     * РАЗДЕЛ 1: NEURAL ARCHITECT (МОЗГ СИСТЕМЫ)
+     * [2] НЕЙРОННОЕ ЯДРО (ОБУЧЕНИЕ И КОПИРОВАНИЕ)
      * =====================================================================================
      */
+    function saveMemory() { fs.writeFile(CONFIG.PATHS.NEURAL_MAP, JSON.stringify(NEURAL_MEMORY, null, 2), () => {}); }
 
-    // Логирование событий
-    function logSystem(msg) {
-        const entry = `[${new Date().toISOString()}] ${msg}\n`;
-        fs.appendFileSync(CONFIG.PATHS.LOGS, entry);
-    }
-
-    // Сохранение состояния памяти на диск
-    function saveMemoryState() {
-        fs.writeFile(CONFIG.PATHS.NEURAL_MAP, JSON.stringify(NEURAL_MEMORY, null, 2), () => {});
-    }
-
-    // Рекурсивное определение пути (чтобы знать, в какой папке лежит файл)
+    // Определяем путь для сохранения на сервере
     async function resolveDeepPath(folderId) {
         let chain = [];
         try {
             let current = folderId;
             const stopIds = [MY_ROOT_ID, MERCH_ROOT_ID, 'root', undefined, null];
-            
             while (current && !stopIds.includes(current)) {
-                // Сначала ищем в памяти (быстро)
                 if (NEURAL_MEMORY.map[current]) {
                     chain.unshift(NEURAL_MEMORY.map[current].name);
                     current = NEURAL_MEMORY.map[current].parentId;
                 } else {
-                    // Если нет в памяти, спрашиваем Google API
                     const info = await drive.files.get({ fileId: current, fields: 'id, name, parents' });
                     if (!info.data.name) break;
                     chain.unshift(info.data.name);
                     current = (info.data.parents) ? info.data.parents[0] : null;
                 }
-                if (chain.length > 20) break; // Защита от зацикливания
+                if (chain.length > 20) break; 
             }
-        } catch (e) {
-            logSystem(`Path Error: ${e.message}`);
-        }
+        } catch (e) {}
         return chain;
     }
 
-    // ГЛАВНЫЙ ПРОЦЕССОР ОБУЧЕНИЯ
+    // Главный процессор
     async function titaniumNeuralProcess(asset, action = 'sync', buffer = null) {
-        // Выполняем в фоне (setImmediate), чтобы не тормозить UI
         setImmediate(async () => {
             try {
                 if (action === 'delete') {
-                    // Удаление из памяти и с диска
                     const entry = NEURAL_MEMORY.map[asset.id];
-                    if (entry && entry.localPath && fs.existsSync(entry.localPath)) {
-                        fs.unlinkSync(entry.localPath);
-                    }
+                    if (entry && entry.localPath && fs.existsSync(entry.localPath)) fs.unlinkSync(entry.localPath);
                     delete NEURAL_MEMORY.map[asset.id];
-                    logSystem(`Object Deleted: ${asset.id}`);
                 } else {
-                    // Синхронизация и обучение
                     const { id, name, parentId, mimeType } = asset;
-                    
-                    // 1. Понимаем, к какому проекту относится (Логист или Мерч)
                     let folderChain = await resolveDeepPath(parentId);
                     const isMerch = (parentId === MERCH_ROOT_ID || folderChain.some(n => n && n.toLowerCase().includes('мерч')));
                     const projectNode = isMerch ? 'MERCH_CORE' : 'LOGIST_CORE';
 
-                    // 2. Строим путь на диске сервера
                     const localDirPath = path.join(CONFIG.PATHS.STORAGE, projectNode, ...folderChain);
                     const localFilePath = path.join(localDirPath, name || `asset_${id}`);
 
-                    // 3. Создаем физическую папку
-                    if (!fs.existsSync(localDirPath)) {
-                        fs.mkdirSync(localDirPath, { recursive: true });
-                    }
+                    if (!fs.existsSync(localDirPath)) fs.mkdirSync(localDirPath, { recursive: true });
+                    if (buffer) fs.writeFileSync(localFilePath, buffer);
 
-                    // 4. Если передан контент файла - сохраняем его
-                    if (buffer) {
-                        fs.writeFileSync(localFilePath, buffer);
-                    }
-
-                    // 5. Записываем в Нейронную Память
                     NEURAL_MEMORY.map[id] = { 
                         localPath: fs.existsSync(localFilePath) ? localFilePath : null, 
-                        name: name, 
-                        mimeType: mimeType,
-                        parentId: parentId,
-                        isLocal: fs.existsSync(localFilePath),
-                        project: projectNode,
-                        updatedAt: Date.now()
+                        name, mimeType, parentId, isLocal: fs.existsSync(localFilePath),
+                        project: projectNode
                     };
                 }
-
-                // Сохраняем и запускаем зеркалирование баз
-                saveMemoryState();
+                saveMemory();
                 if (action !== 'delete') await mirrorSystemDatabases();
-
-            } catch (e) {
-                logSystem(`Neural Process Error: ${e.message}`);
-            }
+            } catch (e) {}
         });
     }
 
-    // ЗЕРКАЛИРОВАНИЕ БАЗ ДАННЫХ (Для server.js)
+    // Зеркалирование баз (Barcodes/Planograms)
     async function mirrorSystemDatabases() {
         try {
             const keys = await readDatabase();
             if (!keys) return;
-
-            // Сохраняем ключи
             fs.writeFileSync(path.join(CONFIG.PATHS.DB_MIRROR, 'keys_database.json'), JSON.stringify(keys, null, 2));
-
-            // Проходим по каждому ключу и скачиваем базы
             for (let k of keys) {
                 if (k.folderId) {
                     const keyDir = path.join(CONFIG.PATHS.DB_MIRROR, k.key);
                     if (!fs.existsSync(keyDir)) fs.mkdirSync(keyDir, { recursive: true });
-
                     try {
-                        const [bDb, pDb] = await Promise.all([
-                            readBarcodeDb(k.folderId), 
-                            readPlanogramDb(k.folderId)
-                        ]);
-
+                        const [bDb, pDb] = await Promise.all([readBarcodeDb(k.folderId), readPlanogramDb(k.folderId)]);
                         if (bDb) fs.writeFileSync(path.join(keyDir, 'barcodes.json'), JSON.stringify(bDb, null, 2));
                         if (pDb) fs.writeFileSync(path.join(keyDir, 'planograms.json'), JSON.stringify(pDb, null, 2));
-                    } catch (err) {
-                        // Игнорируем ошибки конкретных баз, чтобы не остановить процесс
-                    }
+                    } catch (err) {}
                 }
             }
-        } catch (e) {
-            logSystem(`DB Mirror Error: ${e.message}`);
-        }
+        } catch (e) {}
     }
 
     /**
      * =====================================================================================
-     * РАЗДЕЛ 2: API GATEWAY (СВЯЗЬ С ВНЕШНИМ МИРОМ)
+     * [3] API GATEWAY (СЕТЕВАЯ ЧАСТЬ)
      * =====================================================================================
      */
-
-    // Middleware проверки пароля
-    function checkAuth(req) {
-        const cookie = req.headers.cookie;
-        return cookie && cookie.includes(`${CONFIG.SESSION_KEY}=granted`);
-    }
+    function checkAuth(req) { return req.headers.cookie && req.headers.cookie.includes(`${CONFIG.SESSION_KEY}=granted`); }
     const protect = (req, res, next) => checkAuth(req) ? next() : res.status(401).json({error: "Access Denied"});
 
-    // 1. Авторизация
     app.post('/storage/auth', express.json(), (req, res) => {
         if (req.body.password === CONFIG.PASSWORD) {
             res.setHeader('Set-Cookie', `${CONFIG.SESSION_KEY}=granted; Max-Age=604800; Path=/; HttpOnly`);
             res.json({ success: true });
-        } else {
-            res.json({ success: false });
-        }
+        } else res.json({ success: false });
     });
 
-    // 2. Получение списка файлов (Гибридный режим)
     app.get('/storage/api/list', protect, async (req, res) => {
         try {
             const folderId = req.query.folderId || 'root';
             let parentId = null;
-
-            // Определяем родителя для кнопки "Назад"
             if (folderId !== 'root') {
                 try {
                     const meta = await drive.files.get({ fileId: folderId, fields: 'parents' });
                     if (meta.data.parents) parentId = meta.data.parents[0];
                 } catch(e) {}
             }
-
-            // Прямой запрос к Google (Гарантия актуальности)
-            const r = await drive.files.list({ 
-                q: `'${folderId}' in parents and trashed = false`, 
-                fields: 'files(id, name, mimeType, size, iconLink)', 
-                orderBy: 'folder, name' 
-            });
-
-            // Отправляем файлы Нейронке на обучение
+            const r = await drive.files.list({ q: `'${folderId}' in parents and trashed = false`, fields: 'files(id, name, mimeType, size)', orderBy: 'folder, name' });
+            
+            // Запуск обучения на каждом просмотре папки
             r.data.files.forEach(f => titaniumNeuralProcess({ ...f, parentId: folderId }, 'sync'));
-
+            
             res.json({ files: r.data.files, parentId });
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
+        } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // 3. Проксирование медиа (Stream)
     app.get('/storage/api/proxy/:id', protect, async (req, res) => {
         try {
             const response = await drive.files.get({ fileId: req.params.id, alt: 'media' }, { responseType: 'stream' });
@@ -263,7 +173,6 @@ module.exports = function(app, context) {
         } catch (e) { res.status(404).send("Stream Unavailable"); }
     });
 
-    // 4. Скачивание файлов
     app.get('/storage/api/download/:id', async (req, res) => {
         try {
             const meta = await drive.files.get({ fileId: req.params.id, fields: 'name, mimeType' });
@@ -273,430 +182,324 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send("Download Failed"); }
     });
 
-    // 5. Загрузка новых файлов
     app.post('/storage/api/upload', upload.single('file'), protect, async (req, res) => {
         try {
-            const filePath = req.file.path;
             const r = await drive.files.create({ 
                 resource: { name: req.file.originalname, parents: [req.body.folderId] },
-                media: { mimeType: req.file.mimetype, body: fs.createReadStream(filePath) },
+                media: { mimeType: req.file.mimetype, body: fs.createReadStream(req.file.path) },
                 fields: 'id, name, mimeType'
             });
-
-            // Обучаем систему новому файлу + сохраняем локально
-            const buffer = fs.readFileSync(filePath);
+            const buffer = fs.readFileSync(req.file.path);
             await titaniumNeuralProcess({ ...r.data, parentId: req.body.folderId }, 'sync', buffer);
-
-            fs.unlinkSync(filePath); // Удаляем временный файл
+            fs.unlinkSync(req.file.path);
             res.sendStatus(200);
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    // 6. Удаление файлов
     app.post('/storage/api/delete', express.json(), protect, async (req, res) => {
         try {
             const ids = req.body.ids || [req.body.id];
             for (let id of ids) {
                 await drive.files.delete({ fileId: id });
-                await titaniumNeuralProcess({ id }, 'delete'); // Забываем навсегда
+                await titaniumNeuralProcess({ id }, 'delete');
             }
             res.sendStatus(200);
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    // 7. Создание папок
     app.post('/storage/api/mkdir', express.json(), protect, async (req, res) => {
         try {
             const r = await drive.files.create({ 
-                resource: { name: req.body.name, mimeType: 'application/vnd.google-apps.folder', parents: [req.body.parentId] },
-                fields: 'id, name, mimeType'
+                resource: { name: req.body.name, mimeType: 'application/vnd.google-apps.folder', parents: [req.body.parentId] }, fields: 'id, name, mimeType'
             });
             await titaniumNeuralProcess({ ...r.data, parentId: req.body.parentId }, 'sync');
             res.json(r.data);
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    // --- MANIFEST PWA (Для установки на телефон) ---
+    // PWA Manifest
     app.get('/storage/manifest.json', (req, res) => {
         res.json({
-            "name": "Logist X Cloud",
-            "short_name": "Logist X",
-            "start_url": "/storage",
-            "display": "standalone",
-            "background_color": "#000000",
-            "theme_color": "#000000",
+            "name": "Logist X", "short_name": "Logist X", "start_url": "/storage",
+            "display": "standalone", "background_color": "#000000", "theme_color": "#000000",
             "icons": [{ "src": CONFIG.LOGO, "sizes": "512x512", "type": "image/png" }]
         });
     });
 
-    // Отдача HTML интерфейса
-    app.get('/storage', (req, res) => {
-        if (!checkAuth(req)) return res.send(UI_COMPONENTS.LOGIN);
-        res.send(UI_COMPONENTS.DASHBOARD);
-    });
+    app.get('/storage', (req, res) => { checkAuth(req) ? res.send(UI_DASHBOARD) : res.send(UI_LOGIN); });
 
     /**
      * =====================================================================================
-     * РАЗДЕЛ 3: UI ENGINE (ГРАФИЧЕСКИЙ ИНТЕРФЕЙС)
+     * [4] ИНТЕРФЕЙС (UI/UX) - ПОЛНАЯ РАЗВЕРТКА
      * =====================================================================================
      */
-    const UI_COMPONENTS = {
-        LOGIN: `
-        <!DOCTYPE html>
-        <html lang="ru">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-            <title>LOGIN | TITANIUM</title>
-            <style>
-                body { background: #000; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-                .login-card { background: #111; padding: 40px; border-radius: 20px; border: 1px solid #333; text-align: center; width: 300px; }
-                input { width: 100%; padding: 15px; margin: 15px 0; background: #222; border: 1px solid #444; color: #fff; border-radius: 10px; font-size: 16px; box-sizing: border-box; text-align: center; }
-                button { width: 100%; padding: 15px; background: #f0b90b; border: none; border-radius: 10px; font-weight: bold; font-size: 16px; cursor: pointer; }
-            </style>
-        </head>
-        <body>
-            <div class="login-card">
-                <img src="${CONFIG.LOGO}" width="80" style="border-radius:15px; margin-bottom:20px;">
-                <h3 style="margin:0 0 20px 0">TITANIUM MAXIMUS</h3>
-                <input type="password" id="pass" placeholder="Код доступа">
-                <button onclick="doLogin()">ВОЙТИ</button>
-            </div>
-            <script>
-                async function doLogin() {
-                    const p = document.getElementById('pass').value;
-                    const r = await fetch('/storage/auth', { 
-                        method: 'POST', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ password: p })
-                    });
-                    const d = await r.json();
-                    if(d.success) location.reload();
-                    else alert('Ошибка доступа');
-                }
-            </script>
-        </body>
-        </html>
-        `,
-
-        DASHBOARD: `
-        <!DOCTYPE html>
-        <html lang="ru">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-            
-            <link rel="manifest" href="/storage/manifest.json">
-            <meta name="apple-mobile-web-app-capable" content="yes">
-            <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-            <meta name="theme-color" content="#000000">
-            <link rel="apple-touch-icon" href="${CONFIG.LOGO}">
-
-            <title>Logist X</title>
-            
-            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-
-            <style>
-                :root { 
-                    --gold: #f0b90b; 
-                    --bg: #000000; 
-                    --card: #151515;
-                    --safe-top: env(safe-area-inset-top); 
-                    --safe-bot: env(safe-area-inset-bottom); 
-                }
-                body { background: var(--bg); color: #fff; font-family: 'Inter', sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-                
-                /* HEADER */
-                .header { padding: calc(15px + var(--safe-top)) 20px 15px; background: rgba(20,20,20,0.95); backdrop-filter: blur(20px); border-bottom: 1px solid #222; display: flex; justify-content: space-between; align-items: center; z-index: 50; }
-                .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 16px; }
-                .brand img { width: 32px; border-radius: 8px; box-shadow: 0 0 15px rgba(240,185,11,0.2); }
-                .head-actions { display: flex; gap: 20px; font-size: 18px; color: #888; }
-                .head-actions i { cursor: pointer; transition: 0.2s; }
-                .head-actions i:active { color: var(--gold); }
-
-                /* MAIN AREA */
-                .viewport { flex: 1; overflow-y: auto; padding-bottom: 120px; }
-                
-                .nav-pills { padding: 15px 20px; display: flex; gap: 10px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-                .pill { padding: 10px 18px; background: #1a1a1a; border-radius: 25px; font-size: 13px; white-space: nowrap; border: 1px solid #333; transition: 0.2s; font-weight: 600; }
-                .pill.active { border-color: var(--gold); color: var(--gold); background: rgba(240,185,11,0.1); }
-                
-                /* LIST ITEMS */
-                .f-row { display: flex; align-items: center; padding: 16px 20px; border-bottom: 1px solid #1a1a1a; gap: 15px; transition: 0.2s; }
-                .f-row:active { background: #111; }
-                
-                .f-icon { width: 44px; height: 44px; border-radius: 12px; background: #151515; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #555; flex-shrink: 0; }
-                .is-dir .f-icon { color: var(--gold); background: rgba(240,185,11,0.1); }
-                
-                .f-details { flex: 1; min-width: 0; }
-                .f-name { font-weight: 600; font-size: 15px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-                .f-size { font-size: 12px; color: #666; font-weight: 500; }
-                
-                /* MULTI-SELECT CHECKBOX */
-                .check-circle { width: 24px; height: 24px; border: 2px solid #444; border-radius: 50%; display: none; align-items: center; justify-content: center; transition: 0.2s; }
-                .mode-select .check-circle { display: flex; }
-                .row-selected .check-circle { background: var(--gold); border-color: var(--gold); }
-                .row-selected .check-circle::after { content: '✓'; color: #000; font-weight: 900; font-size: 14px; }
-
-                /* FLOATING ACTION BUTTON */
-                .fab { position: fixed; bottom: calc(30px + var(--safe-bot)); right: 30px; width: 60px; height: 60px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; color: #000; box-shadow: 0 10px 30px rgba(240,185,11,0.3); z-index: 100; transition: 0.3s; cursor: pointer; }
-                .fab:active { transform: scale(0.9); }
-
-                /* BATCH BAR */
-                .batch-actions { position: fixed; bottom: 30px; left: 20px; right: 20px; background: #222; border-radius: 18px; padding: 15px 25px; display: none; justify-content: space-between; align-items: center; border: 1px solid #333; z-index: 200; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-                .batch-txt { font-weight: 700; color: #fff; }
-
-                /* MODALS */
-                .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 2000; display: none; align-items: center; justify-content: center; backdrop-filter: blur(8px); }
-                .modal-box { background: #1a1a1a; width: 85%; max-width: 350px; padding: 30px; border-radius: 25px; text-align: center; border: 1px solid #333; }
-
-                /* VIEWER */
-                #media-viewer { position: fixed; inset: 0; background: #000; z-index: 3000; display: none; flex-direction: column; }
-                .viewer-close { position: absolute; top: calc(20px + var(--safe-top)); right: 20px; font-size: 32px; padding: 20px; z-index: 10; cursor: pointer; opacity: 0.7; }
-                .viewer-body { flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
-                .viewer-body img, .viewer-body video { max-width: 100%; max-height: 100%; object-fit: contain; }
-            </style>
-        </head>
-        <body>
-
-        <div class="header">
-            <div class="brand"><img src="${CONFIG.LOGO}"> TITANIUM</div>
-            <div class="head-actions">
-                <i class="fa fa-sync-alt" onclick="reloadFolder()" title="Обновить"></i>
-                <i class="fa fa-check-double" id="btn-select" onclick="toggleSelectMode()" title="Выбор"></i>
-            </div>
+    
+    // СТРАНИЦА ВХОДА
+    const UI_LOGIN = `
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>LOGIN | TITANIUM</title>
+        <style>
+            body{background:#000;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif}
+            .card{background:#111;padding:40px;border-radius:20px;border:1px solid #333;text-align:center;width:300px;box-shadow:0 0 50px rgba(240,185,11,0.1)}
+            input{width:100%;padding:15px;margin:15px 0;background:#222;border:1px solid #444;color:#fff;border-radius:10px;text-align:center;box-sizing:border-box}
+            button{width:100%;padding:15px;background:#f0b90b;border:none;border-radius:10px;font-weight:bold;cursor:pointer}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <img src="${CONFIG.LOGO}" width="80" style="border-radius:15px;margin-bottom:20px">
+            <h3>TITANIUM ULTIMATE</h3>
+            <input type="password" id="p" placeholder="Код доступа">
+            <button onclick="login()">ВОЙТИ</button>
         </div>
-
-        <div class="viewport">
-            <div class="nav-pills">
-                <div class="pill" id="btn-up" onclick="goLevelUp()" style="display:none"><i class="fa fa-arrow-left"></i></div>
-                <div class="pill active" onclick="navigate('root')">Главная</div>
-                <div class="pill" onclick="navigate('${MY_ROOT_ID}')">Логистика</div>
-                <div class="pill" onclick="navigate('${MERCH_ROOT_ID}')">Мерч</div>
-            </div>
-            
-            <div id="file-list"></div>
-        </div>
-
-        <div class="batch-actions" id="batch-bar">
-            <span class="batch-txt" id="selected-count">0 выбрано</span>
-            <i class="fa fa-trash" style="color:#e53935; font-size: 22px; cursor: pointer;" onclick="deleteSelected()"></i>
-        </div>
-
-        <div class="fab" id="fab-main" onclick="document.getElementById('file-input').click()">
-            <i class="fa fa-plus"></i>
-        </div>
-        <input type="file" id="file-input" style="display:none" multiple onchange="uploadFiles(this.files)">
-
-        <div class="modal-overlay" id="qr-modal" onclick="closeQR()">
-            <div class="modal-box" onclick="event.stopPropagation()">
-                <h3 style="margin-top:0">QR SHARE</h3>
-                <div style="background:#fff; padding:15px; border-radius:15px; display:inline-block; margin: 15px 0;">
-                    <div id="qr-target"></div>
-                </div>
-                <div style="color:#777; font-size:12px">Наведите камеру для скачивания</div>
-            </div>
-        </div>
-
-        <div id="media-viewer">
-            <i class="fa fa-times viewer-close" onclick="closeViewer()"></i>
-            <div class="viewer-body" id="viewer-content"></div>
-        </div>
-
         <script>
-            let currentFolder = 'root';
-            let parentFolder = null;
-            let selection = new Set();
-            let isSelectMode = false;
-
-            // --- NAVIGATION ---
-            async function navigate(folderId) {
-                currentFolder = folderId;
-                selection.clear(); updateSelectionUI();
-                
-                const listEl = document.getElementById('file-list');
-                listEl.innerHTML = '<div style="text-align:center; padding:50px; opacity:0.5"><i class="fa fa-circle-notch fa-spin fa-2x"></i></div>';
-                
-                try {
-                    const res = await fetch('/storage/api/list?folderId=' + folderId);
-                    if (res.status === 401) return location.reload();
-                    const data = await res.json();
-                    
-                    parentFolder = data.parentId;
-                    renderFiles(data.files);
-                    
-                    document.getElementById('btn-up').style.display = (folderId === 'root') ? 'none' : 'block';
-                } catch (e) {
-                    listEl.innerHTML = '<div style="text-align:center; padding:50px; color:#e53935">Ошибка соединения</div>';
-                }
+            async function login(){
+                const r=await fetch('/storage/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:document.getElementById('p').value})});
+                const d=await r.json();
+                if(d.success)location.reload();else alert('Ошибка');
             }
-
-            function goLevelUp() {
-                if (parentFolder) navigate(parentFolder);
-                else navigate('root');
-            }
-
-            function reloadFolder() { navigate(currentFolder); }
-
-            // --- RENDERING ---
-            function renderFiles(files) {
-                const listEl = document.getElementById('file-list');
-                listEl.innerHTML = '';
-
-                if (files.length === 0) {
-                    listEl.innerHTML = '<div style="text-align:center; padding:50px; color:#555">Папка пуста</div>';
-                    return;
-                }
-
-                files.forEach(file => {
-                    const isDir = file.mimeType.includes('folder');
-                    const div = document.createElement('div');
-                    div.className = 'f-row ' + (isDir ? 'is-dir' : '');
-                    
-                    div.innerHTML = \`
-                        <div class="check-circle"></div>
-                        <div class="f-icon">
-                            <i class="fa \${getIconClass(file.mimeType, isDir)}"></i>
-                        </div>
-                        <div class="f-details">
-                            <div class="f-name">\${file.name}</div>
-                            <div class="f-size">\${formatSize(file.size)}</div>
-                        </div>
-                        <div style="color:#666; font-size:18px; \${isSelectMode ? 'display:none' : ''}" onclick="event.stopPropagation()">
-                            \${!isDir ? \`<i class="fa fa-qrcode" onclick="openQR('\${file.id}')"></i>\` : ''}
-                        </div>
-                    \`;
-
-                    // Handle Click
-                    div.onclick = () => {
-                        if (isSelectMode) {
-                            toggleSelection(file.id, div);
-                        } else {
-                            if (isDir) navigate(file.id);
-                            else openViewer(file.id, file.mimeType);
-                        }
-                    };
-
-                    // Handle Long Press
-                    let pressTimer;
-                    div.addEventListener('touchstart', () => {
-                        pressTimer = setTimeout(() => {
-                            if (!isSelectMode) toggleSelectMode();
-                        }, 600);
-                    });
-                    div.addEventListener('touchend', () => clearTimeout(pressTimer));
-
-                    listEl.appendChild(div);
-                });
-            }
-
-            // --- SELECTION LOGIC ---
-            function toggleSelectMode() {
-                isSelectMode = !isSelectMode;
-                document.body.classList.toggle('mode-select', isSelectMode);
-                
-                const selBtn = document.getElementById('btn-select');
-                selBtn.style.color = isSelectMode ? '#f0b90b' : '#888';
-                
-                document.getElementById('batch-bar').style.display = isSelectMode ? 'flex' : 'none';
-                document.getElementById('fab-main').style.display = isSelectMode ? 'none' : 'flex';
-                
-                selection.clear();
-                updateSelectionUI();
-                navigate(currentFolder); // Rerender to show checks
-            }
-
-            function toggleSelection(id, element) {
-                if (selection.has(id)) {
-                    selection.delete(id);
-                    element.classList.remove('row-selected');
-                } else {
-                    selection.add(id);
-                    element.classList.add('row-selected');
-                }
-                updateSelectionUI();
-            }
-
-            function updateSelectionUI() {
-                document.getElementById('selected-count').innerText = selection.size + ' выбрано';
-            }
-
-            async function deleteSelected() {
-                if (selection.size === 0) return;
-                if (!confirm(\`Удалить объекты (\${selection.size})?\`)) return;
-
-                await fetch('/storage/api/delete', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ ids: Array.from(selection) })
-                });
-
-                toggleSelectMode(); // Exit mode
-                reloadFolder();
-            }
-
-            // --- UPLOAD ---
-            async function uploadFiles(files) {
-                for (let file of files) {
-                    const formData = new FormData();
-                    formData.append('file', file);
-                    formData.append('folderId', currentFolder);
-                    await fetch('/storage/api/upload', { method: 'POST', body: formData });
-                }
-                reloadFolder();
-            }
-
-            // --- VIEWERS ---
-            function openQR(id) {
-                const modal = document.getElementById('qr-modal');
-                const target = document.getElementById('qr-target');
-                target.innerHTML = '';
-                const url = window.location.origin + '/storage/api/download/' + id;
-                new QRCode(target, { text: url, width: 200, height: 200 });
-                modal.style.display = 'flex';
-            }
-            function closeQR() { document.getElementById('qr-modal').style.display = 'none'; }
-
-            function openViewer(id, mime) {
-                const viewer = document.getElementById('media-viewer');
-                const body = document.getElementById('viewer-content');
-                const url = '/storage/api/proxy/' + id;
-
-                if (mime.includes('image')) {
-                    body.innerHTML = \`<img src="\${url}">\`;
-                    viewer.style.display = 'flex';
-                } else if (mime.includes('video')) {
-                    body.innerHTML = \`<video controls autoplay src="\${url}"></video>\`;
-                    viewer.style.display = 'flex';
-                } else {
-                    window.location.href = '/storage/api/download/' + id;
-                }
-            }
-            function closeViewer() { 
-                document.getElementById('media-viewer').style.display = 'none'; 
-                document.getElementById('viewer-content').innerHTML = '';
-            }
-
-            // --- UTILS ---
-            function getIconClass(mime, isDir) {
-                if (isDir) return 'fa-folder';
-                if (mime.includes('image')) return 'fa-file-image';
-                if (mime.includes('video')) return 'fa-file-video';
-                if (mime.includes('pdf')) return 'fa-file-pdf';
-                return 'fa-file';
-            }
-
-            function formatSize(bytes) {
-                if (!bytes) return '';
-                return (bytes / 1024 / 1024).toFixed(2) + ' MB';
-            }
-
-            // START
-            navigate('root');
         </script>
-        </body>
-        </html>
-        `
-    };
+    </body>
+    </html>`;
+
+    // ОСНОВНОЙ ИНТЕРФЕЙС
+    const UI_DASHBOARD = `
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+        
+        <link rel="manifest" href="/storage/manifest.json">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="theme-color" content="#000000">
+        
+        <title>Logist X</title>
+        
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+        <style>
+            :root { --gold: #f0b90b; --bg: #000; --safe-top: env(safe-area-inset-top); --safe-bot: env(safe-area-inset-bottom); }
+            body { background: var(--bg); color: #fff; font-family: 'Inter', sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+            
+            /* HEADER */
+            .header { padding: calc(15px + var(--safe-top)) 20px 15px; background: rgba(20,20,20,0.95); backdrop-filter: blur(20px); border-bottom: 1px solid #222; display: flex; justify-content: space-between; align-items: center; z-index: 50; }
+            .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 16px; }
+            .brand img { width: 32px; border-radius: 8px; }
+            .head-act { display: flex; gap: 20px; font-size: 18px; color: #888; }
+            
+            /* MAIN LIST */
+            .viewport { flex: 1; overflow-y: auto; padding-bottom: 120px; }
+            .nav-bar { padding: 15px 20px; display: flex; gap: 10px; overflow-x: auto; }
+            .pill { padding: 10px 18px; background: #1a1a1a; border-radius: 25px; font-size: 13px; white-space: nowrap; border: 1px solid #333; font-weight: 600; }
+            .pill.active { border-color: var(--gold); color: var(--gold); background: rgba(240,185,11,0.1); }
+            
+            /* FILES */
+            .f-row { display: flex; align-items: center; padding: 16px 20px; border-bottom: 1px solid #1a1a1a; gap: 15px; transition: 0.2s; }
+            .f-row:active { background: #111; }
+            
+            /* SMART ICONS (ЦВЕТА ФАЙЛОВ) */
+            .f-icon { width: 44px; height: 44px; border-radius: 12px; background: #151515; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #555; flex-shrink: 0; }
+            .is-dir .f-icon { color: var(--gold); background: rgba(240,185,11,0.1); }
+            .i-excel .f-icon { color: #2e7d32; background: rgba(46, 125, 50, 0.1); }
+            .i-word .f-icon { color: #1976d2; background: rgba(25, 118, 210, 0.1); }
+            .i-pdf .f-icon { color: #d32f2f; background: rgba(211, 47, 47, 0.1); }
+            .i-zip .f-icon { color: #fbc02d; background: rgba(251, 192, 45, 0.1); }
+            .i-code .f-icon { color: #9c27b0; background: rgba(156, 39, 176, 0.1); }
+
+            .f-info { flex: 1; min-width: 0; }
+            .f-name { font-weight: 600; font-size: 15px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .f-meta { font-size: 12px; color: #666; }
+
+            /* FAB & ACTIONS */
+            .fab { position: fixed; bottom: calc(30px + var(--safe-bot)); right: 30px; width: 60px; height: 60px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; color: #000; box-shadow: 0 10px 30px rgba(240,185,11,0.3); z-index: 100; }
+            .check { width: 24px; height: 24px; border: 2px solid #444; border-radius: 50%; display: none; align-items: center; justify-content: center; }
+            .mode-sel .check { display: flex; }
+            .sel .check { background: var(--gold); border-color: var(--gold); }
+            .sel .check::after { content: '✓'; color: #000; font-weight: 900; }
+            
+            .batch { position: fixed; bottom: 30px; left: 20px; right: 20px; background: #222; border-radius: 18px; padding: 15px 25px; display: none; justify-content: space-between; align-items: center; border: 1px solid #333; z-index: 200; }
+
+            /* MODALS */
+            .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 2000; display: none; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
+            .modal-box { background: #1a1a1a; width: 85%; max-width: 350px; padding: 30px; border-radius: 25px; text-align: center; border: 1px solid #333; }
+
+            /* VIEWER */
+            #viewer { position: fixed; inset: 0; background: #000; z-index: 3000; display: none; flex-direction: column; }
+            .v-close { position: absolute; top: 30px; right: 20px; font-size: 32px; padding: 20px; z-index: 10; cursor: pointer; background: rgba(0,0,0,0.5); border-radius: 50%; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; }
+            .v-body { flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+            .v-body img, .v-body video { max-width: 100%; max-height: 100%; object-fit: contain; }
+            .v-body iframe { width: 100%; height: 100%; border: none; background: #fff; }
+        </style>
+    </head>
+    <body>
+
+    <div class="header">
+        <div class="brand"><img src="${CONFIG.LOGO}"> TITANIUM</div>
+        <div class="head-act">
+            <i class="fa fa-sync-alt" onclick="refresh()"></i>
+            <i class="fa fa-check-double" id="btn-sel" onclick="toggleMode()"></i>
+        </div>
+    </div>
+
+    <div class="viewport">
+        <div class="nav-bar">
+            <div class="pill" id="b-up" onclick="goUp()" style="display:none"><i class="fa fa-arrow-left"></i></div>
+            <div class="pill active" onclick="nav('root')">Главная</div>
+            <div class="pill" onclick="nav('${MY_ROOT_ID}')">Логистика</div>
+            <div class="pill" onclick="nav('${MERCH_ROOT_ID}')">Мерч</div>
+        </div>
+        <div id="list"></div>
+    </div>
+
+    <div class="batch" id="batch">
+        <span style="font-weight:700" id="sel-cnt">0</span>
+        <i class="fa fa-trash" style="color:#e53935; font-size:22px" onclick="delSel()"></i>
+    </div>
+
+    <div class="fab" id="fab" onclick="document.getElementById('upl').click()"><i class="fa fa-plus"></i></div>
+    <input type="file" id="upl" style="display:none" multiple onchange="upload(this.files)">
+
+    <div class="modal" id="qr" onclick="this.style.display='none'">
+        <div class="modal-box" onclick="event.stopPropagation()">
+            <h3 style="margin-top:0">QR SHARE</h3>
+            <div style="background:#fff; padding:15px; border-radius:15px; display:inline-block; margin:15px 0"><div id="qr-c"></div></div>
+            <div style="color:#777; font-size:12px">Наведите камеру</div>
+        </div>
+    </div>
+
+    <div id="viewer">
+        <div class="v-close" onclick="closeView()"><i class="fa fa-times"></i></div>
+        <div class="v-body" id="v-con"></div>
+    </div>
+
+    <script>
+        let cid='root', pid=null, sel=new Set(), isMode=false;
+
+        // Навигация
+        async function nav(id) {
+            cid=id; sel.clear(); updSel();
+            document.getElementById('list').innerHTML='<div style="text-align:center;padding:50px"><i class="fa fa-circle-notch fa-spin"></i></div>';
+            try {
+                const r=await fetch('/storage/api/list?folderId='+id);
+                if(r.status===401) location.reload();
+                const d=await r.json();
+                pid=d.parentId;
+                render(d.files);
+                document.getElementById('b-up').style.display=(id==='root')?'none':'block';
+            } catch(e){ document.getElementById('list').innerHTML='Ошибка'; }
+        }
+
+        function goUp() { pid ? nav(pid) : nav('root'); }
+        function refresh() { nav(cid); }
+
+        // Отрисовка списка
+        function render(files) {
+            const l=document.getElementById('list'); l.innerHTML='';
+            if(!files.length) l.innerHTML='<div style="text-align:center;padding:50px;color:#555">Пусто</div>';
+            
+            files.forEach(f => {
+                const isD = f.mimeType.includes('folder');
+                const iconInfo = getIcon(f.mimeType, isD);
+                
+                const el=document.createElement('div');
+                el.className='f-row '+ (isD?'is-dir':'') + ' ' + iconInfo.cls;
+                el.innerHTML=\`
+                    <div class="check"></div>
+                    <div class="f-icon"><i class="fa \${iconInfo.ico}"></i></div>
+                    <div class="f-info">
+                        <div class="f-name">\${f.name}</div>
+                        <div class="f-meta">\${(f.size/1024/1024||0).toFixed(2)} MB</div>
+                    </div>
+                    <div style="color:#666; font-size:18px; \${isMode?'display:none':''}" onclick="event.stopPropagation()">
+                        \${!isD ? \`<i class="fa fa-qrcode" onclick="showQR('\${f.id}')"></i>\` : ''}
+                    </div>
+                \`;
+                
+                el.onclick=()=>{
+                    if(isMode) {
+                        if(sel.has(f.id)){ sel.delete(f.id); el.classList.remove('sel'); }
+                        else { sel.add(f.id); el.classList.add('sel'); }
+                        updSel();
+                    } else {
+                        isD ? nav(f.id) : openView(f.id, f.mimeType);
+                    }
+                };
+
+                let t;
+                el.addEventListener('touchstart', ()=>t=setTimeout(()=>{if(!isMode)toggleMode()},600));
+                el.addEventListener('touchend', ()=>clearTimeout(t));
+                l.appendChild(el);
+            });
+        }
+
+        // Определение иконки и цвета
+        function getIcon(m, isD) {
+            if(isD) return {ico:'fa-folder', cls:''};
+            if(m.includes('excel') || m.includes('spreadsheet') || m.includes('csv')) return {ico:'fa-file-excel', cls:'i-excel'};
+            if(m.includes('word') || m.includes('document')) return {ico:'fa-file-word', cls:'i-word'};
+            if(m.includes('pdf')) return {ico:'fa-file-pdf', cls:'i-pdf'};
+            if(m.includes('image')) return {ico:'fa-file-image', cls:''};
+            if(m.includes('video')) return {ico:'fa-file-video', cls:''};
+            if(m.includes('zip') || m.includes('compressed')) return {ico:'fa-file-zipper', cls:'i-zip'};
+            if(m.includes('json') || m.includes('javascript') || m.includes('html')) return {ico:'fa-file-code', cls:'i-code'};
+            return {ico:'fa-file', cls:''};
+        }
+
+        // Режим выбора
+        function toggleMode() {
+            isMode=!isMode;
+            document.body.classList.toggle('mode-sel', isMode);
+            document.getElementById('btn-sel').style.color=isMode?'#f0b90b':'#888';
+            document.getElementById('batch').style.display=isMode?'flex':'none';
+            document.getElementById('fab').style.display=isMode?'none':'flex';
+            sel.clear(); updSel(); nav(cid);
+        }
+        function updSel() { document.getElementById('sel-cnt').innerText=sel.size+' выбрано'; }
+
+        async function delSel() {
+            if(!confirm('Удалить?')) return;
+            await fetch('/storage/api/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:Array.from(sel)})});
+            toggleMode();
+        }
+
+        async function upload(files) {
+            for(let f of files){
+                const d=new FormData(); d.append('file',f); d.append('folderId',cid);
+                await fetch('/storage/api/upload',{method:'POST',body:d});
+            }
+            nav(cid);
+        }
+
+        function showQR(id) {
+            document.getElementById('qr').style.display='flex';
+            document.getElementById('qr-c').innerHTML='';
+            new QRCode(document.getElementById('qr-c'), {text:location.origin+'/storage/api/download/'+id, width:200, height:200});
+        }
+
+        // Omni-Viewer (Встроенный просмотр)
+        function openView(id, m) {
+            const v=document.getElementById('viewer');
+            const b=document.getElementById('v-con');
+            v.style.display='flex';
+            const u='/storage/api/proxy/'+id;
+
+            if(m.includes('image')) b.innerHTML=\`<img src="\${u}">\`;
+            else if(m.includes('video')) b.innerHTML=\`<video controls autoplay src="\${u}"></video>\`;
+            else {
+                // Магия Google Preview для офисных файлов
+                b.innerHTML = \`<iframe src="https://drive.google.com/file/d/\${id}/preview"></iframe>\`;
+            }
+        }
+        function closeView() { document.getElementById('viewer').style.display='none'; document.getElementById('v-con').innerHTML=''; }
+
+        nav('root');
+    </script>
+    </body>
+    </html>`;
 };
