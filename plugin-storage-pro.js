@@ -1,16 +1,16 @@
 /**
  * =========================================================================================
- * TITANIUM X-PLATFORM v148.0 | THE APP EDITION (PWA + SECURITY)
+ * TITANIUM X-PLATFORM v149.0 | ULTRA-MODERN (QR + MULTI-SELECT)
  * -----------------------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
  * БАЗА: Глубокая интеграция с server.js (Logist X & Merch X)
  * -----------------------------------------------------------------------------------------
- * НОВОВВЕДЕНИЯ v148.0:
- * 1. [MOBILE APP]: Полная поддержка PWA (установка на iPhone/Android как приложение).
- * 2. [SECURITY GATE]: Вход по паролю с сохранением сессии (Cookie).
- * 3. [APP ICON]: Автоматическая генерация иконки для рабочего стола телефона.
- * 4. [FULL SCREEN]: Режим работы без адресной строки браузера.
+ * НОВЫЕ ФУНКЦИИ v149.0:
+ * 1. [QR TELEPORT]: Мгновенная генерация QR-кода для шеринга файла.
+ * 2. [MULTI-SELECT]: Массовое выделение и удаление файлов.
+ * 3. [SMART RECENTS]: Лента последних использованных файлов.
+ * 4. [GLASS UI]: Интерфейс в стиле матового стекла (Glassmorphism).
  * =========================================================================================
  */
 
@@ -20,8 +20,8 @@ const fs = require('fs');
 const path = require('path');
 
 // --- НАСТРОЙКИ БЕЗОПАСНОСТИ ---
-const ACCESS_PASSWORD = "admin"; // <--- ПОМЕНЯЙ ПАРОЛЬ ЗДЕСЬ
-const SESSION_NAME = "titanium_session_v1";
+const ACCESS_PASSWORD = "admin"; // <--- ПАРОЛЬ АДМИНИСТРАТОРА
+const SESSION_NAME = "titanium_session_v149";
 
 // --- ГЛОБАЛЬНЫЕ КОНСТАНТЫ ---
 const LOGO_URL = "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png";
@@ -44,16 +44,9 @@ module.exports = function(app, context) {
     const { drive, MY_ROOT_ID, MERCH_ROOT_ID, readDatabase } = context;
     const upload = multer({ dest: 'uploads/', limits: { fileSize: 500 * 1024 * 1024 } });
 
-    // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-    function logNeural(msg) { fs.appendFileSync(SYSTEM_LOGS, `[${new Date().toISOString()}] ${msg}\n`); }
+    // --- НЕЙРОННОЕ ЯДРО ---
     function persistCache() { fs.writeFile(NEURAL_INDEX_PATH, JSON.stringify(NEURAL_CACHE, null, 2), () => {}); }
-
-    // Простая проверка Cookie (без сторонних библиотек)
-    function checkAuth(req) {
-        const cookie = req.headers.cookie;
-        if (!cookie) return false;
-        return cookie.includes(`${SESSION_NAME}=granted`);
-    }
+    function checkAuth(req) { const c = req.headers.cookie; return c && c.includes(`${SESSION_NAME}=granted`); }
 
     async function resolveDeepPath(folderId) {
         let chain = [];
@@ -88,62 +81,41 @@ module.exports = function(app, context) {
                     let folderChain = await resolveDeepPath(parentId);
                     const isMerch = (parentId === MERCH_ROOT_ID || folderChain.some(n => n && n.toLowerCase().includes('мерч')));
                     const projectNode = isMerch ? 'MERCH_CORE' : 'LOGIST_CORE';
-
                     const localDirPath = path.join(STORAGE_ROOT, projectNode, ...folderChain);
                     const localFilePath = path.join(localDirPath, name || `asset_${id}`);
 
                     if (!fs.existsSync(localDirPath)) fs.mkdirSync(localDirPath, { recursive: true });
-
-                    if (buffer) {
-                        fs.writeFileSync(localFilePath, buffer);
-                        NEURAL_CACHE.stats.files++;
-                    }
+                    if (buffer) { fs.writeFileSync(localFilePath, buffer); NEURAL_CACHE.stats.files++; }
 
                     NEURAL_CACHE.map[id] = { 
                         localPath: fs.existsSync(localFilePath) ? localFilePath : null, 
-                        name, mimeType, parentId,
-                        isLocal: fs.existsSync(localFilePath),
-                        ts: Date.now()
+                        name, mimeType, parentId, isLocal: fs.existsSync(localFilePath), ts: Date.now()
                     };
                 }
                 NEURAL_CACHE.stats.syncs++;
                 persistCache();
-            } catch (e) { logNeural(`Error: ${e.message}`); }
+            } catch (e) {}
         });
     }
 
     // --- API ROUTES ---
-
-    // 1. ВХОД (LOGIN)
     app.post('/storage/auth', express.json(), (req, res) => {
-        const { password } = req.body;
-        if (password === ACCESS_PASSWORD) {
-            // Установка Cookie на 7 дней
+        if (req.body.password === ACCESS_PASSWORD) {
             res.setHeader('Set-Cookie', `${SESSION_NAME}=granted; Max-Age=604800; Path=/; HttpOnly`);
             res.json({ success: true });
-        } else {
-            res.json({ success: false });
-        }
+        } else res.json({ success: false });
     });
 
-    // 2. ГЕНЕРАЦИЯ MANIFEST.JSON (ДЛЯ УСТАНОВКИ НА ТЕЛЕФОН)
-    app.get('/storage/manifest.json', (req, res) => {
-        res.json({
-            "name": "Logist X Cloud",
-            "short_name": "Logist X",
-            "start_url": "/storage",
-            "display": "standalone",
-            "background_color": "#000000",
-            "theme_color": "#000000",
-            "icons": [{ "src": LOGO_URL, "sizes": "512x512", "type": "image/png" }]
-        });
-    });
+    const apiCheck = (req, res, next) => { checkAuth(req) ? next() : res.status(401).json({ error: "Auth Required" }); };
 
-    // 3. ОСНОВНЫЕ МЕТОДЫ API (С ЗАЩИТОЙ)
-    const apiCheck = (req, res, next) => {
-        if (checkAuth(req)) next();
-        else res.status(401).json({ error: "Unauthorized" });
-    };
+    app.get('/storage/api/recents', apiCheck, (req, res) => {
+        // Возвращает последние 5 файлов (не папок)
+        const all = Object.values(NEURAL_CACHE.map)
+            .filter(f => !f.mimeType.includes('folder'))
+            .sort((a, b) => b.ts - a.ts)
+            .slice(0, 10);
+        res.json(all);
+    });
 
     app.get('/storage/api/list', apiCheck, async (req, res) => {
         try {
@@ -155,17 +127,14 @@ module.exports = function(app, context) {
                     if (m.data.parents) parentId = m.data.parents[0];
                 } catch(e) {}
             }
-            const r = await drive.files.list({ 
-                q: `'${folderId}' in parents and trashed = false`, 
-                fields: 'files(id, name, mimeType, size)', orderBy: 'folder, name' 
-            });
+            const r = await drive.files.list({ q: `'${folderId}' in parents and trashed = false`, fields: 'files(id, name, mimeType, size)', orderBy: 'folder, name' });
             const files = r.data.files.map(f => ({ ...f, isLocal: !!(NEURAL_CACHE.map[f.id] && NEURAL_CACHE.map[f.id].isLocal) }));
             r.data.files.forEach(f => titaniumNeuralProcess({...f, parentId: folderId}));
             res.json({ files, parentId });
         } catch (e) { res.status(500).json({error: e.message}); }
     });
 
-    app.get('/storage/api/download/:id', apiCheck, async (req, res) => {
+    app.get('/storage/api/download/:id', async (req, res) => { // Public download for QR
         try {
             const meta = await drive.files.get({ fileId: req.params.id, fields: 'name, mimeType' });
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(meta.data.name)}"`);
@@ -185,10 +154,7 @@ module.exports = function(app, context) {
 
     app.post('/storage/api/upload', upload.single('file'), apiCheck, async (req, res) => {
         try {
-            const r = await drive.files.create({ 
-                resource: { name: req.file.originalname, parents: [req.body.folderId] },
-                media: { mimeType: req.file.mimetype, body: fs.createReadStream(req.file.path) }, fields: 'id, name, mimeType'
-            });
+            const r = await drive.files.create({ resource: { name: req.file.originalname, parents: [req.body.folderId] }, media: { mimeType: req.file.mimetype, body: fs.createReadStream(req.file.path) }, fields: 'id, name, mimeType' });
             await titaniumNeuralProcess({ ...r.data, parentId: req.body.folderId }, 'sync', fs.readFileSync(req.file.path));
             if(fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
             res.sendStatus(200);
@@ -197,8 +163,11 @@ module.exports = function(app, context) {
 
     app.post('/storage/api/delete', express.json(), apiCheck, async (req, res) => {
         try {
-            await drive.files.delete({ fileId: req.body.id });
-            await titaniumNeuralProcess({ id: req.body.id }, 'delete');
+            const ids = req.body.ids || [req.body.id];
+            for (let id of ids) {
+                await drive.files.delete({ fileId: id });
+                await titaniumNeuralProcess({ id }, 'delete');
+            }
             res.sendStatus(200);
         } catch (e) { res.status(500).send(e.message); }
     });
@@ -211,263 +180,271 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    // --- HTML UI RENDERER ---
-    app.get('/storage', (req, res) => {
-        // Если нет Cookie авторизации - отдаем страницу входа
-        if (!checkAuth(req)) {
-            return res.send(LOGIN_PAGE);
-        }
-        // Если авторизован - отдаем приложение
-        res.send(APP_UI);
+    app.get('/storage/manifest.json', (req, res) => {
+        res.json({ "name": "Logist X", "short_name": "Logist X", "start_url": "/storage", "display": "standalone", "background_color": "#000000", "theme_color": "#000000", "icons": [{ "src": LOGO_URL, "sizes": "512x512", "type": "image/png" }] });
     });
 
-    // --- СТРАНИЦА ВХОДА (LOGIN HTML) ---
-    const LOGIN_PAGE = `
-    <!DOCTYPE html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-        <title>LOGIN | TITANIUM</title>
-        <style>
-            body { background: #000; color: #fff; font-family: sans-serif; height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; }
-            .card { background: #111; padding: 40px; border-radius: 20px; border: 1px solid #333; text-align: center; width: 300px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
-            img { width: 60px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 0 20px rgba(240,185,11,0.2); }
-            input { width: 100%; padding: 15px; margin: 15px 0; background: #222; border: 1px solid #444; color: #fff; border-radius: 10px; font-size: 16px; outline: none; text-align: center; box-sizing: border-box; }
-            input:focus { border-color: #f0b90b; }
-            button { width: 100%; padding: 15px; background: #f0b90b; border: none; border-radius: 10px; font-weight: bold; font-size: 16px; cursor: pointer; color: #000; }
-            .err { color: red; font-size: 12px; margin-top: 10px; display: none; }
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <img src="${LOGO_URL}">
-            <h2 style="margin:0 0 20px 0; font-size: 18px; letter-spacing: 2px;">LOGIST X SECURITY</h2>
-            <input type="password" id="pass" placeholder="Введите код доступа">
-            <button onclick="login()">ВОЙТИ</button>
-            <div class="err" id="err">Неверный пароль</div>
-        </div>
-        <script>
-            async function login() {
-                const p = document.getElementById('pass').value;
-                const r = await fetch('/storage/auth', { 
-                    method: 'POST', 
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ password: p })
-                });
-                const d = await r.json();
-                if(d.success) location.reload();
-                else document.getElementById('err').style.display = 'block';
-            }
-        </script>
-    </body>
-    </html>
-    `;
+    app.get('/storage', (req, res) => { checkAuth(req) ? res.send(APP_UI) : res.send(LOGIN_PAGE); });
 
-    // --- СТРАНИЦА ПРИЛОЖЕНИЯ (MAIN APP) ---
+    // --- FRONTEND ---
+    const LOGIN_PAGE = `
+    <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>LOGIN</title>
+    <style>body{background:#000;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif}.box{text-align:center;width:300px}
+    input{width:100%;padding:15px;margin:10px 0;border-radius:10px;border:none;text-align:center;font-size:18px}button{width:100%;padding:15px;background:#f0b90b;border:none;border-radius:10px;font-weight:bold;cursor:pointer}</style>
+    </head><body><div class="box"><img src="${LOGO_URL}" width="80" style="border-radius:15px;margin-bottom:20px"><h3>TITANIUM v149</h3>
+    <input type="password" id="p" placeholder="Код доступа"><button onclick="auth()">ВОЙТИ</button></div>
+    <script>async function auth(){const r=await fetch('/storage/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:document.getElementById('p').value})});const d=await r.json();if(d.success)location.reload();else alert('Ошибка');}</script></body></html>`;
+
     const APP_UI = `
     <!DOCTYPE html>
     <html lang="ru">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-        
         <link rel="manifest" href="/storage/manifest.json">
         <meta name="apple-mobile-web-app-capable" content="yes">
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
         <meta name="theme-color" content="#000000">
         <link rel="apple-touch-icon" href="${LOGO_URL}">
-
-        <title>Logist X</title>
+        <title>Titanium v149</title>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-        
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
         <style>
-            :root { --gold: #f0b90b; --bg: #000; --panel: #121212; --safe-top: env(safe-area-inset-top); --safe-bottom: env(safe-area-inset-bottom); }
+            :root { --gold: #f0b90b; --bg: #000; --blur-bg: rgba(20,20,20,0.7); --safe-top: env(safe-area-inset-top); --safe-bot: env(safe-area-inset-bottom); }
             body { background: var(--bg); color: #fff; font-family: 'Inter', sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
             
-            /* HEADER */
-            .app-header { padding: calc(15px + var(--safe-top)) 20px 15px; background: rgba(18,18,18,0.95); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #222; z-index: 100; }
-            .h-title { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; }
-            .h-title img { width: 30px; border-radius: 6px; }
+            /* GLASS HEADER */
+            .glass-header { padding: calc(10px + var(--safe-top)) 20px 10px; background: var(--blur-bg); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: space-between; z-index: 50; }
+            .logo-area { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 16px; }
+            .logo-area img { width: 28px; border-radius: 6px; box-shadow: 0 0 10px var(--gold); }
             
-            /* TOOLBAR */
-            .toolbar { display: flex; gap: 10px; padding: 10px 15px; background: #080808; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-            .chip { background: #222; padding: 8px 15px; border-radius: 20px; font-size: 13px; white-space: nowrap; cursor: pointer; color: #aaa; border: 1px solid transparent; }
-            .chip:active { background: #333; }
-            .chip.active { background: rgba(240,185,11,0.15); color: var(--gold); border-color: var(--gold); }
+            /* RECENTS BAR */
+            .recents-box { padding: 15px 0 15px 20px; overflow-x: auto; display: flex; gap: 12px; background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%); }
+            .r-card { min-width: 100px; height: 80px; background: rgba(255,255,255,0.05); border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 10px; gap: 5px; font-size: 10px; text-align: center; border: 1px solid rgba(255,255,255,0.05); }
+            .r-card i { font-size: 24px; color: var(--gold); }
+            .r-name { width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-            /* LIST */
-            .list-container { flex: 1; overflow-y: auto; padding-bottom: calc(80px + var(--safe-bottom)); }
-            .item { display: flex; align-items: center; padding: 15px 20px; border-bottom: 1px solid #1a1a1a; gap: 15px; active: background: #111; }
-            .item:active { background: #111; }
-            .i-icon { width: 42px; height: 42px; background: #1a1a1a; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 18px; color: #666; flex-shrink: 0; }
-            .is-dir .i-icon { background: rgba(240,185,11,0.1); color: var(--gold); }
-            .i-body { flex: 1; min-width: 0; }
-            .i-name { font-weight: 600; font-size: 15px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #eee; }
-            .i-meta { font-size: 12px; color: #555; }
-            .i-act { color: #444; padding: 10px; font-size: 16px; }
-
-            /* FAB */
-            .fab { position: fixed; bottom: calc(20px + var(--safe-bottom)); right: 20px; width: 60px; height: 60px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #000; box-shadow: 0 10px 30px rgba(240,185,11,0.3); z-index: 200; }
+            /* MAIN LIST */
+            .main-area { flex: 1; overflow-y: auto; padding-bottom: 100px; }
+            .toolbar { padding: 10px 20px; display: flex; gap: 10px; overflow-x: auto; }
+            .pill { padding: 8px 16px; background: rgba(255,255,255,0.1); border-radius: 20px; font-size: 13px; white-space: nowrap; transition: 0.2s; border: 1px solid transparent; }
+            .pill.active { background: rgba(240,185,11,0.2); color: var(--gold); border-color: var(--gold); }
             
-            /* MODAL */
-            .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 1000; display: none; align-items: flex-end; }
-            .modal-sheet { background: #1a1a1a; width: 100%; border-radius: 20px 20px 0 0; padding: 25px 20px calc(20px + var(--safe-bottom)); animation: slideUp 0.3s; }
-            @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-            .sheet-btn { display: flex; align-items: center; gap: 15px; padding: 15px; color: #fff; font-size: 16px; font-weight: 600; border-bottom: 1px solid #2a2a2a; }
-            .sheet-btn:last-child { border: none; color: #e53935; }
-            .sheet-btn i { width: 25px; text-align: center; }
+            .list-item { display: flex; align-items: center; padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,0.05); transition: 0.2s; gap: 15px; position: relative; }
+            .list-item:active { background: rgba(255,255,255,0.05); }
+            .icon-box { width: 40px; height: 40px; border-radius: 10px; background: rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: center; font-size: 18px; color: #aaa; flex-shrink: 0; }
+            .is-folder .icon-box { color: var(--gold); background: rgba(240,185,11,0.1); }
+            .f-info { flex: 1; min-width: 0; }
+            .f-name { font-weight: 600; font-size: 14px; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .f-meta { font-size: 11px; color: #666; }
+            
+            /* MULTI SELECT UI */
+            .select-check { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #555; display: flex; align-items: center; justify-content: center; margin-right: 5px; transition: 0.2s; }
+            .selected .select-check { background: var(--gold); border-color: var(--gold); }
+            .selected .select-check::after { content: '✓'; color: #000; font-weight: 900; font-size: 12px; }
+            
+            .batch-bar { position: fixed; bottom: 20px; left: 20px; right: 20px; background: #222; border-radius: 15px; padding: 15px 25px; display: flex; justify-content: space-between; align-items: center; z-index: 200; box-shadow: 0 10px 40px rgba(0,0,0,0.5); border: 1px solid #333; animation: slideUp 0.3s; }
 
-            /* VIEWER */
-            #viewer { position: fixed; inset: 0; background: #000; z-index: 5000; display: none; flex-direction: column; }
-            .v-bar { padding: calc(10px + var(--safe-top)) 20px 10px; display: flex; justify-content: space-between; color: #fff; background: rgba(0,0,0,0.5); position: absolute; top: 0; width: 100%; }
-            .v-content { flex: 1; display: flex; align-items: center; justify-content: center; height: 100%; }
-            .v-content img, .v-content video { max-width: 100%; max-height: 100%; object-fit: contain; }
-            .v-content iframe { width: 100%; height: 100%; border: none; background: #fff; }
+            /* FAB & MODALS */
+            .fab { position: fixed; bottom: calc(30px + var(--safe-bot)); right: 30px; width: 55px; height: 55px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #000; box-shadow: 0 0 30px rgba(240,185,11,0.4); z-index: 90; }
+            
+            .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 1000; display: none; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
+            .modal-card { background: #1a1a1a; width: 85%; max-width: 320px; border-radius: 20px; padding: 25px; text-align: center; border: 1px solid #333; position: relative; }
+            .qr-box { background: #fff; padding: 15px; border-radius: 10px; display: inline-block; margin: 15px 0; }
+            
+            #viewer { position: fixed; inset: 0; background: #000; z-index: 2000; display: none; flex-direction: column; }
+            .v-bar { padding: 20px; display: flex; justify-content: flex-end; position: absolute; width: 100%; z-index: 10; }
+            .v-content { flex: 1; display: flex; align-items: center; justify-content: center; }
+            .v-content img, .v-content video { max-width: 100%; max-height: 100%; }
 
         </style>
     </head>
     <body>
 
-    <div class="app-header">
-        <div class="h-title"><img src="${LOGO_URL}"> Logist X</div>
-        <div onclick="location.reload()" style="font-size:12px; color:#444;">v148.0</div>
+    <div class="glass-header">
+        <div class="logo-area"><img src="${LOGO_URL}"> TITANIUM</div>
+        <div style="font-size: 20px; cursor: pointer;" onclick="toggleSelectMode()"><i class="fa fa-check-double" id="sel-icon" style="color:#555"></i></div>
     </div>
 
-    <div class="toolbar">
-        <div class="chip" id="btn-back" onclick="goUp()"><i class="fa fa-arrow-left"></i> Назад</div>
-        <div class="chip active" onclick="nav('root')">Главная</div>
-        <div class="chip" onclick="nav('${MY_ROOT_ID}')">Логистика</div>
-        <div class="chip" onclick="nav('${MERCH_ROOT_ID}')">Мерч</div>
-    </div>
-
-    <div class="list-container" id="list"></div>
-
-    <div class="fab" onclick="showCreateMenu()"><i class="fa fa-plus"></i></div>
-
-    <div class="modal-overlay" id="sheet" onclick="this.style.display='none'">
-        <div class="modal-sheet" onclick="event.stopPropagation()">
-            <div style="text-align:center; color:#555; margin-bottom:10px; width:40px; height:4px; background:#333; border-radius:2px; margin: 0 auto 20px;"></div>
-            <div class="sheet-btn" onclick="document.getElementById('f-up').click()"><i class="fa fa-image"></i> Загрузить фото/видео</div>
-            <div class="sheet-btn" onclick="askFolder()"><i class="fa fa-folder-plus"></i> Создать папку</div>
-            <div class="sheet-btn" onclick="closeSheet()">Отмена</div>
+    <div class="main-area">
+        <div id="recents-wrap" style="display:none">
+            <div style="font-size:10px; font-weight:800; color:#444; padding:10px 20px 0; letter-spacing:1px;">НЕДАВНИЕ</div>
+            <div class="recents-box" id="recents"></div>
         </div>
-    </div>
-    <input type="file" id="f-up" style="display:none" multiple onchange="doUpload(this.files)">
 
-    <div class="modal-overlay" id="file-opts" onclick="this.style.display='none'">
-        <div class="modal-sheet" onclick="event.stopPropagation()">
-            <div class="sheet-btn" onclick="downloadFile()"><i class="fa fa-download"></i> Скачать файл</div>
-            <div class="sheet-btn" onclick="deleteFile()"><i class="fa fa-trash"></i> Удалить</div>
+        <div class="toolbar">
+            <div class="pill" id="btn-back" onclick="goUp()"><i class="fa fa-arrow-left"></i></div>
+            <div class="pill active" onclick="nav('root')">Главная</div>
+            <div class="pill" onclick="nav('${MY_ROOT_ID}')">Логистика</div>
+            <div class="pill" onclick="nav('${MERCH_ROOT_ID}')">Мерч</div>
+        </div>
+
+        <div style="font-size:10px; font-weight:800; color:#444; padding:10px 20px 5px; letter-spacing:1px;">ФАЙЛЫ</div>
+        <div id="file-list"></div>
+    </div>
+
+    <div class="batch-bar" id="batch-bar" style="display:none">
+        <div style="font-weight:700" id="sel-count">0 выбрано</div>
+        <div style="color:#e53935; font-size:24px; cursor:pointer;" onclick="deleteBatch()"><i class="fa fa-trash"></i></div>
+    </div>
+
+    <div class="fab" id="main-fab" onclick="document.getElementById('upl').click()"><i class="fa fa-plus"></i></div>
+    <input type="file" id="upl" style="display:none" multiple onchange="uploadFiles(this.files)">
+
+    <div class="modal-bg" id="qr-modal" onclick="this.style.display='none'">
+        <div class="modal-card" onclick="event.stopPropagation()">
+            <h3 style="margin:0">QR TELEPORT</h3>
+            <div class="qr-box" id="qr-target"></div>
+            <div style="font-size:12px; color:#777; margin-bottom:15px;">Наведите камеру для скачивания</div>
+            <button onclick="document.getElementById('qr-modal').style.display='none'" style="background:var(--gold); border:none; padding:10px 30px; border-radius:20px; font-weight:bold;">ЗАКРЫТЬ</button>
         </div>
     </div>
 
     <div id="viewer">
-        <div class="v-bar"><i class="fa fa-times" style="font-size:24px" onclick="document.getElementById('viewer').style.display='none'"></i></div>
+        <div class="v-bar"><i class="fa fa-times-circle" style="font-size:35px; color:#fff;" onclick="closeView()"></i></div>
         <div class="v-content" id="v-cont"></div>
     </div>
 
     <script>
-        let curId = 'root';
-        let parentId = null;
-        let selFile = null;
+        let curId = 'root', parentId = null;
+        let isSelMode = false, selection = new Set();
+
+        async function init() {
+            loadRecents();
+            nav('root');
+        }
+
+        async function loadRecents() {
+            try {
+                const r = await fetch('/storage/api/recents');
+                const d = await r.json();
+                const c = document.getElementById('recents');
+                if(d.length > 0) {
+                    document.getElementById('recents-wrap').style.display = 'block';
+                    c.innerHTML = d.map(f => \`
+                        <div class="r-card" onclick="view('\${f.id}','\${f.mimeType}')">
+                            <i class="fa \${getFileIcon(f.mimeType)}"></i>
+                            <div class="r-name">\${f.name}</div>
+                        </div>
+                    \`).join('');
+                }
+            } catch(e){}
+        }
 
         async function nav(id) {
-            curId = id;
-            document.getElementById('list').innerHTML = '<div style="padding:40px; text-align:center; color:#444;"><i class="fa fa-circle-notch fa-spin"></i></div>';
+            curId = id; selection.clear(); updateBatchUI();
+            document.getElementById('file-list').innerHTML = '<div style="padding:40px; text-align:center"><i class="fa fa-circle-notch fa-spin"></i></div>';
             
             try {
                 const r = await fetch('/storage/api/list?folderId=' + id);
-                if(r.status === 401) location.reload(); // Если сессия истекла
+                if(r.status===401) location.reload();
                 const d = await r.json();
                 parentId = d.parentId;
                 render(d.files);
-                
-                const backBtn = document.getElementById('btn-back');
-                if(id === 'root') backBtn.style.display = 'none';
-                else backBtn.style.display = 'block';
-
-            } catch(e) { console.error(e); }
+                document.getElementById('btn-back').style.display = (id==='root') ? 'none' : 'block';
+            } catch(e) {}
         }
 
         function goUp() { if(parentId) nav(parentId); else nav('root'); }
 
         function render(files) {
-            const c = document.getElementById('list');
+            const c = document.getElementById('file-list');
             c.innerHTML = '';
-            if(!files.length) c.innerHTML = '<div style="padding:50px; text-align:center; color:#333;">Пусто</div>';
-
             files.forEach(f => {
                 const isDir = f.mimeType.includes('folder');
                 const div = document.createElement('div');
-                div.className = \`item \${isDir?'is-dir':''}\`;
+                div.className = \`list-item \${isDir?'is-folder':''}\`;
                 div.innerHTML = \`
-                    <div class="i-icon"><i class="fa \${isDir?'fa-folder':'fa-file'}"></i></div>
-                    <div class="i-body">
-                        <div class="i-name">\${f.name}</div>
-                        <div class="i-meta">\${(f.size/1024/1024||0).toFixed(2)} MB</div>
+                    <div class="select-check" style="display:\${isSelMode?'flex':'none'}"></div>
+                    <div class="icon-box"><i class="fa \${isDir?'fa-folder':getFileIcon(f.mimeType)}"></i></div>
+                    <div class="f-info">
+                        <div class="f-name">\${f.name}</div>
+                        <div class="f-meta">\${(f.size/1024/1024||0).toFixed(2)} MB</div>
                     </div>
-                    <div class="i-act" onclick="event.stopPropagation(); showFileOpts('\${f.id}', '\${f.name}')">
-                        <i class="fa fa-ellipsis-v"></i>
+                    <div style="display:\${isSelMode?'none':'flex'}; gap:15px; color:#666; font-size:16px;">
+                        \${!isDir ? \`<i class="fa fa-qrcode" onclick="event.stopPropagation(); showQR('\${f.id}')"></i>\` : ''}
+                        <i class="fa fa-trash" onclick="event.stopPropagation(); delOne('\${f.id}')"></i>
                     </div>
                 \`;
-                div.onclick = () => isDir ? nav(f.id) : openView(f);
+                
+                // Long press
+                let timer;
+                div.addEventListener('touchstart', () => timer = setTimeout(() => { if(!isSelMode) toggleSelectMode(); }, 800));
+                div.addEventListener('touchend', () => clearTimeout(timer));
+
+                div.onclick = () => {
+                    if(isSelMode) {
+                        if(selection.has(f.id)) { selection.delete(f.id); div.classList.remove('selected'); }
+                        else { selection.add(f.id); div.classList.add('selected'); }
+                        updateBatchUI();
+                    } else {
+                        isDir ? nav(f.id) : view(f.id, f.mimeType);
+                    }
+                };
                 c.appendChild(div);
             });
         }
 
-        function showCreateMenu() { document.getElementById('sheet').style.display='flex'; }
-        function closeSheet() { document.getElementById('sheet').style.display='none'; }
-        
-        function showFileOpts(id, name) {
-            selFile = id;
-            document.getElementById('file-opts').style.display='flex';
+        function toggleSelectMode() {
+            isSelMode = !isSelMode;
+            document.getElementById('sel-icon').style.color = isSelMode ? var(--gold) : '#555';
+            document.getElementById('batch-bar').style.display = isSelMode ? 'flex' : 'none';
+            document.getElementById('main-fab').style.display = isSelMode ? 'none' : 'flex';
+            nav(curId); // Rerender to show checks
         }
 
-        async function doUpload(files) {
-            closeSheet();
+        function updateBatchUI() {
+            document.getElementById('sel-count').innerText = selection.size + ' выбрано';
+        }
+
+        async function deleteBatch() {
+            if(!confirm('Удалить выбранные ('+selection.size+')?')) return;
+            await fetch('/storage/api/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: Array.from(selection)}) });
+            toggleSelectMode();
+        }
+
+        async function delOne(id) {
+            if(!confirm('Удалить?')) return;
+            await fetch('/storage/api/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:[id]}) });
+            nav(curId);
+        }
+
+        function showQR(id) {
+            document.getElementById('qr-modal').style.display='flex';
+            document.getElementById('qr-target').innerHTML = '';
+            new QRCode(document.getElementById("qr-target"), {
+                text: window.location.origin + "/storage/api/download/" + id,
+                width: 150, height: 150
+            });
+        }
+
+        async function uploadFiles(files) {
             for(let f of files) {
                 const fd = new FormData(); fd.append('file', f); fd.append('folderId', curId);
                 await fetch('/storage/api/upload', {method:'POST', body:fd});
             }
-            nav(curId);
+            loadRecents(); nav(curId);
         }
 
-        async function askFolder() {
-            closeSheet();
-            const n = prompt('Имя папки:');
-            if(n) {
-                await fetch('/storage/api/mkdir', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:n, parentId:curId})});
-                nav(curId);
-            }
-        }
-
-        async function deleteFile() {
-            if(!confirm('Удалить?')) return;
-            await fetch('/storage/api/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:selFile})});
-            document.getElementById('file-opts').style.display='none';
-            nav(curId);
-        }
-
-        function downloadFile() {
-            location.href = '/storage/api/download/' + selFile;
-            document.getElementById('file-opts').style.display='none';
-        }
-
-        function openView(f) {
+        function view(id, mime) {
             const v = document.getElementById('viewer');
-            const c = document.getElementById('v-cont');
             v.style.display = 'flex';
-            c.innerHTML = '<div style="color:#fff">Загрузка...</div>';
-            
-            const url = '/storage/api/proxy/' + f.id;
-            if(f.mimeType.includes('image')) c.innerHTML = \`<img src="\${url}">\`;
-            else if(f.mimeType.includes('video')) c.innerHTML = \`<video controls autoplay src="\${url}"></video>\`;
-            else c.innerHTML = \`<iframe src="https://drive.google.com/file/d/\${f.id}/preview"></iframe>\`;
+            const u = '/storage/api/proxy/'+id;
+            const c = document.getElementById('v-cont');
+            if(mime.includes('image')) c.innerHTML=\`<img src="\${u}">\`;
+            else if(mime.includes('video')) c.innerHTML=\`<video controls autoplay src="\${u}"></video>\`;
+            else window.location.href = '/storage/api/download/'+id;
         }
 
-        nav('root');
+        function closeView() { document.getElementById('viewer').style.display='none'; document.getElementById('v-cont').innerHTML=''; }
+        function getFileIcon(m) {
+            if(m.includes('image')) return 'fa-file-image';
+            if(m.includes('pdf')) return 'fa-file-pdf';
+            if(m.includes('video')) return 'fa-file-video';
+            return 'fa-file';
+        }
+
+        init();
     </script>
     </body>
     </html>
