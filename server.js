@@ -880,40 +880,11 @@ bot.launch().catch(err => {
     }
 });
 
-// --- ЗАПУСК СЕРВЕРА (С ПОДДЕРЖКОЙ HTTPS) ---
-const https = require('https');
-const http = require('http');
-
+// --- ЗАПУСК СЕРВЕРА (ЧЕРЕЗ NGINX ПРОКСИ) ---
 const PORT = process.env.PORT || 3000;
-const HTTPS_PORT = 443;
 
-try {
-    // Пути к вашим сертификатам Let's Encrypt
-    const sslOptions = {
-        key: fs.readFileSync('/etc/letsencrypt/live/logist-x.store/privkey.pem'),
-        cert: fs.readFileSync('/etc/letsencrypt/live/logist-x.store/fullchain.pem') // fullchain для Google Chrome
-    };
-
-    // 1. Создаем HTTPS сервер для безопасной работы
-    https.createServer(sslOptions, app).listen(HTTPS_PORT, () => {
-        console.log(`🚀 SSL СЕРВЕР ЗАПУЩЕН (PORT ${HTTPS_PORT})`);
-        console.log(`🔗 Домен: ${SERVER_URL}`);
-    });
-
-    // 2. Создаем HTTP сервер для перенаправления на HTTPS
-    http.createServer((req, res) => {
-        res.writeHead(301, { "Location": "https://" + req.headers['host'] + req.url });
-        res.end();
-    }).listen(PORT, () => {
-        console.log(`📡 HTTP Редирект запущен (PORT ${PORT})`);
-    });
-
-} catch (sslError) {
-    console.error("❌ ОШИБКА SSL: Проверьте наличие сертификатов или права доступа!");
-    console.error(sslError.message);
-    
-    // Резервный запуск на обычном порту, если SSL не поднялся
-    app.listen(PORT, () => {
-        console.log(`⚠️ Сервер запущен БЕЗ SSL на порту ${PORT}`);
-    });
-}
+// В этой схеме SSL обрабатывает Nginx, поэтому здесь просто http
+app.listen(PORT, () => {
+    console.log(`🚀 СЕРВЕР ЗАПУЩЕН НА ПОРТУ ${PORT}`);
+    console.log(`📡 Nginx пробрасывает трафик с https://logist-x.store на этот порт`);
+});
