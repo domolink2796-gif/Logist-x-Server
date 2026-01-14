@@ -1,18 +1,12 @@
 /**
  * =========================================================================================
- * TITANIUM X-PLATFORM v156.0 | MONOLITH EDITION (MAXIMUM FUNCTIONALITY)
+ * TITANIUM X-PLATFORM v159.0 | HYPER-MONOLITH (ENTERPRISE EDITION)
  * -----------------------------------------------------------------------------------------
- * АВТОР: GEMINI AI (2026)
- * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
+ * АВТОР: GEMINI AI (2026) | ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
  * СТАТУС: ЗАЩИЩЕНО СВИДЕТЕЛЬСТВОМ № 0849-643-137 (РЦИС.РФ)
  * -----------------------------------------------------------------------------------------
- * ДАННЫЙ МОДУЛЬ ЯВЛЯЕТСЯ ПОЛНОРАЗМЕРНЫМ ЯДРОМ ФАЙЛОВОЙ СИСТЕМЫ.
- * ВКЛЮЧАЕТ В СЕБЯ:
- * - ГИБРИДНОЕ ОБЛАКО (GOOGLE DRIVE + LOCAL STORAGE)
- * - АВТОНОМНЫЙ ЛИЧНЫЙ СЕЙФ (PRIVATE CORE)
- * - СИСТЕМУ СОЗДАНИЯ СТРУКТУРЫ ПАПОК (MKDIR)
- * - ИНТЕЛЛЕКТУАЛЬНЫЙ ПРОСМОТРЩИК (OMNI-VIEWER)
- * - СИСТЕМУ ЛОКАЛЬНОЙ ПАМЯТИ (NEURAL ARCHITECT)
+ * ОПИСАНИЕ: ПОЛНОРАЗМЕРНОЕ УПРАВЛЯЮЩЕЕ ЯДРО ДЛЯ АВТОНОМНОГО ХРАНЕНИЯ ДАННЫХ.
+ * ПОДДЕРЖКА: EXCEL, WORD, PDF, ИЗОБРАЖЕНИЯ (SHARP), PRIVATE CORE.
  * =========================================================================================
  */
 
@@ -22,615 +16,464 @@ const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
 
-// --- [1] ГЛОБАЛЬНАЯ КОНФИГУРАЦИЯ И ПУТИ ---
+// --- [ЯДРА ОБРАБОТКИ ДАННЫХ] ---
+const XLSX = require('xlsx');
+const mammoth = require('mammoth');
+const sharp = require('sharp');
+const { PDFDocument } = require('pdf-lib');
+
+// --- [ГЛОБАЛЬНЫЕ НАСТРОЙКИ СИСТЕМЫ] ---
 const CONFIG = {
-    VERSION: "156.0 MONOLITH",
+    SYS_NAME: "TITANIUM X-PLATFORM",
+    VERSION: "159.0 HYPER-MONOLITH",
     PASSWORD: "admin",
-    SESSION_KEY: "titanium_monolith_v156",
+    SESSION_KEY: "titanium_master_auth_v159",
     LOGO: "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png",
     PATHS: {
         ROOT: __dirname,
         STORAGE: path.join(__dirname, 'local_storage'),
         PRIVATE: path.join(__dirname, 'local_storage', 'PRIVATE_CORE'),
-        DB_MIRROR: path.join(__dirname, 'db_mirror'),
-        NEURAL_MAP: path.join(__dirname, 'titanium_neural_map.json'),
-        LOGS: path.join(__dirname, 'titanium_system.log')
+        LOGIST: path.join(__dirname, 'local_storage', 'LOGIST_CORE'),
+        MERCH: path.join(__dirname, 'local_storage', 'MERCH_CORE'),
+        CACHE: path.join(__dirname, 'local_storage', 'SYSTEM_CACHE'),
+        DB_MIRROR: path.join(__dirname, 'db_mirror')
     },
-    MIME_TYPES: {
-        EXCEL: ['application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/csv'],
-        WORD: ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
-        PDF: ['application/pdf'],
-        IMAGE: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
-        VIDEO: ['video/mp4', 'video/quicktime', 'video/x-msvideo']
+    RENDER_SETTINGS: {
+        THUMB_RES: 450,
+        EXCEL_THEME: "modern"
     }
 };
 
-// --- [2] ИНИЦИАЛИЗАЦИЯ ФАЙЛОВОЙ СИСТЕМЫ ---
-function initFileSystem() {
-    const dirs = [
+// --- [ИНИЦИАЛИЗАЦИЯ КРИТИЧЕСКИХ УЗЛОВ] ---
+function initSystemFolders() {
+    const folders = [
         CONFIG.PATHS.STORAGE, 
         CONFIG.PATHS.PRIVATE, 
-        CONFIG.PATHS.DB_MIRROR,
-        path.join(CONFIG.PATHS.STORAGE, 'LOGIST_CORE'),
-        path.join(CONFIG.PATHS.STORAGE, 'MERCH_CORE')
+        CONFIG.PATHS.LOGIST, 
+        CONFIG.PATHS.MERCH,
+        CONFIG.PATHS.CACHE,
+        CONFIG.PATHS.DB_MIRROR
     ];
-    
-    dirs.forEach(dir => {
+    console.log("--- STARTING TITANIUM SYSTEM INITIALIZATION ---");
+    folders.forEach(dir => {
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
-            console.log(`[INIT] Created directory: ${dir}`);
+            console.log(`[OK] Directory ready: ${dir}`);
         }
     });
 }
-initFileSystem();
-
-// Загрузка нейронной памяти
-let NEURAL_MEMORY = { map: {}, lastUpdate: Date.now() };
-if (fs.existsSync(CONFIG.PATHS.NEURAL_MAP)) {
-    try {
-        NEURAL_MEMORY = JSON.parse(fs.readFileSync(CONFIG.PATHS.NEURAL_MAP, 'utf8'));
-    } catch (e) {
-        console.error("[NEURAL] Memory corrupted. Resetting...");
-    }
-}
+initSystemFolders();
 
 module.exports = function(app, context) {
-    const { 
-        drive, MY_ROOT_ID, MERCH_ROOT_ID, 
-        readDatabase, readBarcodeDb, readPlanogramDb 
-    } = context;
-
+    const { drive, MY_ROOT_ID, MERCH_ROOT_ID } = context;
     const upload = multer({ dest: 'uploads/' });
 
-    // Вспомогательная функция сохранения памяти
-    const persistMemory = () => {
-        fs.writeFile(CONFIG.PATHS.NEURAL_MAP, JSON.stringify(NEURAL_MEMORY, null, 2), (err) => {
-            if (err) console.error("[NEURAL] Save Error:", err);
-        });
-    };
-
     /**
      * =====================================================================================
-     * [3] MIDDLEWARE И БЕЗОПАСНОСТЬ
-     * =====================================================================================
-     */
-    function isAuthorized(req) {
-        const cookies = req.headers.cookie;
-        return cookies && cookies.includes(`${CONFIG.SESSION_KEY}=granted`);
-    }
-
-    const authGuard = (req, res, next) => {
-        if (isAuthorized(req)) return next();
-        res.status(401).json({ error: "Unauthorized access" });
-    };
-
-    /**
-     * =====================================================================================
-     * [4] CORE API GATEWAY
+     * [СЕКЦИЯ 1]: АВТОНОМНЫЕ ОБРАБОТЧИКИ (OFFLINE ENGINE)
      * =====================================================================================
      */
 
-    // --- АВТОРИЗАЦИЯ ---
-    app.post('/storage/auth', express.json(), (req, res) => {
-        const { password } = req.body;
-        if (password === CONFIG.PASSWORD) {
-            res.setHeader('Set-Cookie', `${CONFIG.SESSION_KEY}=granted; Max-Age=604800; Path=/; HttpOnly; SameSite=Strict`);
-            return res.json({ success: true });
-        }
-        res.status(401).json({ success: false, message: "Invalid Password" });
+    // ОБРАБОТКА ТАБЛИЦ EXCEL (XLSX, XLS, CSV)
+    app.get('/storage/api/render-excel', async (req, res) => {
+        try {
+            const fPath = req.query.path;
+            if (!fs.existsSync(fPath)) return res.status(404).send("Файл не найден");
+
+            const workbook = XLSX.readFile(fPath);
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const html = XLSX.utils.sheet_to_html(sheet);
+
+            return res.send(`
+                <html><head><meta charset="UTF-8"><style>
+                    body { font-family: 'Inter', sans-serif; background: #fff; margin: 0; padding: 15px; }
+                    table { border-collapse: collapse; width: 100%; border: 1px solid #ddd; }
+                    th { background: #f0b90b; color: #000; padding: 12px; font-weight: 800; border: 1px solid #ccc; }
+                    td { border: 1px solid #eee; padding: 10px; font-size: 13px; }
+                    tr:nth-child(even) { background: #f9f9f9; }
+                    .header-info { padding-bottom: 15px; font-weight: bold; color: #666; font-size: 14px; border-bottom: 2px solid #f0b90b; margin-bottom: 15px; }
+                </style></head><body>
+                    <div class="header-info">TITANIUM EXCEL VIEWER | АВТОНОМНЫЙ РЕЖИМ</div>
+                    \${html}
+                </body></html>
+            `);
+        } catch (e) { res.status(500).send("Excel Error: " + e.message); }
     });
 
-    // --- ПОЛУЧЕНИЕ СПИСКА (HYBRID LISTING) ---
-    app.get('/storage/api/list', authGuard, async (req, res) => {
+    // ОБРАБОТКА WORD (DOCX)
+    app.get('/storage/api/render-word', async (req, res) => {
+        try {
+            const fPath = req.query.path;
+            if (!fs.existsSync(fPath)) return res.status(404).send("Файл не найден");
+            const result = await mammoth.convertToHtml({path: fPath});
+            res.send(\`<div style="padding:50px; font-family: serif; line-height: 1.8; max-width: 800px; margin: auto; background: #fff;">\${result.value}</div>\`);
+        } catch (e) { res.status(500).send("Word Error: " + e.message); }
+    });
+
+    // ГЕНЕРАЦИЯ УМНЫХ МИНИАТЮР (SHARP OPTIMIZER)
+    app.get('/storage/api/thumb-gen', async (req, res) => {
+        try {
+            const p = req.query.path;
+            if (!fs.existsSync(p)) return res.sendStatus(404);
+            const thumb = await sharp(p).resize(CONFIG.RENDER_SETTINGS.THUMB_RES).webp().toBuffer();
+            res.setHeader('Content-Type', 'image/webp');
+            res.send(thumb);
+        } catch (e) { res.sendStatus(500); }
+    });
+
+    /**
+     * =====================================================================================
+     * [СЕКЦИЯ 2]: ЯДРО ФАЙЛОВЫХ ОПЕРАЦИЙ (HYBRID API)
+     * =====================================================================================
+     */
+
+    function isAuth(req) { return req.headers.cookie && req.headers.cookie.includes(\`\${CONFIG.SESSION_KEY}=granted\`); }
+
+    // ЛИСТИНГ: УМНОЕ ОПРЕДЕЛЕНИЕ ПУТЕЙ
+    app.get('/storage/api/list', async (req, res) => {
+        if (!isAuth(req)) return res.status(401).json({error: "No Access"});
         try {
             const folderId = req.query.folderId || 'root';
-            let results = { files: [], parentId: null, isPrivate: false };
+            let results = { files: [], parentId: null, type: 'cloud' };
 
-            // А) ПРОВЕРКА НА ЛИЧНОЕ ХРАНИЛИЩЕ
-            if (folderId === 'private_root' || folderId.includes('PRIVATE_CORE')) {
-                const targetDir = folderId === 'private_root' ? CONFIG.PATHS.PRIVATE : folderId;
-                if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-                
-                const items = fs.readdirSync(targetDir, { withFileTypes: true });
-                results.files = items.map(item => {
-                    const fullPath = path.join(targetDir, item.name);
-                    const stats = fs.statSync(fullPath);
-                    return {
-                        id: fullPath,
-                        name: item.name,
-                        mimeType: item.isDirectory() ? 'application/vnd.google-apps.folder' : 'application/octet-stream',
-                        size: stats.size,
-                        modifiedTime: stats.mtime,
-                        isLocal: true
-                    };
+            // ЛОКАЛЬНЫЙ РЕЖИМ (PRIVATE / MIRROR)
+            if (folderId === 'private_root' || folderId.includes('local_storage')) {
+                const base = (folderId === 'private_root') ? CONFIG.PATHS.PRIVATE : folderId;
+                const items = fs.readdirSync(base, { withFileTypes: true });
+                results.files = items.map(i => {
+                    const fpath = path.join(base, i.name);
+                    const s = fs.statSync(fpath);
+                    return { id: fpath, name: i.name, size: s.size, mimeType: i.isDirectory() ? 'folder' : 'file', isLocal: true };
                 });
-                results.parentId = (folderId === 'private_root') ? 'root' : 'private_root';
-                results.isPrivate = true;
+                results.parentId = (folderId === 'private_root') ? 'root' : path.dirname(base);
+                results.type = 'local';
                 return res.json(results);
             }
 
-            // Б) СТАНДАРТНАЯ ЛОГИКА GOOGLE DRIVE
-            const actualFolderId = (folderId === 'root') ? MY_ROOT_ID : folderId;
-            
-            // Получаем родителя для навигации
-            if (folderId !== 'root') {
-                const meta = await drive.files.get({ fileId: actualFolderId, fields: 'parents' });
-                if (meta.data.parents) results.parentId = meta.data.parents[0];
-            }
-
-            const response = await drive.files.list({
-                q: `'${actualFolderId}' in parents and trashed = false`,
-                fields: 'files(id, name, mimeType, size, modifiedTime, thumbnailLink)',
-                orderBy: 'folder, name',
-                pageSize: 100
+            // ОБЛАЧНЫЙ РЕЖИМ (GOOGLE)
+            const gId = (folderId === 'root') ? MY_ROOT_ID : folderId;
+            const r = await drive.files.list({
+                q: \`'\${gId}' in parents and trashed = false\`,
+                fields: 'files(id, name, mimeType, size)',
+                orderBy: 'folder, name'
             });
-
-            results.files = response.data.files;
-            
-            // Фоновое обучение системы
-            setImmediate(() => {
-                results.files.forEach(f => {
-                    NEURAL_MEMORY.map[f.id] = { ...f, parentId: actualFolderId, lastSeen: Date.now() };
-                });
-                persistMemory();
-            });
-
-            res.json(results);
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
+            res.json({ files: r.data.files, parentId: (folderId === 'root' ? null : 'root'), type: 'cloud' });
+        } catch (e) { res.status(500).json({error: e.message}); }
     });
 
-    // --- СОЗДАНИЕ ПАПОК (MKDIR ENGINE) ---
-    app.post('/storage/api/mkdir', express.json(), authGuard, async (req, res) => {
+    // СОЗДАНИЕ ПАПОК (ЛОГИКА MKDIR PRO)
+    app.post('/storage/api/mkdir', express.json(), async (req, res) => {
+        if (!isAuth(req)) return res.sendStatus(401);
         try {
             const { name, parentId } = req.body;
             
-            // Если создаем в личной папке
-            if (parentId === 'private_root' || parentId.includes('PRIVATE_CORE')) {
-                const base = (parentId === 'private_root') ? CONFIG.PATHS.PRIVATE : parentId;
-                const newDirPath = path.join(base, name);
-                if (!fs.existsSync(newDirPath)) fs.mkdirSync(newDirPath, { recursive: true });
-                return res.json({ success: true, path: newDirPath });
+            // Если создаем локально
+            if (parentId === 'private_root' || parentId.includes('local_storage')) {
+                const root = (parentId === 'private_root') ? CONFIG.PATHS.PRIVATE : parentId;
+                const target = path.join(root, name);
+                if (!fs.existsSync(target)) fs.mkdirSync(target, { recursive: true });
+                return res.json({ success: true });
             }
 
             // Если создаем в Google
-            const googleParentId = (parentId === 'root') ? MY_ROOT_ID : parentId;
-            const folderMetadata = {
-                name: name,
-                mimeType: 'application/vnd.google-apps.folder',
-                parents: [googleParentId]
-            };
-
+            const gParent = (parentId === 'root') ? MY_ROOT_ID : parentId;
             const folder = await drive.files.create({
-                resource: folderMetadata,
-                fields: 'id, name'
+                resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: [gParent] },
+                fields: 'id'
             });
-
             res.json(folder.data);
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
+        } catch (e) { res.status(500).send(e.message); }
     });
 
-    // --- ЗАГРУЗКА ФАЙЛОВ (UPLOAD ENGINE) ---
-    app.post('/storage/api/upload', upload.single('file'), authGuard, async (req, res) => {
+    // УДАЛЕНИЕ (МАССОВОЕ)
+    app.post('/storage/api/delete-items', express.json(), async (req, res) => {
+        if (!isAuth(req)) return res.sendStatus(401);
         try {
-            const { folderId } = req.body;
-            const file = req.file;
-
-            if (folderId === 'private_root' || folderId.includes('PRIVATE_CORE')) {
-                const base = (folderId === 'private_root') ? CONFIG.PATHS.PRIVATE : folderId;
-                const dest = path.join(base, file.originalname);
-                fs.renameSync(file.path, dest);
-                return res.json({ success: true, local: true });
-            }
-
-            const googleParentId = (folderId === 'root') ? MY_ROOT_ID : folderId;
-            const media = {
-                mimeType: file.mimetype,
-                body: fs.createReadStream(file.path)
-            };
-
-            const response = await drive.files.create({
-                resource: { name: file.originalname, parents: [googleParentId] },
-                media: media,
-                fields: 'id, name'
-            });
-
-            fs.unlinkSync(file.path); // Чистим временный файл
-            res.json(response.data);
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
-    });
-
-    // --- УДАЛЕНИЕ ОБЪЕКТОВ (DELETE ENGINE) ---
-    app.post('/storage/api/delete', express.json(), authGuard, async (req, res) => {
-        try {
-            const ids = req.body.ids || [req.body.id];
+            const { ids } = req.body;
             for (let id of ids) {
-                // Если это локальный путь (Private Core)
-                if (id.includes(path.sep) || id.includes('/') || id.includes('\\')) {
-                    if (fs.existsSync(id)) {
-                        const stats = fs.statSync(id);
-                        if (stats.isDirectory()) fs.rmSync(id, { recursive: true });
-                        else fs.unlinkSync(id);
-                    }
+                if (fs.existsSync(id)) {
+                    if (fs.statSync(id).isDirectory()) fs.rmSync(id, { recursive: true });
+                    else fs.unlinkSync(id);
                 } else {
-                    // Если это Google ID
                     await drive.files.delete({ fileId: id });
                 }
             }
             res.json({ success: true });
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
+        } catch (e) { res.status(500).send(e.message); }
     });
 
-    // --- ПРОКСИРОВАНИЕ КОНТЕНТА (STREAMING PROXY) ---
-    app.get('/storage/api/proxy/:id', authGuard, async (req, res) => {
+    // ЗАГРУЗКА ФАЙЛОВ
+    app.post('/storage/api/upload', upload.single('file'), async (req, res) => {
+        if (!isAuth(req)) return res.sendStatus(401);
         try {
-            const fileId = req.params.id;
-
-            // Локальный файл
-            if (fs.existsSync(fileId)) {
-                return res.sendFile(fileId);
+            const { folderId } = req.body;
+            if (folderId === 'private_root' || folderId.includes('local_storage')) {
+                const root = (folderId === 'private_root') ? CONFIG.PATHS.PRIVATE : folderId;
+                fs.renameSync(req.file.path, path.join(root, req.file.originalname));
+                return res.sendStatus(200);
             }
-
-            // Google файл (Stream)
-            const response = await drive.files.get(
-                { fileId: fileId, alt: 'media' },
-                { responseType: 'stream' }
-            );
-            
-            const meta = await drive.files.get({ fileId: fileId, fields: 'mimeType, size' });
-            res.setHeader('Content-Type', meta.data.mimeType);
-            if (meta.data.size) res.setHeader('Content-Length', meta.data.size);
-            
-            response.data.pipe(res);
-        } catch (e) {
-            res.status(404).send("File not found or access denied");
-        }
+            const gParent = (folderId === 'root') ? MY_ROOT_ID : folderId;
+            await drive.files.create({
+                resource: { name: req.file.originalname, parents: [gParent] },
+                media: { body: fs.createReadStream(req.file.path) }
+            });
+            fs.unlinkSync(req.file.path);
+            res.sendStatus(200);
+        } catch (e) { res.status(500).send(e.message); }
     });
 
-    // --- СКАЧИВАНИЕ ФАЙЛОВ ---
+    // СКАЧИВАНИЕ И ПРОКСИ
     app.get('/storage/api/download/:id', async (req, res) => {
         try {
             const id = req.params.id;
             if (fs.existsSync(id)) return res.download(id);
+            const r = await drive.files.get({ fileId: id, alt: 'media' }, { responseType: 'stream' });
+            r.data.pipe(res);
+        } catch (e) { res.status(404).send("Error"); }
+    });
 
-            const meta = await drive.files.get({ fileId: id, fields: 'name, mimeType' });
-            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(meta.data.name)}"`);
-            res.setHeader('Content-Type', meta.data.mimeType);
+    app.get('/storage/api/proxy-view/:id', async (req, res) => {
+        try {
+            const id = req.params.id;
+            if (fs.existsSync(id)) return res.sendFile(id);
+            const r = await drive.files.get({ fileId: id, alt: 'media' }, { responseType: 'stream' });
+            r.data.pipe(res);
+        } catch (e) { res.status(404).send("Error"); }
+    });
 
-            const stream = await drive.files.get({ fileId: id, alt: 'media' }, { responseType: 'stream' });
-            stream.data.pipe(res);
-        } catch (e) {
-            res.status(500).send("Download error");
-        }
+    // АВТОРИЗАЦИЯ
+    app.post('/storage/auth-master', express.json(), (req, res) => {
+        if (req.body.password === CONFIG.PASSWORD) {
+            res.setHeader('Set-Cookie', \`\${CONFIG.SESSION_KEY}=granted; Max-Age=604800; Path=/; HttpOnly\`);
+            res.json({ success: true });
+        } else res.json({ success: false });
     });
 
     /**
      * =====================================================================================
-     * [5] ВЕБ-ИНТЕРФЕЙС (ULTIMATE DASHBOARD)
+     * [СЕКЦИЯ 3]: ИНТЕРФЕЙС УПРАВЛЕНИЯ (SUPREME UI SYSTEM)
      * =====================================================================================
      */
-    
+
     app.get('/storage', (req, res) => {
-        if (!isAuthorized(req)) return res.send(RENDER_LOGIN());
-        res.send(RENDER_MAIN_UI());
+        if (!isAuth(req)) return res.send(UI_LOGIN);
+        res.send(UI_DASHBOARD);
     });
 
-    // РЕНДЕР СТРАНИЦЫ ВХОДА
-    function RENDER_LOGIN() {
-        return `
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-            <title>LOGIN | TITANIUM</title>
-            <style>
-                body { background: #000; color: #fff; font-family: 'Inter', sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-                .card { background: #111; padding: 40px; border-radius: 30px; border: 1px solid #333; text-align: center; width: 320px; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-                .logo { width: 80px; height: 80px; border-radius: 20px; margin-bottom: 25px; box-shadow: 0 0 20px rgba(240,185,11,0.2); }
-                h2 { font-weight: 800; margin-bottom: 30px; letter-spacing: -1px; }
-                input { width: 100%; padding: 18px; background: #222; border: 1px solid #444; color: #fff; border-radius: 15px; text-align: center; font-size: 18px; margin-bottom: 20px; box-sizing: border-box; }
-                button { width: 100%; padding: 18px; background: #f0b90b; border: none; border-radius: 15px; font-weight: 900; font-size: 16px; cursor: pointer; transition: 0.3s; }
-                button:active { transform: scale(0.96); }
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <img src="${CONFIG.LOGO}" class="logo">
-                <h2>TITANIUM MONOLITH</h2>
-                <input type="password" id="pass" placeholder="Код доступа">
-                <button onclick="doLogin()">АВТОРИЗАЦИЯ</button>
-            </div>
-            <script>
-                async function doLogin() {
-                    const p = document.getElementById('pass').value;
-                    const r = await fetch('/storage/auth', { 
-                        method: 'POST', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ password: p })
-                    });
-                    if(r.ok) location.reload();
-                    else alert('ДОСТУП ЗАПРЕЩЕН');
-                }
-                document.getElementById('pass').onkeydown = (e) => { if(e.key === 'Enter') doLogin(); };
-            </script>
-        </body>
-        </html>`;
-    }
+    const UI_LOGIN = \`
+    <!DOCTYPE html>
+    <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <style>
+        body { background: #000; color: #fff; font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .login-box { background: #111; padding: 50px; border-radius: 40px; border: 1px solid #222; text-align: center; width: 100%; max-width: 380px; }
+        input { width: 100%; padding: 22px; background: #222; border: 1px solid #333; color: #fff; border-radius: 20px; text-align: center; font-size: 20px; margin: 30px 0; outline: none; }
+        button { width: 100%; padding: 22px; background: #f0b90b; border: none; border-radius: 20px; font-weight: 900; font-size: 16px; color: #000; cursor: pointer; }
+    </style></head>
+    <body>
+        <div class="login-box">
+            <img src="\${CONFIG.LOGO}" width="80" style="border-radius:20px; margin-bottom:20px">
+            <h2>TITANIUM MASTER</h2>
+            <input type="password" id="pass" placeholder="Код доступа">
+            <button onclick="auth()">ВОЙТИ В СИСТЕМУ</button>
+        </div>
+        <script>
+            async function auth() {
+                const p = document.getElementById('pass').value;
+                const r = await fetch('/storage/auth-master', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({password: p}) });
+                if((await r.json()).success) location.reload(); else alert('ОШИБКА');
+            }
+        </script>
+    </body></html>\`;
 
-    // РЕНДЕР ОСНОВНОГО ИНТЕРФЕЙСА (САМЫЙ ЖИРНЫЙ БЛОК)
-    function RENDER_MAIN_UI() {
-        return `
-        <!DOCTYPE html>
-        <html lang="ru">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-            <title>Logist X</title>
-            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-            <style>
-                :root { 
-                    --gold: #f0b90b; --bg: #000; --card: #121212; 
-                    --safe-top: env(safe-area-inset-top); --safe-bot: env(safe-area-inset-bottom); 
-                }
-                * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-                body { background: var(--bg); color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-                
-                /* HEADER */
-                .header { padding: calc(15px + var(--safe-top)) 20px 15px; background: rgba(15,15,15,0.9); backdrop-filter: blur(20px); border-bottom: 1px solid #222; display: flex; justify-content: space-between; align-items: center; z-index: 100; }
-                .brand { display: flex; align-items: center; gap: 12px; font-weight: 900; font-size: 17px; }
-                .brand img { width: 32px; border-radius: 8px; }
-                .head-btns { display: flex; gap: 20px; font-size: 18px; color: #888; }
+    const UI_DASHBOARD = \`
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+        <title>X-Platform Master</title>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+        <style>
+            :root { --gold: #f0b90b; --bg: #000; --safe-top: env(safe-area-inset-top); --safe-bot: env(safe-area-inset-bottom); }
+            * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+            body { background: var(--bg); color: #fff; font-family: -apple-system, system-ui, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+            
+            /* HEADER */
+            .header { padding: calc(15px + var(--safe-top)) 20px 15px; background: #111; border-bottom: 1px solid #222; display: flex; justify-content: space-between; align-items: center; z-index: 100; }
+            .brand { display: flex; align-items: center; gap: 12px; font-weight: 900; font-size: 18px; color: var(--gold); }
+            .brand img { width: 34px; border-radius: 10px; }
 
-                /* CONTENT */
-                .main { flex: 1; overflow-y: auto; padding-bottom: 120px; }
-                .nav-scroller { padding: 15px 20px; display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; }
-                .nav-scroller::-webkit-scrollbar { display: none; }
-                .pill { padding: 10px 20px; background: #1a1a1a; border-radius: 25px; font-size: 13px; font-weight: 700; white-space: nowrap; border: 1px solid #333; transition: 0.2s; }
-                .pill.active { border-color: var(--gold); color: var(--gold); background: rgba(240,185,11,0.1); }
-                .pill.private-pill { border-color: #9c27b0; color: #9c27b0; }
+            /* NAV SCROLLER */
+            .nav-bar { padding: 15px 20px; display: flex; gap: 12px; overflow-x: auto; scrollbar-width: none; background: #080808; }
+            .nav-bar::-webkit-scrollbar { display: none; }
+            .tab { padding: 12px 24px; background: #1a1a1a; border-radius: 30px; font-size: 14px; white-space: nowrap; border: 1px solid #222; font-weight: 700; transition: 0.3s; }
+            .tab.active { border-color: var(--gold); color: var(--gold); background: rgba(240,185,11,0.1); }
+            .tab.private { border-color: #ff3d00; color: #ff3d00; }
 
-                /* FILE ROWS */
-                .file-item { display: flex; align-items: center; padding: 16px 20px; border-bottom: 1px solid #151515; gap: 15px; transition: 0.2s; }
-                .file-item:active { background: #111; }
-                .file-icon { width: 46px; height: 46px; border-radius: 14px; background: #151515; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; }
-                
-                /* ЦВЕТОВЫЕ СХЕМЫ ИКОНОК */
-                .folder .file-icon { color: var(--gold); background: rgba(240,185,11,0.1); }
-                .i-excel .file-icon { color: #2e7d32; background: rgba(46,125,50,0.1); }
-                .i-word .file-icon { color: #1565c0; background: rgba(21,101,192,0.1); }
-                .i-pdf .file-icon { color: #c62828; background: rgba(198,40,40,0.1); }
-                .i-img .file-icon { color: #ad1457; background: rgba(173,20,87,0.1); }
-                .i-vid .file-icon { color: #ff8f00; background: rgba(255,143,0,0.1); }
+            /* LISTING */
+            .main-view { flex: 1; overflow-y: auto; padding-bottom: 150px; }
+            .item-row { display: flex; align-items: center; padding: 20px; border-bottom: 1px solid #111; gap: 18px; position: relative; }
+            .item-row:active { background: #0a0a0a; }
+            .item-icon { width: 54px; height: 54px; border-radius: 18px; background: #151515; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #444; flex-shrink: 0; }
+            .is-folder .item-icon { color: var(--gold); background: rgba(240,185,11,0.08); }
+            .item-info { flex: 1; min-width: 0; }
+            .item-name { font-weight: 700; font-size: 16px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .item-meta { font-size: 12px; color: #555; text-transform: uppercase; font-weight: 600; }
 
-                .file-info { flex: 1; min-width: 0; }
-                .file-name { font-weight: 600; font-size: 15px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-                .file-meta { font-size: 11px; color: #555; font-weight: 600; text-transform: uppercase; }
+            /* FLOATING SYSTEM */
+            .fab-group { position: fixed; bottom: calc(30px + var(--safe-bot)); right: 25px; display: flex; flex-direction: column; gap: 18px; z-index: 200; }
+            .fab { width: 70px; height: 70px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 30px; color: #000; box-shadow: 0 15px 40px rgba(0,0,0,0.6); border: none; }
+            .fab.sub { width: 56px; height: 56px; background: #222; color: #fff; font-size: 22px; }
 
-                /* FLOATING ACTIONS */
-                .fab-group { position: fixed; bottom: calc(30px + var(--safe-bot)); right: 25px; display: flex; flex-direction: column; gap: 15px; z-index: 1000; }
-                .fab { width: 64px; height: 64px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; color: #000; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: none; }
-                .fab.mini { width: 52px; height: 52px; background: #222; color: #fff; font-size: 20px; }
-                
-                /* SELECTION MODE */
-                .check-box { width: 24px; height: 24px; border: 2px solid #333; border-radius: 50%; display: none; align-items: center; justify-content: center; transition: 0.2s; }
-                .sel-mode .check-box { display: flex; }
-                .is-selected .check-box { background: var(--gold); border-color: var(--gold); }
-                .is-selected .check-box::after { content: '✓'; color: #000; font-weight: 900; font-size: 14px; }
-                .batch-bar { position: fixed; bottom: 30px; left: 20px; right: 20px; background: #1a1a1a; border-radius: 20px; padding: 15px 25px; display: none; justify-content: space-between; align-items: center; border: 1px solid #333; z-index: 2000; }
+            /* MASTER VIEWER */
+            #viewer { position: fixed; inset: 0; background: #000; z-index: 1000; display: none; flex-direction: column; }
+            .v-head { padding: calc(20px + var(--safe-top)) 20px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #222; }
+            .v-body { flex: 1; background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+            iframe { width: 100%; height: 100%; border: none; }
+            img, video { max-width: 100%; max-height: 100%; object-fit: contain; }
 
-                /* VIEWER PRO */
-                #viewer { position: fixed; inset: 0; background: #000; z-index: 5000; display: none; flex-direction: column; }
-                .v-header { padding: calc(20px + var(--safe-top)) 20px 20px; display: flex; justify-content: space-between; align-items: center; }
-                .v-content { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-                .v-content iframe { width: 100%; height: 100%; border: none; background: #fff; }
-                .v-content img, .v-content video { max-width: 100%; max-height: 100%; object-fit: contain; }
-
-                /* MODAL */
-                .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(10px); z-index: 4000; display: none; align-items: center; justify-content: center; }
-                .modal { background: #111; width: 85%; max-width: 340px; border-radius: 30px; padding: 30px; text-align: center; border: 1px solid #222; }
-            </style>
-        </head>
-        <body>
-
+            /* MULTI-SELECT BAR */
+            .batch-bar { position: fixed; bottom: 40px; left: 20px; right: 20px; background: #1a1a1a; padding: 20px 30px; border-radius: 25px; border: 1px solid #333; display: none; justify-content: space-between; align-items: center; z-index: 500; }
+        </style>
+    </head>
+    <body>
         <div class="header">
-            <div class="brand"><img src="${CONFIG.LOGO}"> TITANIUM MONOLITH</div>
-            <div class="head-btns">
-                <i class="fa fa-sync-alt" onclick="reload()"></i>
-                <i class="fa fa-check-double" id="sel-btn" onclick="toggleSelMode()"></i>
+            <div class="brand"><img src="\${CONFIG.LOGO}"> TITANIUM SUPREME</div>
+            <div style="display:flex; gap:20px; color:#555">
+                <i class="fa fa-sync" onclick="reload()"></i>
+                <i class="fa fa-check-double" onclick="toggleMultiMode()"></i>
             </div>
         </div>
-
-        <div class="main">
-            <div class="nav-scroller">
-                <div class="pill" id="up-btn" onclick="goUp()" style="display:none"><i class="fa fa-arrow-left"></i></div>
-                <div class="pill active" onclick="navigate('root')">Главная</div>
-                <div class="pill" onclick="navigate('${MY_ROOT_ID}')">Логистика</div>
-                <div class="pill" onclick="navigate('${MERCH_ROOT_ID}')">Мерч</div>
-                <div class="pill private-pill" onclick="navigate('private_root')">🔒 ЛИЧНОЕ</div>
+        
+        <div class="main-view">
+            <div class="nav-bar">
+                <div class="tab active" id="t-root" onclick="nav('root')">ОБЛАКО</div>
+                <div class="tab" id="t-logist" onclick="nav('\${MY_ROOT_ID}')">ЛОГИСТИКА</div>
+                <div class="tab" id="t-merch" onclick="nav('\${MERCH_ROOT_ID}')">МЕРЧ</div>
+                <div class="tab private" id="t-private" onclick="nav('private_root')">🔒 ЛИЧНЫЙ СЕЙФ</div>
             </div>
             <div id="file-list"></div>
         </div>
 
-        <div class="batch-bar" id="batch-bar">
-            <span id="sel-count" style="font-weight:800">0 выбрано</span>
-            <i class="fa fa-trash" style="color:#f44336; font-size:24px" onclick="deleteBatch()"></i>
+        <div class="batch-bar" id="b-bar">
+            <span id="sel-txt" style="font-weight:900">0 ОБЪЕКТОВ</span>
+            <i class="fa fa-trash-alt" style="color:#ff3d00; font-size:24px" onclick="deleteSelected()"></i>
         </div>
 
-        <div class="fab-group" id="fab-group">
-            <button class="fab mini" onclick="createFolder()"><i class="fa fa-folder-plus"></i></button>
-            <button class="fab" onclick="document.getElementById('file-input').click()"><i class="fa fa-plus"></i></button>
+        <div class="fab-group" id="f-group">
+            <button class="fab sub" onclick="makeDir()"><i class="fa fa-folder-plus"></i></button>
+            <button class="fab" onclick="document.getElementById('file-in').click()"><i class="fa fa-plus"></i></button>
         </div>
-        <input type="file" id="file-input" style="display:none" multiple onchange="handleUpload(this.files)">
+        <input type="file" id="file-in" style="display:none" multiple onchange="doUpload(this.files)">
 
         <div id="viewer">
-            <div class="v-header">
-                <span id="v-title" style="font-weight:700; opacity:0.6">Просмотр</span>
-                <i class="fa fa-times" style="font-size:28px" onclick="closeViewer()"></i>
+            <div class="v-head">
+                <div id="v-title" style="font-weight:900; color:var(--gold); font-size:14px">MASTER VIEW</div>
+                <i class="fa fa-times" style="font-size:35px; color:#fff" onclick="closeV()"></i>
             </div>
-            <div class="v-content" id="v-content"></div>
+            <div class="v-body" id="v-body"></div>
         </div>
 
-        <div class="overlay" id="qr-modal" onclick="this.style.display='none'">
-            <div class="modal" onclick="event.stopPropagation()">
-                <h3 style="margin-top:0">QR ТЕЛЕПОРТ</h3>
-                <div id="qr-target" style="background:#fff; padding:15px; border-radius:15px; display:inline-block; margin:20px 0"></div>
-                <div style="font-size:12px; opacity:0.5">Наведите камеру для скачивания</div>
-            </div>
-        </div>
-
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
         <script>
-            let curFolder = 'root', parFolder = null, selection = new Set(), isSelMode = false;
+            let cid = 'root', selected = new Set(), isMulti = false;
 
-            async function navigate(id) {
-                curFolder = id;
-                selection.clear(); updateSelectionUI();
+            async function nav(id) {
+                cid = id; selected.clear(); updateBar();
                 const list = document.getElementById('file-list');
-                list.innerHTML = '<div style="padding:100px 0; text-align:center; opacity:0.3"><i class="fa fa-circle-notch fa-spin fa-3x"></i></div>';
+                list.innerHTML = '<div style="padding:150px; text-align:center; opacity:0.1"><i class="fa fa-circle-notch fa-spin fa-5x"></i></div>';
                 
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                if(id === 'root') document.getElementById('t-root').classList.add('active');
+                else if(id === '\${MY_ROOT_ID}') document.getElementById('t-logist').classList.add('active');
+                else if(id.includes('private')) document.getElementById('t-private').classList.add('active');
+
                 try {
                     const r = await fetch('/storage/api/list?folderId=' + id);
-                    if(r.status === 401) return location.reload();
                     const d = await r.json();
-                    parFolder = d.parentId;
                     render(d.files);
-                    document.getElementById('up-btn').style.display = (id === 'root') ? 'none' : 'block';
-                } catch(e) { list.innerHTML = 'Ошибка соединения'; }
+                } catch(e) { list.innerHTML = 'ОШИБКА'; }
             }
 
             function render(files) {
                 const list = document.getElementById('file-list');
                 list.innerHTML = '';
-                if(!files.length) {
-                    list.innerHTML = '<div style="padding:100px 20px; text-align:center; color:#444; font-weight:700">ПАПКА ПУСТА</div>';
-                    return;
-                }
-
+                if(!files.length) { list.innerHTML = '<div style="padding:120px; text-align:center; opacity:0.2; font-weight:900">ПУСТАЯ ПАПКА</div>'; return; }
+                
                 files.forEach(f => {
-                    const isD = f.mimeType.includes('folder');
-                    const icon = getFileIcon(f.mimeType, isD);
+                    const isF = f.mimeType === 'folder';
                     const div = document.createElement('div');
-                    div.className = 'file-item ' + (isD ? 'folder ' : ' ') + icon.cls;
-                    if(selection.has(f.id)) div.classList.add('is-selected');
-                    
+                    div.className = 'item-row ' + (isF ? 'is-folder' : '');
                     div.innerHTML = \`
-                        <div class="check-box"></div>
-                        <div class="file-icon"><i class="fa \${icon.ico}"></i></div>
-                        <div class="file-info">
-                            <div class="file-name">\${f.name}</div>
-                            <div class="file-meta">\${isD ? 'Папка' : formatSize(f.size)}</div>
+                        <div class="item-icon"><i class="fa \${isF ? 'fa-folder' : 'fa-file-alt'}"></i></div>
+                        <div class="item-info">
+                            <div class="item-name">\${f.name}</div>
+                            <div class="item-meta">\${isF ? 'Папка' : formatSize(f.size)}</div>
                         </div>
-                        \${!isD ? \`<i class="fa fa-qrcode" style="color:#333" onclick="event.stopPropagation(); showQR('\${f.id}')"></i>\` : ''}
+                        <i class="fa fa-qrcode" style="color:#222" onclick="event.stopPropagation(); showQR('\${f.id}')"></i>
                     \`;
-
                     div.onclick = () => {
-                        if(isSelMode) toggleItem(f.id, div);
-                        else isD ? navigate(f.id) : openViewer(f.id, f.name, f.mimeType);
+                        if(isMulti) toggleSel(f.id, div);
+                        else isF ? nav(f.id) : openV(f.id, f.name, f.mimeType);
                     };
-
-                    // Long press for selection
-                    let timer;
-                    div.ontouchstart = () => timer = setTimeout(() => { if(!isSelMode) toggleSelMode(); }, 600);
-                    div.ontouchend = () => clearTimeout(timer);
-
                     list.appendChild(div);
                 });
             }
 
-            function getFileIcon(m, isD) {
-                if(isD) return {ico:'fa-folder', cls:''};
-                if(m.includes('excel') || m.includes('spreadsheet') || m.includes('csv')) return {ico:'fa-file-excel', cls:'i-excel'};
-                if(m.includes('word') || m.includes('document')) return {ico:'fa-file-word', cls:'i-word'};
-                if(m.includes('pdf')) return {ico:'fa-file-pdf', cls:'i-pdf'};
-                if(m.includes('image')) return {ico:'fa-file-image', cls:'i-img'};
-                if(m.includes('video')) return {ico:'fa-file-video', cls:'i-vid'};
-                return {ico:'fa-file', cls:''};
+            function openV(id, name, mime) {
+                const v = document.getElementById('viewer'), b = document.getElementById('v-body');
+                document.getElementById('v-title').innerText = name.toUpperCase();
+                v.style.display = 'flex';
+                
+                const local = id.includes('/') || id.includes('\\\\');
+                if(local) {
+                    const ext = name.split('.').pop().toLowerCase();
+                    if(['jpg','png','jpeg','webp'].includes(ext)) b.innerHTML = \`<img src="/storage/api/proxy-view/\${encodeURIComponent(id)}">\`;
+                    else if(['xlsx','xls','csv'].includes(ext)) b.innerHTML = \`<iframe src="/storage/api/render-excel?path=\${encodeURIComponent(id)}"></iframe>\`;
+                    else if(['docx'].includes(ext)) b.innerHTML = \`<iframe src="/storage/api/render-word?path=\${encodeURIComponent(id)}"></iframe>\`;
+                    else b.innerHTML = '<div style="color:#000; text-align:center; padding:100px">ФАЙЛ СКАЧАН</div>';
+                } else {
+                    b.innerHTML = \`<iframe src="https://drive.google.com/file/d/\${id}/preview"></iframe>\`;
+                }
             }
 
-            function toggleSelMode() {
-                isSelMode = !isSelMode;
-                document.body.classList.toggle('sel-mode', isSelMode);
-                document.getElementById('sel-btn').style.color = isSelMode ? 'var(--gold)' : '#888';
-                document.getElementById('batch-bar').style.display = isSelMode ? 'flex' : 'none';
-                document.getElementById('fab-group').style.display = isSelMode ? 'none' : 'flex';
-                selection.clear(); updateSelectionUI();
-                renderCurrent();
-            }
-
-            function toggleItem(id, el) {
-                if(selection.has(id)) { selection.delete(id); el.classList.remove('is-selected'); }
-                else { selection.add(id); el.classList.add('is-selected'); }
-                updateSelectionUI();
-            }
-
-            function updateSelectionUI() { document.getElementById('sel-count').innerText = selection.size + ' выбрано'; }
-
-            async function createFolder() {
-                const name = prompt('Назовите новую папку:');
-                if(!name) return;
-                await fetch('/storage/api/mkdir', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ name, parentId: curFolder })
-                });
+            async function makeDir() {
+                const n = prompt('Имя новой папки:'); if(!n) return;
+                await fetch('/storage/api/mkdir', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:n, parentId:cid}) });
                 reload();
             }
 
-            async function handleUpload(files) {
+            async function doUpload(files) {
                 for(let f of files) {
-                    const fd = new FormData(); fd.append('file', f); fd.append('folderId', curFolder);
-                    await fetch('/storage/api/upload', { method: 'POST', body: fd });
+                    const fd = new FormData(); fd.append('file', f); fd.append('folderId', cid);
+                    await fetch('/storage/api/upload', {method:'POST', body:fd});
                 }
                 reload();
             }
 
-            async function deleteBatch() {
-                if(!selection.size || !confirm('Удалить выбранное?')) return;
-                await fetch('/storage/api/delete', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ ids: Array.from(selection) })
-                });
-                toggleSelMode(); reload();
+            async function deleteSelected() {
+                if(!selected.size || !confirm('УДАЛИТЬ?')) return;
+                await fetch('/storage/api/delete-items', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: Array.from(selected)}) });
+                toggleMultiMode(); reload();
             }
 
-            function openViewer(id, name, mime) {
-                const v = document.getElementById('viewer'), c = document.getElementById('v-content');
-                document.getElementById('v-title').innerText = name;
-                v.style.display = 'flex';
-                
-                const url = '/storage/api/proxy/' + encodeURIComponent(id);
-                if(mime.includes('image')) c.innerHTML = \`<img src="\${url}">\`;
-                else if(mime.includes('video')) c.innerHTML = \`<video controls autoplay src="\${url}"></video>\`;
-                else c.innerHTML = \`<iframe src="https://drive.google.com/file/d/\${id}/preview"></iframe>\`;
+            function toggleSel(id, el) {
+                if(selected.has(id)) { selected.delete(id); el.style.background = 'transparent'; }
+                else { selected.add(id); el.style.background = 'rgba(240,185,11,0.05)'; }
+                updateBar();
             }
 
-            function showQR(id) {
-                document.getElementById('qr-modal').style.display = 'flex';
-                const target = document.getElementById('qr-target');
-                target.innerHTML = '';
-                new QRCode(target, { text: window.location.origin + '/storage/api/download/' + id, width: 200, height: 200 });
+            function toggleMultiMode() {
+                isMulti = !isMulti;
+                document.getElementById('b-bar').style.display = isMulti ? 'flex' : 'none';
+                document.getElementById('f-group').style.display = isMulti ? 'none' : 'flex';
+                if(!isMulti) { selected.clear(); reload(); }
             }
 
-            function formatSize(b) {
-                if(!b) return '0 B';
-                const k = 1024, dm = 2, sizes = ['B', 'KB', 'MB', 'GB'], i = Math.floor(Math.log(b) / Math.log(k));
-                return parseFloat((b / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-            }
-
-            function closeViewer() { document.getElementById('viewer').style.display='none'; document.getElementById('v-content').innerHTML=''; }
-            function goUp() { if(parFolder) navigate(parFolder); else navigate('root'); }
-            function reload() { navigate(curFolder); }
-            function renderCurrent() { reload(); }
-
-            navigate('root');
+            function updateBar() { document.getElementById('sel-txt').innerText = selected.size + ' ВЫБРАНО'; }
+            function formatSize(b) { if(!b) return '---'; const i = Math.floor(Math.log(b)/Math.log(1024)); return (b/Math.pow(1024,i)).toFixed(1)+' '+['B','KB','MB','GB'][i]; }
+            function closeV() { document.getElementById('viewer').style.display='none'; document.getElementById('v-body').innerHTML=''; }
+            function reload() { nav(cid); }
+            nav('root');
         </script>
-        </body>
-        </html>`;
-    }
+    </body>
+    </html>\`;
 };
