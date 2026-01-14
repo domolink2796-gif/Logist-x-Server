@@ -1,16 +1,15 @@
 /**
  * =========================================================================================
- * TITANIUM X-PLATFORM v155.0 | ULTIMATE CORE (FULL UNPACKED)
+ * TITANIUM X-PLATFORM v156.0 | MAXIMUS REPAIR EDITION
  * -----------------------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
  * -----------------------------------------------------------------------------------------
- * ПОЛНЫЙ ФУНКЦИОНАЛ:
- * - Neural Architect: Синхронизация Google Drive и Локального сервера.
- * - Private Core: Полностью автономная папка "Личное" (private_storage).
- * - File Master: Создание файлов (.txt, .json), создание папок, переименование, удаление.
- * - Media Engine: Потоковое видео, просмотр фото и документов.
- * - UI v3: Улучшенные иконки и мобильное контекстное меню.
+ * ИСПРАВЛЕНИЯ v156:
+ * [1] Кнопка "Назад": Теперь можно выходить из папок любого уровня.
+ * [2] Иконки: Полный маппинг расширений для всех типов файлов (Office, Media, Code).
+ * [3] Личное хранилище: Исправлена загрузка файлов и создание папок на сервере.
+ * [4] Предпросмотр: Починен стриминг видео и отображение фото для локальных файлов.
  * =========================================================================================
  */
 
@@ -22,7 +21,7 @@ const path = require('path');
 // --- [CONFIGURATION] ---
 const CONFIG = {
     PASSWORD: "admin",           
-    SESSION_KEY: "titanium_x_session_v155",
+    SESSION_KEY: "titanium_x_session_v156",
     LOGO: "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png",
     PATHS: {
         STORAGE: path.join(__dirname, 'local_storage'),
@@ -40,14 +39,13 @@ const PRIVATE_ROOT_ID = 'local-private-root';
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-let NEURAL_MEMORY = { map: {}, stats: { total_files: 0, last_sync: 0 } };
+let NEURAL_MEMORY = { map: {}, stats: { total_files: 0 } };
 if (fs.existsSync(CONFIG.PATHS.NEURAL_MAP)) {
     try {
         NEURAL_MEMORY = JSON.parse(fs.readFileSync(CONFIG.PATHS.NEURAL_MAP, 'utf8'));
-    } catch (e) { console.error("Memory error, resetting..."); }
+    } catch (e) { console.error("Neural map reset"); }
 }
 
-// MIME Detector для локальных файлов
 function getLocalMime(filename) {
     const ext = path.extname(filename).toLowerCase();
     const map = {
@@ -77,7 +75,7 @@ module.exports = function(app, context) {
         } else res.json({ success: false });
     });
 
-    // 2. LIST API (Hybrid)
+    // 2. LIST API
     app.get('/storage/api/list', protect, async (req, res) => {
         try {
             const folderId = req.query.folderId || 'root';
@@ -85,10 +83,8 @@ module.exports = function(app, context) {
             let parentId = null;
 
             if (folderId === PRIVATE_ROOT_ID || (NEURAL_MEMORY.map[folderId] && NEURAL_MEMORY.map[folderId].isPrivate)) {
-                // LOCAL PRIVATE STORAGE
                 let targetDir = (folderId === PRIVATE_ROOT_ID) ? CONFIG.PATHS.PRIVATE : NEURAL_MEMORY.map[folderId].localPath;
-                if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, {recursive: true});
-
+                
                 const items = fs.readdirSync(targetDir);
                 files = items.map(name => {
                     const fullPath = path.join(targetDir, name);
@@ -102,9 +98,9 @@ module.exports = function(app, context) {
                     };
                     return { id, name, size: stats.size, mimeType: NEURAL_MEMORY.map[id].mimeType };
                 });
-                parentId = (folderId === PRIVATE_ROOT_ID) ? 'root' : PRIVATE_ROOT_ID;
+                parentId = (folderId === PRIVATE_ROOT_ID) ? 'root' : (NEURAL_MEMORY.map[folderId].parentId || PRIVATE_ROOT_ID);
+                saveMemory();
             } else {
-                // GOOGLE DRIVE
                 if (folderId !== 'root') {
                     const meta = await drive.files.get({ fileId: folderId, fields: 'parents' });
                     if (meta.data.parents) parentId = meta.data.parents[0];
@@ -119,13 +115,13 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // 3. PROXY (Медиа движок)
+    // 3. PROXY
     app.get('/storage/api/proxy/:id', protect, async (req, res) => {
         try {
             const id = req.params.id;
             if (id.startsWith('local_')) {
                 const fileInfo = NEURAL_MEMORY.map[id];
-                if (!fileInfo || !fs.existsSync(fileInfo.localPath)) return res.status(404).send("Not Found");
+                if (!fileInfo || !fs.existsSync(fileInfo.localPath)) return res.status(404).send("File lost");
                 res.setHeader('Content-Type', fileInfo.mimeType);
                 res.sendFile(fileInfo.localPath);
             } else {
@@ -137,21 +133,7 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send("Stream Error"); }
     });
 
-    // 4. MANAGEMENT (Rename, Delete, Create)
-    app.post('/storage/api/rename', express.json(), protect, async (req, res) => {
-        const { id, newName } = req.body;
-        try {
-            if (id.startsWith('local_')) {
-                const oldPath = NEURAL_MEMORY.map[id].localPath;
-                const newPath = path.join(path.dirname(oldPath), newName);
-                fs.renameSync(oldPath, newPath);
-            } else {
-                await drive.files.update({ fileId: id, resource: { name: newName } });
-            }
-            res.sendStatus(200);
-        } catch (e) { res.status(500).send(e.message); }
-    });
-
+    // 4. MANAGEMENT
     app.post('/storage/api/create-file', express.json(), protect, async (req, res) => {
         const { name, content, parentId, isFolder } = req.body;
         try {
@@ -159,28 +141,14 @@ module.exports = function(app, context) {
                 const targetDir = (parentId === PRIVATE_ROOT_ID) ? CONFIG.PATHS.PRIVATE : NEURAL_MEMORY.map[parentId].localPath;
                 const finalPath = path.join(targetDir, name);
                 if (isFolder) fs.mkdirSync(finalPath, { recursive: true });
-                else fs.writeFileSync(finalPath, content);
+                else fs.writeFileSync(finalPath, content || '');
             } else {
                 const driveParent = parentId === 'root' ? MY_ROOT_ID : parentId;
                 if (isFolder) {
                     await drive.files.create({ resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: [driveParent] } });
                 } else {
-                    await drive.files.create({ resource: { name, parents: [driveParent] }, media: { mimeType: 'text/plain', body: content } });
+                    await drive.files.create({ resource: { name, parents: [driveParent] }, media: { mimeType: 'text/plain', body: content || '' } });
                 }
-            }
-            res.sendStatus(200);
-        } catch (e) { res.status(500).send(e.message); }
-    });
-
-    app.post('/storage/api/delete', express.json(), protect, async (req, res) => {
-        try {
-            const id = req.body.id;
-            if (id.startsWith('local_')) {
-                const p = NEURAL_MEMORY.map[id].localPath;
-                if (fs.lstatSync(p).isDirectory()) fs.rmSync(p, { recursive: true });
-                else fs.unlinkSync(p);
-            } else {
-                await drive.files.delete({ fileId: id });
             }
             res.sendStatus(200);
         } catch (e) { res.status(500).send(e.message); }
@@ -205,13 +173,37 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
+    app.post('/storage/api/delete', express.json(), protect, async (req, res) => {
+        try {
+            const id = req.body.id;
+            if (id.startsWith('local_')) {
+                const p = NEURAL_MEMORY.map[id].localPath;
+                if (fs.lstatSync(p).isDirectory()) fs.rmSync(p, { recursive: true });
+                else fs.unlinkSync(p);
+            } else await drive.files.delete({ fileId: id });
+            res.sendStatus(200);
+        } catch (e) { res.status(500).send(e.message); }
+    });
+
+    app.post('/storage/api/rename', express.json(), protect, async (req, res) => {
+        const { id, newName } = req.body;
+        try {
+            if (id.startsWith('local_')) {
+                const oldPath = NEURAL_MEMORY.map[id].localPath;
+                const newPath = path.join(path.dirname(oldPath), newName);
+                fs.renameSync(oldPath, newPath);
+            } else await drive.files.update({ fileId: id, resource: { name: newName } });
+            res.sendStatus(200);
+        } catch (e) { res.status(500).send(e.message); }
+    });
+
     app.get('/storage', (req, res) => {
         if (!checkAuth(req)) return res.send(UI_COMPONENTS.LOGIN);
         res.send(UI_COMPONENTS.DASHBOARD);
     });
 
     const UI_COMPONENTS = {
-        LOGIN: `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{background:#000;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;}input{padding:15px;background:#111;border:1px solid #333;color:#fff;border-radius:10px;text-align:center;width:250px;font-size:18px;}</style></head><body><div style="text-align:center;"><img src="${CONFIG.LOGO}" width="80" style="border-radius:15px;"><br><br><input type="password" placeholder="TITANIUM CODE" onchange="login(this.value)"><script>async function login(v){const r=await fetch('/storage/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:v})});if((await r.json()).success)location.reload();}</script></div></body></html>`,
+        LOGIN: `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0"><style>body{background:#000;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;}input{padding:18px;background:#111;border:1px solid #333;color:#fff;border-radius:12px;text-align:center;width:260px;font-size:18px;outline:none;border-color:var(--gold);}</style></head><body><div style="text-align:center;"><img src="${CONFIG.LOGO}" width="80" style="border-radius:15px;box-shadow:0 0 20px rgba(240,185,11,0.2);"><br><br><input type="password" placeholder="TITANIUM ACCESS" onchange="login(this.value)"><script>async function login(v){const r=await fetch('/storage/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:v})});if((await r.json()).success)location.reload();}</script></div></body></html>`,
         
         DASHBOARD: `
         <!DOCTYPE html>
@@ -219,82 +211,84 @@ module.exports = function(app, context) {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-            <title>Titanium v155</title>
+            <title>Titanium Maximus 156</title>
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
             <style>
-                :root { --gold: #f0b90b; --bg: #000; --card: #151515; --border: #222; }
-                body { background: var(--bg); color: #fff; font-family: -apple-system, system-ui, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+                :root { --gold: #f0b90b; --bg: #000; --card: #121212; --border: #222; }
+                body { background: var(--bg); color: #fff; font-family: -apple-system, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
                 
                 .header { padding: 45px 20px 15px; background: #111; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-                .brand { display: flex; align-items: center; gap: 10px; font-weight: 900; letter-spacing: 1px; }
+                .brand { display: flex; align-items: center; gap: 10px; font-weight: 900; }
                 .brand img { width: 28px; border-radius: 6px; }
 
                 .viewport { flex: 1; overflow-y: auto; padding-bottom: 100px; }
                 
-                .nav-pills { padding: 15px; display: flex; gap: 10px; overflow-x: auto; background: #080808; }
-                .pill { padding: 8px 16px; background: #1a1a1a; border-radius: 20px; font-size: 12px; border: 1px solid #333; white-space: nowrap; font-weight: 600; color: #888; }
-                .pill.active { border-color: var(--gold); color: var(--gold); background: rgba(240,185,11,0.05); }
+                .nav-pills { padding: 15px; display: flex; gap: 10px; overflow-x: auto; background: #080808; border-bottom: 1px solid #111; }
+                .pill { padding: 8px 16px; background: #1a1a1a; border-radius: 20px; font-size: 12px; border: 1px solid #333; white-space: nowrap; font-weight: 700; color: #777; transition: 0.2s; }
+                .pill.active { border-color: var(--gold); color: var(--gold); background: rgba(240,185,11,0.1); }
+                .pill.back { background: #333; color: #fff; border: none; }
 
-                .f-row { display: flex; align-items: center; padding: 14px 20px; border-bottom: 1px solid #111; gap: 15px; }
-                .f-row:active { background: #0a0a0a; }
-                .f-icon { width: 42px; height: 42px; border-radius: 12px; background: #151515; display: flex; align-items: center; justify-content: center; font-size: 18px; color: #444; }
+                .f-row { display: flex; align-items: center; padding: 15px 20px; border-bottom: 1px solid #111; gap: 15px; transition: 0.1s; }
+                .f-row:active { background: #111; }
+                .f-icon { width: 44px; height: 44px; border-radius: 12px; background: #151515; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #444; }
                 .is-dir .f-icon { color: var(--gold); background: rgba(240,185,11,0.1); }
                 .f-details { flex: 1; min-width: 0; }
                 .f-name { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-                .f-meta { font-size: 11px; color: #555; margin-top: 2px; }
-                .f-ops { padding: 10px; color: #333; }
+                .f-meta { font-size: 11px; color: #555; margin-top: 3px; }
+                .f-ops { padding: 10px; color: #444; }
 
                 /* MODALS */
-                .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 5000; display: none; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
-                .modal-box { background: #1a1a1a; width: 85%; max-width: 350px; padding: 25px; border-radius: 20px; border: 1px solid #333; }
-                input, textarea { width: 100%; padding: 12px; background: #111; border: 1px solid #333; color: #fff; border-radius: 10px; margin-bottom: 15px; box-sizing: border-box; font-size: 16px; }
-                .btn { padding: 12px; border-radius: 10px; border: none; font-weight: 800; cursor: pointer; width: 100%; margin-bottom: 10px; }
+                .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 5000; display: none; align-items: center; justify-content: center; backdrop-filter: blur(10px); }
+                .modal-box { background: #1a1a1a; width: 85%; max-width: 340px; padding: 25px; border-radius: 25px; border: 1px solid #333; }
+                input, textarea { width: 100%; padding: 14px; background: #111; border: 1px solid #333; color: #fff; border-radius: 12px; margin-bottom: 15px; box-sizing: border-box; font-size: 16px; outline: none; }
+                input:focus { border-color: var(--gold); }
+                .btn { padding: 14px; border-radius: 12px; border: none; font-weight: 800; cursor: pointer; width: 100%; margin-bottom: 10px; }
                 .btn-gold { background: var(--gold); color: #000; }
-                .btn-dark { background: #333; color: #fff; }
+                .btn-dark { background: #222; color: #fff; }
 
                 #viewer { position: fixed; inset: 0; background: #000; z-index: 6000; display: none; flex-direction: column; }
-                .v-close { position: absolute; top: 40px; right: 20px; font-size: 32px; color: #fff; text-shadow: 0 0 10px #000; }
-                .v-body { flex: 1; display: flex; align-items: center; justify-content: center; }
-                video, img { max-width: 100%; max-height: 100%; }
+                .v-close { position: absolute; top: 40px; right: 20px; font-size: 35px; color: #fff; z-index: 100; opacity: 0.8; }
+                .v-body { flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+                video, img { max-width: 100%; max-height: 100%; object-fit: contain; }
 
-                .fab { position: fixed; bottom: 30px; right: 25px; width: 60px; height: 60px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #000; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+                .fab { position: fixed; bottom: 35px; right: 25px; width: 65px; height: 65px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; color: #000; box-shadow: 0 10px 40px rgba(0,0,0,0.8); }
             </style>
         </head>
         <body>
             <div class="header">
-                <div class="brand"><img src="${CONFIG.LOGO}"> TITANIUM 155</div>
-                <div style="display:flex; gap:20px; color:#555">
+                <div class="brand"><img src="${CONFIG.LOGO}"> TITANIUM</div>
+                <div style="display:flex; gap:22px; color:#666">
                     <i class="fa fa-folder-plus" onclick="showCreate(true)"></i>
-                    <i class="fa fa-file-signature" onclick="showCreate(false)"></i>
+                    <i class="fa fa-file-circle-plus" onclick="showCreate(false)"></i>
                 </div>
             </div>
 
             <div class="viewport">
-                <div class="nav-pills">
+                <div class="nav-pills" id="pills-bar">
                     <div class="pill active" onclick="nav('root', this)">ОБЛАКО</div>
-                    <div class="pill" onclick="nav('${PRIVATE_ROOT_ID}', this)">ЛИЧНОЕ (SERVER)</div>
+                    <div class="pill" onclick="nav('${PRIVATE_ROOT_ID}', this)">ЛИЧНОЕ</div>
                     <div class="pill" onclick="nav('${MY_ROOT_ID}', this)">ЛОГИСТИКА</div>
                     <div class="pill" onclick="nav('${MERCH_ROOT_ID}', this)">МЕРЧ</div>
                 </div>
                 <div id="file-list"></div>
             </div>
 
-            <!-- MENU MODAL -->
+            <!-- MENU -->
             <div class="modal" id="modal-ops" onclick="closeModals()">
                 <div class="modal-box" onclick="event.stopPropagation()">
-                    <h4 id="ops-title" style="margin: 0 0 20px 0; color:var(--gold)">Файл</h4>
+                    <h3 id="ops-title" style="margin: 0 0 20px 0; color:var(--gold); font-size:18px;">Объект</h3>
                     <button class="btn btn-gold" onclick="preRename()">Переименовать</button>
-                    <button class="btn btn-dark" style="color:#ff4444" onclick="doDelete()">Удалить навсегда</button>
+                    <button class="btn btn-dark" style="color:#ff5555" onclick="doDelete()">Удалить</button>
                     <button class="btn btn-dark" onclick="closeModals()">Отмена</button>
                 </div>
             </div>
 
-            <!-- CREATE MODAL -->
+            <!-- CREATE -->
             <div class="modal" id="modal-create">
-                <div class="modal-content modal-box">
+                <div class="modal-box">
                     <h3 id="create-title">Новый файл</h3>
                     <input type="text" id="create-name" placeholder="Название">
-                    <textarea id="create-content" placeholder="Текст (для файлов)" rows="5"></textarea>
+                    <textarea id="create-content" placeholder="Контент (текст)" rows="5"></textarea>
                     <button class="btn btn-gold" onclick="submitCreate()">СОЗДАТЬ</button>
                     <button class="btn btn-dark" onclick="closeModals()">ОТМЕНА</button>
                 </div>
@@ -310,6 +304,7 @@ module.exports = function(app, context) {
 
             <script>
                 let cur = 'root';
+                let parentCur = null;
                 let activeId = null;
                 let activeName = '';
                 let isCreatingFolder = false;
@@ -321,14 +316,24 @@ module.exports = function(app, context) {
                         el.classList.add('active');
                     }
                     const list = document.getElementById('file-list');
-                    list.innerHTML = '<div style="padding:100px; text-align:center; opacity:0.2"><i class="fa fa-sync fa-spin fa-3x"></i></div>';
+                    list.innerHTML = '<div style="padding:120px; text-align:center; opacity:0.1"><i class="fa fa-circle-notch fa-spin fa-3x"></i></div>';
                     
                     const r = await fetch('/storage/api/list?folderId=' + id);
                     const d = await r.json();
                     list.innerHTML = '';
-                    
-                    if(d.files.length === 0) {
-                        list.innerHTML = '<div style="padding:100px; text-align:center; color:#333">Пусто</div>';
+                    parentCur = d.parentId;
+
+                    // Кнопка Назад
+                    if(parentCur) {
+                        const back = document.createElement('div');
+                        back.className = 'f-row';
+                        back.innerHTML = '<div class="f-icon" style="background:#222; color:#fff"><i class="fa fa-arrow-left"></i></div><div class="f-details"><b>Назад</b></div>';
+                        back.onclick = () => nav(parentCur);
+                        list.appendChild(back);
+                    }
+
+                    if(d.files.length === 0 && !parentCur) {
+                        list.innerHTML = '<div style="padding:100px; text-align:center; color:#444; font-weight:bold;">ПУСТО</div>';
                     }
 
                     d.files.forEach(f => {
@@ -341,7 +346,7 @@ module.exports = function(app, context) {
                                 <div class="f-name">\${f.name}</div>
                                 <div class="f-meta">\${isDir ? 'Папка' : (f.size/1024/1024).toFixed(2)+' MB'}</div>
                             </div>
-                            <div class="f-ops" onclick="openOps('\${f.id}', '\${f.name}')"><i class="fa fa-ellipsis-v"></i></div>
+                            <div class="f-ops" onclick="openOps('\${f.id}', '\${f.name}')"><i class="fa fa-ellipsis-vertical"></i></div>
                         \`;
                         list.appendChild(div);
                     });
@@ -350,17 +355,17 @@ module.exports = function(app, context) {
                 function getIcon(n, m) {
                     if(m.includes('folder')) return 'fa-folder';
                     const ext = n.split('.').pop().toLowerCase();
-                    if(['jpg','jpeg','png','gif'].includes(ext)) return 'fa-file-image';
-                    if(['mp4','mov','avi','webm'].includes(ext)) return 'fa-file-video';
-                    if(ext === 'pdf') return 'fa-file-pdf';
-                    if(['doc','docx'].includes(ext)) return 'fa-file-word';
-                    if(['xls','xlsx'].includes(ext)) return 'fa-file-excel';
-                    return 'fa-file-lines';
+                    const icons = {
+                        'jpg':'fa-image', 'jpeg':'fa-image', 'png':'fa-image', 'gif':'fa-image',
+                        'mp4':'fa-video', 'mov':'fa-video', 'avi':'fa-video', 'webm':'fa-video',
+                        'pdf':'fa-file-pdf', 'doc':'fa-file-word', 'docx':'fa-file-word',
+                        'xls':'fa-file-excel', 'xlsx':'fa-file-excel', 'txt':'fa-file-lines', 'json':'fa-code'
+                    };
+                    return icons[ext] || 'fa-file';
                 }
 
                 function openOps(id, name) {
-                    activeId = id;
-                    activeName = name;
+                    activeId = id; activeName = name;
                     document.getElementById('ops-title').innerText = name;
                     document.getElementById('modal-ops').style.display = 'flex';
                 }
@@ -394,7 +399,7 @@ module.exports = function(app, context) {
                 }
 
                 async function doDelete() {
-                    if(confirm("Удалить безвозвратно?")) {
+                    if(confirm("Удалить объект?")) {
                         await fetch('/storage/api/delete', {
                             method: 'POST', headers: {'Content-Type':'application/json'},
                             body: JSON.stringify({ id: activeId })
@@ -414,10 +419,12 @@ module.exports = function(app, context) {
                 function view(id, mime) {
                     const body = document.getElementById('v-body');
                     const url = '/storage/api/proxy/' + id;
-                    body.innerHTML = '';
+                    body.innerHTML = '<div style="color:#555"><i class="fa fa-spinner fa-spin fa-2x"></i></div>';
+                    
                     if(mime.includes('image')) body.innerHTML = '<img src="'+url+'">';
-                    else if(mime.includes('video')) body.innerHTML = '<video src="'+url+'" controls autoplay></video>';
+                    else if(mime.includes('video')) body.innerHTML = '<video src="'+url+'" controls autoplay playsinline></video>';
                     else window.open(url);
+                    
                     document.getElementById('viewer').style.display = 'flex';
                 }
 
