@@ -1,15 +1,17 @@
-const express = require('express');
+Const express = require('express');
 const { google } = require('googleapis');
 const { Telegraf } = require('telegraf');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const { Readable } = require('stream');
 const crypto = require('crypto');
+const cookieParser = require('cookie-parser');
 
 // Подключаем fetch для работы с картами (Geocoding)
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const app = express();
+app.use(cookieParser());
 app.use(cors());
 app.use(bodyParser.json({ limit: '150mb' }));
 app.use(bodyParser.urlencoded({ limit: '150mb', extended: true }));
@@ -24,7 +26,7 @@ const BARCODE_DB_NAME = 'barcodes_db.json';
 const SHOP_ITEMS_DB = 'shop_items_db.json'; // База товаров в магазинах
 const ADMIN_PASS = 'Logist_X_ADMIN'; 
 const MY_TELEGRAM_ID = 6846149935; 
-const SERVER_URL = 'https://logist-x.store';
+const SERVER_URL = 'https://logist-x.store'; 
 const MAX_DISTANCE_METERS = 600; 
 
 // --- НАСТРОЙКИ РОБОКАССЫ ---
