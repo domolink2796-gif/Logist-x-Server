@@ -5,16 +5,16 @@
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
  * БАЗА: Глубокая интеграция с server.js (Logist X & Merch X)
- * СТАТУС: MAXIMUM AUTONOMY | LOCAL STORAGE REPLICATION READY
+ * ДОМЕН: https://logist-x.store
+ * СТАТУС: MAXIMUM AUTONOMY | PROXY MEDIA READY | NEURAL REPLICATION
  * -----------------------------------------------------------------------------------------
  * ВОЗМОЖНОСТИ:
  * 1. Физическая репликация структуры Google Drive на локальный диск сервера.
- * 2. Дерево навигации с поддержкой глубокой вложенности.
+ * 2. Дерево навигации с поддержкой глубокой вложенности и поиска.
  * 3. Создание любых типов файлов (.txt, .json, .doc) и папок.
  * 4. Удаление объектов (Drive + Local Storage) с очисткой нейронного индекса.
- * 5. Встроенный мульти-плеер (Видео, Фото, PDF, Документы).
- * 6. Интерфейс архиватора (подготовка под .rar / .zip).
- * 7. Автоматическое зеркалирование системных баз данных (JSON).
+ * 5. Встроенный мульти-плеер (Видео, Фото через Proxy, PDF, Документы).
+ * 6. Автоматическое зеркалирование системных баз данных (JSON).
  * =========================================================================================
  */
 
@@ -25,19 +25,20 @@ const path = require('path');
 const { Readable } = require('stream');
 
 // --- ГЛОБАЛЬНЫЕ КОНСТАНТЫ И КОНФИГУРАЦИЯ ХРАНИЛИЩА ---
+const BASE_URL = "https://logist-x.store";
 const LOGO_URL = "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png";
 const STORAGE_ROOT = path.join(__dirname, 'local_storage');
 const DB_MIRROR_ROOT = path.join(__dirname, 'db_mirror');
 const REPORT_LEDGER_DIR = path.join(__dirname, 'local_storage/reports_shadow_ledger');
 const NEURAL_INDEX = path.join(__dirname, 'titanium_neural_map.json');
+const SYSTEM_LOGS = path.join(__dirname, 'titanium_system.log');
 
-// Глубокая инициализация физической архитектуры (Full Replication Path)
+// Глубокая инициализация физической архитектуры
 [STORAGE_ROOT, DB_MIRROR_ROOT, REPORT_LEDGER_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
 module.exports = function(app, context) {
-    // Импорт инструментов из основного серверного ядра
     const { 
         drive, google, MY_ROOT_ID, MERCH_ROOT_ID, 
         readDatabase, saveDatabase, getOrCreateFolder,
@@ -45,40 +46,41 @@ module.exports = function(app, context) {
         sheets
     } = context;
 
-    // Настройка Multer для работы с тяжелыми медиа-файлами (500MB Limit)
     const upload = multer({ 
         dest: 'uploads/',
-        limits: { fileSize: 500 * 1024 * 1024 }
+        limits: { fileSize: 500 * 1024 * 1024 } // 500MB
     });
 
     /**
      * -------------------------------------------------------------------------------------
-     * [РАЗДЕЛ 1]: НЕЙРОННЫЙ АРХИТЕКТОР (AUTONOMOUS LOGIC & REPLICATION)
+     * [РАЗДЕЛ 1]: НЕЙРОННЫЙ АРХИТЕКТОР (ЛОГИКА И СИНХРОНИЗАЦИЯ)
      * -------------------------------------------------------------------------------------
      */
     
-    // Восстановление глубокого пути из Google Drive (Логика выхода по ID)
+    function logNeural(msg) {
+        const entry = `[${new Date().toISOString()}] ${msg}\n`;
+        fs.appendFileSync(SYSTEM_LOGS, entry);
+        console.log(`🧠 [TITANIUM]: ${msg}`);
+    }
+
     async function resolveDeepPath(folderId) {
         let chain = [];
         try {
             let current = folderId;
             const roots = [MY_ROOT_ID, MERCH_ROOT_ID, 'root', undefined, null];
-            
             while (current && !roots.includes(current)) {
                 const info = await drive.files.get({ fileId: current, fields: 'id, name, parents' });
                 if (!info.data.name) break;
                 chain.unshift(info.data.name);
                 current = (info.data.parents) ? info.data.parents[0] : null;
-                // Предохранитель от бесконечных циклов (лимит Drive API)
-                if (chain.length > 20) break;
+                if (chain.length > 25) break; 
             }
         } catch (e) { 
-            console.warn("⚠️ TITANIUM PATH RESOLVER: Drive node unreachable.");
+            logNeural(`Path Resolution Warning for ${folderId}`);
         }
         return chain;
     }
 
-    // Главный процесс синхронизации, обучения и физической репликации
     async function titaniumNeuralProcess(asset, action = 'sync', buffer = null) {
         setImmediate(async () => {
             try {
@@ -88,34 +90,29 @@ module.exports = function(app, context) {
                 }
                 
                 if (action === 'delete') {
-                    // Логика удаления из индекса и локального диска
                     const entry = index.map[asset.id];
                     if (entry && entry.localPath && fs.existsSync(entry.localPath)) {
                         try { fs.unlinkSync(entry.localPath); } catch(err) {}
                     }
                     delete index.map[asset.id];
-                    console.log(`🧠 [TITANIUM] FORGOT: ${asset.id}`);
+                    logNeural(`Object Forgotten: ${asset.id}`);
                 } else {
-                    const { id, name, parentId, mimeType, size } = asset;
-                    
-                    // Определение принадлежности к ядру проекта (Logist/Merch)
+                    const { id, name, parentId, mimeType } = asset;
                     let folderChain = await resolveDeepPath(parentId);
                     const isMerch = (parentId === MERCH_ROOT_ID || folderChain.some(n => n.toLowerCase().includes('мерч')));
                     const projectNode = isMerch ? 'MERCH_CORE' : 'LOGIST_CORE';
 
-                    // Формирование физического пути на диске сервера
                     const localDirPath = path.join(STORAGE_ROOT, projectNode, ...folderChain);
                     const localFilePath = path.join(localDirPath, name || `asset_${id}`);
 
                     if (!fs.existsSync(localDirPath)) fs.mkdirSync(localDirPath, { recursive: true });
 
-                    // Репликация: сохранение физического файла если есть буфер
                     if (buffer) {
                         fs.writeFileSync(localFilePath, buffer);
                         index.stats.files++;
+                        logNeural(`Physical Replication: ${name}`);
                     }
 
-                    // Обновление нейронного индекса метаданными
                     index.map[id] = { 
                         localPath: fs.existsSync(localFilePath) ? localFilePath : null, 
                         name: name, 
@@ -129,45 +126,53 @@ module.exports = function(app, context) {
 
                 index.stats.syncs++;
                 fs.writeFileSync(NEURAL_INDEX, JSON.stringify(index, null, 2));
-                
-                // Авто-зеркалирование системных баз данных
                 await autoMirrorDatabases();
-            } catch (e) { console.error("❌ NEURAL CORE ERROR:", e.message); }
+            } catch (e) { logNeural(`Neural Core Error: ${e.message}`); }
         });
     }
 
-    // Интеллектуальное зеркалирование всех системных JSON баз (из v142)
     async function autoMirrorDatabases() {
         try {
             const keys = await readDatabase();
             if (!keys) return;
             fs.writeFileSync(path.join(DB_MIRROR_ROOT, 'keys_database.json'), JSON.stringify(keys, null, 2));
-            
             for (let k of keys) {
                 if (k.folderId) {
                     const kDir = path.join(DB_MIRROR_ROOT, k.key);
                     if (!fs.existsSync(kDir)) fs.mkdirSync(kDir, { recursive: true });
-                    
                     try {
-                        const [bDb, pDb] = await Promise.all([
-                            readBarcodeDb(k.folderId),
-                            readPlanogramDb(k.folderId)
-                        ]);
+                        const [bDb, pDb] = await Promise.all([readBarcodeDb(k.folderId), readPlanogramDb(k.folderId)]);
                         if (bDb) fs.writeFileSync(path.join(kDir, 'barcodes.json'), JSON.stringify(bDb, null, 2));
                         if (pDb) fs.writeFileSync(path.join(kDir, 'planograms.json'), JSON.stringify(pDb, null, 2));
-                    } catch (err) { /* Ошибка конкретного ключа - пропускаем */ }
+                    } catch (err) {}
                 }
             }
-        } catch (e) { /* Фон */ }
+        } catch (e) {}
     }
 
     /**
      * -------------------------------------------------------------------------------------
-     * [РАЗДЕЛ 2]: API GATEWAY (FULL CONTROL)
+     * [РАЗДЕЛ 2]: API GATEWAY (PROXY & CONTROL)
      * -------------------------------------------------------------------------------------
      */
     
-    // Получение списка файлов с определением локального статуса
+    // Медиа-прокси для logist-x.store
+    app.get('/storage/api/proxy/:id', async (req, res) => {
+        try {
+            const fileId = req.params.id;
+            const response = await drive.files.get({ fileId: fileId, alt: 'media' }, { responseType: 'stream' });
+            const meta = await drive.files.get({ fileId: fileId, fields: 'mimeType, name' });
+            
+            res.setHeader('Content-Type', meta.data.mimeType);
+            res.setHeader('Cache-Control', 'public, max-age=3600');
+            res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(meta.data.name)}"`);
+            
+            response.data.pipe(res);
+        } catch (e) {
+            res.status(404).send("Media stream unavailable");
+        }
+    });
+
     app.get('/storage/api/list', async (req, res) => {
         try {
             const folderId = req.query.folderId || 'root';
@@ -185,14 +190,12 @@ module.exports = function(app, context) {
                 isLocal: !!(index.map[f.id] && index.map[f.id].isLocal)
             }));
 
-            // Обучение в фоне
+            // Фоновое обновление индекса
             r.data.files.forEach(f => titaniumNeuralProcess({...f, parentId: folderId}));
-            
             res.json(files);
         } catch (e) { res.status(500).json({error: e.message}); }
     });
 
-    // Создание папки
     app.post('/storage/api/mkdir', express.json(), async (req, res) => {
         try {
             const r = await drive.files.create({ 
@@ -204,39 +207,35 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    // Создание любого файла (.txt, .json, .doc)
     app.post('/storage/api/mkfile', express.json(), async (req, res) => {
         try {
-            const { name, parentId, type } = req.body;
+            const { name, parentId, type, content = '' } = req.body;
             const r = await drive.files.create({
                 resource: { name, parents: [parentId] },
-                media: { mimeType: type, body: '' },
+                media: { mimeType: type, body: content },
                 fields: 'id, name, mimeType'
             });
-            await titaniumNeuralProcess({ ...r.data, parentId }, 'sync');
+            await titaniumNeuralProcess({ ...r.data, parentId }, 'sync', Buffer.from(content));
             res.json(r.data);
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    // Загрузка медиа-файла с физической репликацией
     app.post('/storage/api/upload', upload.single('file'), async (req, res) => {
         try {
+            if (!req.file) return res.status(400).send("No file uploaded");
             const filePath = req.file.path;
             const buffer = fs.readFileSync(filePath);
-            
             const r = await drive.files.create({ 
                 resource: { name: req.file.originalname, parents: [req.body.folderId] },
                 media: { mimeType: req.file.mimetype, body: fs.createReadStream(filePath) },
                 fields: 'id, name, mimeType, size'
             });
-            
             await titaniumNeuralProcess({ ...r.data, parentId: req.body.folderId }, 'sync', buffer);
             if (fs.existsSync(filePath)) fs.unlinkSync(filePath); 
             res.sendStatus(200);
         } catch (e) { res.status(500).send(e.message); }
     });
 
-    // Удаление из облака и локального зеркала
     app.post('/storage/api/delete', express.json(), async (req, res) => {
         try {
             const { id } = req.body;
@@ -259,18 +258,20 @@ module.exports = function(app, context) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#050505">
+    <title>TITANIUM ULTRA | logist-x.store</title>
     
-    <title>TITANIUM ULTRA v146</title>
-    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@500;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto+Mono:wght@400;700&family=Roboto:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    
     <style>
         :root { 
             --gold: #f0b90b; 
+            --gold-glow: rgba(240, 185, 11, 0.4);
             --bg: #050505; 
             --card: #121212; 
             --text-main: #ffffff; 
             --text-dim: #999;
+            --accent: #1e88e5;
             --safe-top: env(safe-area-inset-top); 
             --safe-bottom: env(safe-area-inset-bottom); 
         }
@@ -282,187 +283,233 @@ module.exports = function(app, context) {
             background: var(--bg); color: var(--text-main); overflow: hidden; position: fixed;
         }
 
+        /* HEADER & LOGO */
         header {
-            height: calc(85px + var(--safe-top)); background: #000; border-bottom: 5px solid var(--gold);
+            height: calc(90px + var(--safe-top)); background: #000; border-bottom: 4px solid var(--gold);
             display: flex; align-items: flex-end; justify-content: space-between; 
-            padding: 0 25px 15px; z-index: 5000; position: relative;
+            padding: 0 30px 15px; z-index: 5000; position: relative;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.9);
         }
         .logo { display: flex; align-items: center; gap: 15px; cursor: pointer; }
-        .logo img { height: 45px; border-radius: 12px; box-shadow: 0 0 25px var(--gold); }
-        .logo b { font-family: 'Google Sans'; font-size: 24px; letter-spacing: 1px; color: #fff; }
+        .logo img { height: 50px; border-radius: 12px; box-shadow: 0 0 20px var(--gold-glow); transition: 0.3s; }
+        .logo:hover img { transform: scale(1.05); }
+        .logo b { font-family: 'Google Sans'; font-size: 26px; letter-spacing: 0.5px; color: #fff; }
+        .logo span { color: var(--gold); font-weight: 900; margin-left: 5px; }
 
-        .shell { display: flex; height: calc(100% - (85px + var(--safe-top))); width: 100%; background: #fff; color: #1a1a1b; }
+        /* SHELL & SIDEBAR */
+        .shell { display: flex; height: calc(100% - (90px + var(--safe-top))); width: 100%; background: #fff; color: #1a1a1b; }
         
-        /* SIDEBAR / TREE SYSTEM */
         aside {
-            width: 320px; background: #0a0a0a; border-right: 2px solid #222;
+            width: 340px; background: #0a0a0a; border-right: 1px solid #222;
             display: flex; flex-direction: column; transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1); 
-            z-index: 4000; color: #ccc;
+            z-index: 4000; color: #ccc; box-shadow: 10px 0 30px rgba(0,0,0,0.1);
         }
-        @media (max-width: 900px) { 
-            aside { position: absolute; left: -320px; height: 100%; } 
-            aside.open { left: 0; box-shadow: 25px 0 70px rgba(0,0,0,0.8); } 
+        @media (max-width: 1024px) { 
+            aside { position: absolute; left: -340px; height: 100%; } 
+            aside.open { left: 0; box-shadow: 30px 0 100px rgba(0,0,0,0.9); } 
         }
 
-        .tree-header { padding: 30px 25px 10px; font-weight: 800; font-size: 11px; letter-spacing: 2px; color: var(--gold); }
+        .tree-header { padding: 40px 30px 15px; font-weight: 900; font-size: 12px; letter-spacing: 3px; color: var(--gold); text-transform: uppercase; }
         .nav-link {
-            height: 60px; margin: 5px 15px; border-radius: 30px; display: flex; align-items: center;
-            padding: 0 22px; cursor: pointer; font-size: 15px; font-weight: 600; color: #888; transition: 0.3s;
+            height: 65px; margin: 5px 20px; border-radius: 15px; display: flex; align-items: center;
+            padding: 0 20px; cursor: pointer; font-size: 16px; font-weight: 600; color: #777; transition: 0.2s;
         }
-        .nav-link i { width: 35px; font-size: 20px; text-align: center; }
-        .nav-link:hover { background: #1a1a1a; color: #fff; }
-        .nav-link.active { background: #1a1a1a; color: var(--gold); border: 1px solid var(--gold); font-weight: 700; }
+        .nav-link i { width: 35px; font-size: 20px; color: #444; }
+        .nav-link:hover { background: #151515; color: #fff; }
+        .nav-link.active { background: #1a1a1a; color: var(--gold); border-left: 5px solid var(--gold); font-weight: 800; }
+        .nav-link.active i { color: var(--gold); }
 
         /* MAIN CONTENT AREA */
-        main { flex: 1; display: flex; flex-direction: column; background: #fff; overflow: hidden; position: relative; }
+        main { flex: 1; display: flex; flex-direction: column; background: #fdfdfd; overflow: hidden; position: relative; }
         
         .dash-bar { 
-            padding: 15px 25px; background: #111; color: #fff; 
+            padding: 15px 30px; background: #000; color: #fff; 
             display: flex; justify-content: space-between; align-items: center;
             font-size: 11px; font-weight: 800; border-bottom: 2px solid var(--gold);
         }
-        .live-dot { width: 12px; height: 12px; background: #4caf50; border-radius: 50%; display: inline-block; margin-right: 8px; box-shadow: 0 0 10px #4caf50; animation: pulse 2s infinite; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+        .live-dot { width: 10px; height: 10px; background: #4caf50; border-radius: 50%; display: inline-block; margin-right: 10px; box-shadow: 0 0 12px #4caf50; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.2); opacity: 0.5; } 100% { transform: scale(1); opacity: 1; } }
 
-        .toolbar { padding: 18px 25px; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 15px; background: #fdfdfd; }
-        .breadcrumb { flex: 1; font-weight: 700; font-size: 15px; color: #444; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .toolbar { 
+            padding: 20px 30px; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 20px; 
+            background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,0.02);
+        }
+        .breadcrumb { flex: 1; font-weight: 800; font-size: 17px; color: #222; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'Google Sans'; }
+        
+        .search-box { position: relative; width: 250px; }
+        .search-box input { width: 100%; padding: 12px 15px 12px 40px; border-radius: 12px; border: 1px solid #eee; background: #f9f9f9; font-weight: 600; font-size: 14px; }
+        .search-box i { position: absolute; left: 15px; top: 14px; color: #bbb; }
 
-        .content { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: calc(100px + var(--safe-bottom)); }
+        .content { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 0 calc(100px + var(--safe-bottom)); }
         .data-table { width: 100%; border-collapse: collapse; }
-        .data-table tr { border-bottom: 1px solid #f2f2f2; transition: 0.2s; }
-        .data-table tr:hover { background: #fafafa; }
-        .data-table td { padding: 20px 25px; cursor: pointer; }
+        .data-table thead { position: sticky; top: 0; background: #fff; z-index: 100; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .data-table th { text-align: left; padding: 15px 30px; font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: 1px; }
+        .data-table tr { border-bottom: 1px solid #f6f6f6; transition: 0.2s; }
+        .data-table tr:hover { background: #fcfcfc; }
+        .data-table td { padding: 22px 30px; cursor: pointer; }
         
-        /* FILE ICON SYSTEM */
-        .f-item { display: flex; align-items: center; gap: 20px; }
-        .f-icon { width: 50px; height: 50px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 24px; position: relative; }
-        .f-name { font-weight: 700; font-size: 16px; color: #111; }
-        .f-meta { font-size: 11px; color: #999; margin-top: 5px; display: flex; align-items: center; gap: 10px; }
+        /* FILE ICON & ITEM STYLE */
+        .f-item { display: flex; align-items: center; gap: 22px; }
+        .f-icon { width: 55px; height: 55px; border-radius: 18px; display: flex; align-items: center; justify-content: center; font-size: 26px; transition: 0.3s; position: relative; }
+        .f-name { font-weight: 800; font-size: 17px; color: #111; margin-bottom: 5px; }
+        .f-meta { font-size: 12px; color: #aaa; display: flex; align-items: center; gap: 12px; font-weight: 500; }
         
-        .badge { font-size: 9px; padding: 3px 8px; border-radius: 6px; font-weight: 900; color: #fff; }
-        .b-local { background: #2e7d32; border: 1px solid #1b5e20; }
-        .b-cloud { background: #1565c0; border: 1px solid #0d47a1; }
-        .b-type { background: #eee; color: #666; border: 1px solid #ddd; }
+        .badge { font-size: 9px; padding: 4px 10px; border-radius: 6px; font-weight: 900; color: #fff; letter-spacing: 0.5px; }
+        .b-local { background: #1b5e20; box-shadow: 0 2px 8px rgba(27, 94, 32, 0.3); }
+        .b-cloud { background: #0d47a1; box-shadow: 0 2px 8px rgba(13, 71, 161, 0.3); }
+        .b-type { background: #f0f0f0; color: #888; border: 1px solid #e0e0e0; }
 
-        .icon-folder { background: #fff8e1; color: #fbc02d; }
+        .icon-folder { background: #fff9c4; color: #fbc02d; }
         .icon-image { background: #e3f2fd; color: #1e88e5; }
-        .icon-video { background: #fbe9e7; color: #d84315; }
-        .icon-pdf { background: #ffebee; color: #c62828; }
-        .icon-archive { background: #f3e5f5; color: #7b1fa2; }
+        .icon-video { background: #ede7f6; color: #5e35b1; }
+        .icon-pdf { background: #ffebee; color: #d32f2f; }
+        .icon-doc { background: #e8f5e9; color: #2e7d32; }
         .icon-default { background: #f5f5f5; color: #757575; }
 
-        /* ACTIONS & BUTTONS */
-        .btn-act { width: 45px; height: 45px; border-radius: 12px; border: none; background: #f0f0f0; color: #555; cursor: pointer; transition: 0.2s; font-size: 18px; }
-        .btn-act:hover { background: #e0e0e0; color: #000; }
+        /* BUTTONS & ACTIONS */
+        .btn-act { width: 45px; height: 45px; border-radius: 12px; border: none; background: #f5f5f5; color: #666; cursor: pointer; transition: 0.2s; font-size: 18px; }
+        .btn-act:hover { background: #eee; color: #000; transform: translateY(-2px); }
         .btn-del:hover { background: #ffebee; color: #d32f2f; }
 
+        /* FAB & POPUP */
         .fab {
-            position: fixed; bottom: calc(35px + var(--safe-bottom)); right: 30px; width: 80px; height: 80px;
-            border-radius: 25px; background: #000; border: 4px solid var(--gold);
+            position: fixed; bottom: calc(40px + var(--safe-bottom)); right: 40px; width: 85px; height: 85px;
+            border-radius: 28px; background: #000; border: 4px solid var(--gold);
             display: flex; align-items: center; justify-content: center; z-index: 6000;
-            box-shadow: 0 15px 45px rgba(0,0,0,0.6); color: var(--gold); font-size: 32px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5); color: var(--gold); font-size: 35px;
             transition: 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); cursor: pointer;
         }
-        .fab:active { transform: scale(0.85); }
+        .fab:hover { transform: scale(1.05) rotate(90deg); }
+        .fab:active { transform: scale(0.9); }
 
-        #pop { position: fixed; display: none; bottom: calc(130px + var(--safe-bottom)); right: 30px; background: #fff; border-radius: 25px; box-shadow: 0 20px 60px rgba(0,0,0,0.4); z-index: 8000; min-width: 280px; overflow: hidden; border: 1px solid #eee; }
-        .pop-item { padding: 20px 25px; display: flex; align-items: center; gap: 15px; cursor: pointer; font-weight: 700; color: #333; border-bottom: 1px solid #f5f5f5; }
-        .pop-item:hover { background: #fcfcfc; }
+        #pop { 
+            position: fixed; display: none; bottom: calc(140px + var(--safe-bottom)); right: 40px; 
+            background: #fff; border-radius: 25px; box-shadow: 0 30px 100px rgba(0,0,0,0.4); 
+            z-index: 8000; min-width: 300px; overflow: hidden; border: 1px solid #eee;
+            animation: popIn 0.3s ease-out;
+        }
+        @keyframes popIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .pop-item { padding: 22px 30px; display: flex; align-items: center; gap: 20px; cursor: pointer; font-weight: 700; color: #333; transition: 0.2s; border-bottom: 1px solid #f9f9f9; }
+        .pop-item:hover { background: #fcfcfc; padding-left: 35px; color: var(--gold); }
+        .pop-item i { font-size: 20px; width: 25px; text-align: center; }
         
-        /* VIEWER SYSTEM */
-        #viewer { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.98); z-index: 9500; flex-direction: column; }
-        .v-header { height: calc(75px + var(--safe-top)); display: flex; align-items: flex-end; justify-content: space-between; padding: 0 25px 18px; color: #fff; background: #000; border-bottom: 1px solid #222; }
-        .v-content { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 20px; }
-        .v-content img, .v-content video { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; box-shadow: 0 0 50px rgba(0,0,0,0.5); }
-        .v-content iframe { width: 100%; height: 100%; border: none; background: #fff; border-radius: 8px; }
+        /* VIEWER & MODALS */
+        #viewer { display: none; position: fixed; inset: 0; background: rgba(0,0,0,1); z-index: 9500; flex-direction: column; }
+        .v-header { height: calc(85px + var(--safe-top)); display: flex; align-items: flex-end; justify-content: space-between; padding: 0 30px 20px; color: #fff; background: #000; }
+        .v-content { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        .v-content img, .v-content video { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 0 100px rgba(0,0,0,0.5); }
+        .v-content iframe { width: 100%; height: 100%; border: none; background: #fff; }
 
-        /* MODALS */
-        #modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 10000; align-items: center; justify-content: center; padding: 20px; }
-        .m-card { background: #fff; width: 100%; max-width: 450px; padding: 35px; border-radius: 30px; box-shadow: 0 25px 80px rgba(0,0,0,0.5); color: #000; }
-        .m-header { font-weight: 800; font-size: 22px; margin-bottom: 20px; color: #000; }
-        .m-input { width: 100%; padding: 18px; border: 3px solid #eee; border-radius: 15px; margin-bottom: 20px; font-size: 18px; font-weight: 700; font-family: inherit; }
-        .m-btn { width: 100%; padding: 18px; border-radius: 15px; border: none; background: var(--gold); font-weight: 900; font-size: 18px; cursor: pointer; color: #000; transition: 0.2s; }
-        .m-btn-sec { background: #eee; color: #555; margin-top: 12px; }
+        #modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 10000; align-items: center; justify-content: center; padding: 20px; }
+        .m-card { background: #fff; width: 100%; max-width: 500px; padding: 45px; border-radius: 35px; box-shadow: 0 40px 150px rgba(0,0,0,0.6); }
+        .m-header { font-weight: 900; font-size: 26px; margin-bottom: 25px; color: #000; font-family: 'Google Sans'; }
+        .m-input { width: 100%; padding: 20px; border: 3px solid #f0f0f0; border-radius: 18px; margin-bottom: 25px; font-size: 18px; font-weight: 700; transition: 0.3s; }
+        .m-input:focus { border-color: var(--gold); }
+        .m-btn { width: 100%; padding: 20px; border-radius: 18px; border: none; background: var(--gold); font-weight: 900; font-size: 19px; cursor: pointer; color: #000; transition: 0.3s; box-shadow: 0 10px 30px var(--gold-glow); }
+        .m-btn:hover { transform: translateY(-3px); box-shadow: 0 15px 40px var(--gold-glow); }
+        .m-btn-sec { background: #f0f0f0; color: #666; margin-top: 15px; box-shadow: none; }
+
+        /* NEURAL STATUS PANEL */
+        .neural-info { padding: 30px; background: #080808; margin-top: auto; border-top: 1px solid #1a1a1a; }
+        .n-row { display: flex; justify-content: space-between; font-size: 10px; font-weight: 800; color: #444; margin-bottom: 12px; letter-spacing: 1px; }
+        .n-bar { height: 6px; background: #151515; border-radius: 3px; overflow: hidden; }
+        .n-fill { height: 100%; background: var(--gold); width: 100%; box-shadow: 0 0 15px var(--gold); }
 
         /* LOADER */
-        .loader-overlay { position: absolute; inset: 0; background: rgba(255,255,255,0.9); z-index: 1000; display: none; align-items: center; justify-content: center; }
+        .loader-overlay { position: absolute; inset: 0; background: rgba(255,255,255,0.95); z-index: 1000; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 20px; }
+        .loader-text { font-weight: 900; color: var(--gold); font-size: 12px; letter-spacing: 4px; }
     </style>
 </head>
 <body>
 
 <header>
     <div class="logo" onclick="toggleSidebar()">
-        <img src="${LOGO_URL}"> <b>TITANIUM <span style="color:var(--gold)">ULTRA</span></b>
+        <img src="${LOGO_URL}"> <b>TITANIUM <span>ULTRA</span></b>
     </div>
-    <div id="neural-status" style="font-size: 10px; font-weight: 900; color: #555; text-align: right;">NEURAL INTEGRITY: OK<br>STORAGE: HYBRID</div>
+    <div style="text-align: right;">
+        <div style="font-size: 11px; font-weight: 900; color: var(--gold); letter-spacing: 1px;">logist-x.store</div>
+        <div style="font-size: 9px; color: #555; font-weight: 700;">SYSTEM VERSION: v146.0.0-PRO</div>
+    </div>
 </header>
 
 <div class="shell">
     <aside id="sidebar">
-        <div class="tree-header">НЕЙРОННОЕ ДЕРЕВО v146</div>
-        <div class="nav-link active" id="n-root" onclick="nav('root', 'ВЕСЬ МАССИВ')"><i class="fa fa-microchip"></i> Весь массив</div>
-        <div class="nav-link" id="n-log" onclick="nav('${MY_ROOT_ID}', 'ЛОГИСТИКА X')"><i class="fa fa-truck-fast"></i> Логистика X</div>
-        <div class="nav-link" id="n-merch" onclick="nav('${MERCH_ROOT_ID}', 'МЕРЧАНДАЙЗИНГ')"><i class="fa fa-boxes-stacked"></i> Мерчандайзинг</div>
+        <div class="tree-header">Neural Structure</div>
+        <div class="nav-link active" id="n-root" onclick="nav('root', 'MAIN ARCHIVE')"><i class="fa fa-layer-group"></i> Главный массив</div>
+        <div class="nav-link" id="n-log" onclick="nav('${MY_ROOT_ID}', 'LOGISTICS CORE')"><i class="fa fa-truck-ramp-box"></i> Логистика X</div>
+        <div class="nav-link" id="n-merch" onclick="nav('${MERCH_ROOT_ID}', 'MERCHANDISING')"><i class="fa fa-shop"></i> Мерчандайзинг</div>
         
-        <div style="margin-top: auto; padding: 30px; background: #080808; border-top: 1px solid #222;">
-            <div style="font-size: 10px; color: #555; font-weight: 900; margin-bottom: 12px; letter-spacing: 1px;">AUTONOMOUS MIRRORING</div>
-            <div style="height:6px; background:#222; border-radius:3px; overflow:hidden;">
-                <div style="width:100%; height:100%; background:var(--gold); box-shadow: 0 0 10px var(--gold);"></div>
-            </div>
-            <div style="font-size: 9px; color: #444; margin-top: 10px; font-weight: 700;">STABILITY: MAXIMUM (100.0%)</div>
+        <div class="neural-info">
+            <div class="n-row"><span>REPLICATION STATUS</span> <span>STABLE</span></div>
+            <div class="n-bar"><div class="n-fill"></div></div>
+            <div class="n-row" style="margin-top:15px;"><span>INTEGRITY</span> <span>99.9%</span></div>
+            <div class="n-row" style="margin-top:5px; color: #222;"><span>LOCAL CACHE: ACTIVE</span></div>
         </div>
     </aside>
     
     <main>
-        <div class="loader-overlay" id="loader"><i class="fa fa-atom fa-spin fa-4x" style="color:var(--gold)"></i></div>
+        <div class="loader-overlay" id="loader">
+            <i class="fa fa-circle-notch fa-spin fa-4x" style="color:var(--gold)"></i>
+            <div class="loader-text">SYNCHRONIZING...</div>
+        </div>
         
         <div class="dash-bar">
-            <div style="display:flex; align-items:center;"><div class="live-dot"></div> <span id="sync-info">NEURAL CORE: ONLINE & REPLICATING</span></div>
-            <div id="stat-count">0 ОБЪЕКТОВ</div>
+            <div style="display:flex; align-items:center;"><div class="live-dot"></div> <span id="sync-info">NEURAL CORE LINK ESTABLISHED</span></div>
+            <div id="stat-count" style="letter-spacing: 1px;">0 OBJECTS</div>
         </div>
 
         <div class="toolbar">
             <div class="breadcrumb" id="bc">/ storage / root</div>
-            <button class="btn-act" onclick="refresh()"><i class="fa fa-rotate"></i></button>
-            <button class="btn-act" onclick="nav('root')"><i class="fa fa-house"></i></button>
+            
+            <div class="search-box">
+                <i class="fa fa-search"></i>
+                <input type="text" id="q" placeholder="Поиск объектов..." oninput="filterFiles(this.value)">
+            </div>
+            
+            <button class="btn-act" onclick="refresh()"><i class="fa fa-sync-alt"></i></button>
+            <button class="btn-act" onclick="nav('root')"><i class="fa fa-home"></i></button>
         </div>
 
         <div class="content">
-            <table class="data-table"><tbody id="f-body"></tbody></table>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Наименование объекта</th>
+                        <th style="width: 150px; text-align: right;">Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="f-body"></tbody>
+            </table>
         </div>
     </main>
 </div>
 
-<!-- FLOATING ACTION BUTTON -->
 <div class="fab" onclick="togglePop(event)"><i class="fa fa-plus"></i></div>
 
-<!-- POPUP MENU -->
 <div id="pop">
-    <div class="pop-item" onclick="openModal('folder')"><i class="fa fa-folder-plus"></i> Новая папка</div>
-    <div class="pop-item" onclick="openModal('file')"><i class="fa fa-file-circle-plus"></i> Создать файл (.txt/json)</div>
-    <div class="pop-item" onclick="document.getElementById('fin').click()"><i class="fa fa-cloud-arrow-up"></i> Загрузить отчет/фото</div>
+    <div class="pop-item" onclick="openModal('folder')"><i class="fa fa-folder-plus"></i> Создать папку</div>
+    <div class="pop-item" onclick="openModal('file')"><i class="fa fa-file-code"></i> Создать JSON базу</div>
+    <div class="pop-item" onclick="document.getElementById('fin').click()"><i class="fa fa-cloud-upload-alt"></i> Загрузить медиа</div>
+    <div class="pop-item" style="color:#d32f2f" onclick="alert('Neural wipe is disabled')"><i class="fa fa-radiation"></i> Очистить кэш</div>
 </div>
 
-<!-- MULTI-VIEWER -->
 <div id="viewer">
     <div class="v-header">
-        <span id="v-title" style="font-weight:800; opacity:0.8; font-size: 18px;"></span> 
-        <i class="fa fa-circle-xmark" onclick="closeViewer()" style="font-size: 40px; color:var(--gold); cursor:pointer;"></i>
+        <span id="v-title" style="font-weight:900; opacity:0.7; font-size: 20px;"></span> 
+        <i class="fa fa-times-circle" onclick="closeViewer()" style="font-size: 45px; color:var(--gold); cursor:pointer;"></i>
     </div>
     <div class="v-content" id="v-body"></div>
 </div>
 
-<!-- ACTION MODAL -->
 <div id="modal">
     <div class="m-card">
         <div class="m-header" id="m-title">ДЕЙСТВИЕ</div>
-        <input type="text" id="m-input" class="m-input" placeholder="Введите название...">
-        <div id="m-file-opts" style="display:none">
-            <select id="m-file-type" class="m-input">
-                <option value="text/plain">Текстовый документ (.txt)</option>
-                <option value="application/json">База данных (.json)</option>
-                <option value="application/msword">Документ Word (.doc)</option>
-            </select>
+        <input type="text" id="m-input" class="m-input" placeholder="Введите имя...">
+        <div id="file-type-select" style="display:none; margin-bottom: 20px;">
+             <select id="m-type" class="m-input">
+                <option value="application/json">Database (.json)</option>
+                <option value="text/plain">Plain Text (.txt)</option>
+             </select>
         </div>
         <button class="m-btn" onclick="modalConfirm()">ПОДТВЕРДИТЬ</button>
         <button class="m-btn m-btn-sec" onclick="closeModal()">ОТМЕНА</button>
@@ -474,8 +521,9 @@ module.exports = function(app, context) {
 <script>
     let curId = 'root';
     let mAction = '';
+    let rawFiles = [];
 
-    function toggleSidebar() { if(window.innerWidth < 900) document.getElementById('sidebar').classList.toggle('open'); }
+    function toggleSidebar() { if(window.innerWidth < 1024) document.getElementById('sidebar').classList.toggle('open'); }
     function togglePop(e) { e.stopPropagation(); const p = document.getElementById('pop'); p.style.display = p.style.display==='block'?'none':'block'; }
     window.onclick = () => { document.getElementById('pop').style.display='none'; };
 
@@ -488,13 +536,13 @@ module.exports = function(app, context) {
         
         try {
             const r = await fetch('/storage/api/list?folderId=' + id);
-            const files = await r.json();
-            render(files);
+            rawFiles = await r.json();
+            render(rawFiles);
             updateSidebarUI(id);
         } catch(e) { 
-            body.innerHTML = '<tr><td style="text-align:center; padding:100px; color:red; font-weight:800;">ОШИБКА НЕЙРОННОГО ЯДРА</td></tr>'; 
+            body.innerHTML = '<tr><td colspan="2" style="text-align:center; padding:100px; color:red; font-weight:800;">NEURAL LINK FAILURE</td></tr>'; 
         } finally { 
-            loader.style.display = 'none'; 
+            setTimeout(() => loader.style.display = 'none', 300); 
         }
     }
 
@@ -505,19 +553,24 @@ module.exports = function(app, context) {
         if(id === '${MERCH_ROOT_ID}') document.getElementById('n-merch').classList.add('active');
     }
 
+    function filterFiles(q) {
+        const filtered = rawFiles.filter(f => f.name.toLowerCase().includes(q.toLowerCase()));
+        render(filtered);
+    }
+
     function getFileInfo(mime) {
-        if(mime.includes('folder')) return { icon:'fa-folder-closed', cls:'icon-folder', tag:'FOLDER' };
-        if(mime.includes('image')) return { icon:'fa-image', cls:'icon-image', tag:'IMAGE' };
-        if(mime.includes('video')) return { icon:'fa-play-circle', cls:'icon-video', tag:'VIDEO' };
+        if(mime.includes('folder')) return { icon:'fa-folder', cls:'icon-folder', tag:'DIR' };
+        if(mime.includes('image')) return { icon:'fa-file-image', cls:'icon-image', tag:'IMAGE' };
+        if(mime.includes('video')) return { icon:'fa-file-video', cls:'icon-video', tag:'VIDEO' };
         if(mime.includes('pdf')) return { icon:'fa-file-pdf', cls:'icon-pdf', tag:'PDF' };
-        if(mime.includes('zip') || mime.includes('rar')) return { icon:'fa-file-zipper', cls:'icon-archive', tag:'ARCHIVE' };
+        if(mime.includes('json') || mime.includes('javascript')) return { icon:'fa-database', cls:'icon-doc', tag:'DATA' };
         return { icon:'fa-file-lines', cls:'icon-default', tag:'FILE' };
     }
 
     function render(files) {
         const body = document.getElementById('f-body');
-        document.getElementById('stat-count').innerText = files.length + ' ОБЪЕКТОВ';
-        body.innerHTML = files.length ? '' : '<tr><td style="text-align:center; padding:120px; color:#aaa; font-weight:700;">СЕКТОР ПУСТ</td></tr>';
+        document.getElementById('stat-count').innerText = files.length + ' OBJECTS';
+        body.innerHTML = files.length ? '' : '<tr><td colspan="2" style="text-align:center; padding:150px; color:#ccc; font-weight:900; letter-spacing:5px;">VOID</td></tr>';
         
         files.forEach(f => {
             const info = getFileInfo(f.mimeType);
@@ -526,18 +579,18 @@ module.exports = function(app, context) {
                 <td>
                     <div class="f-item">
                         <div class="f-icon \${info.cls}"><i class="fa \${info.icon}"></i></div>
-                        <div style="flex:1">
+                        <div>
                             <div class="f-name">\${f.name}</div>
                             <div class="f-meta">
-                                <span class="badge \${f.isLocal?'b-local':'b-cloud'}">\${f.isLocal?'LOCAL':'CLOUD'}</span>
+                                <span class="badge \${f.isLocal?'b-local':'b-cloud'}">\${f.isLocal?'LOCAL MIRROR':'CLOUD ONLY'}</span>
                                 <span class="badge b-type">\${info.tag}</span>
                                 <span>\${(f.size/1024/1024 || 0).toFixed(2)} MB</span>
                             </div>
                         </div>
-                        <div onclick="event.stopPropagation()">
-                            <button class="btn-act btn-del" onclick="deleteAsset('\${f.id}')"><i class="fa fa-trash-can"></i></button>
-                        </div>
                     </div>
+                </td>
+                <td style="text-align:right;" onclick="event.stopPropagation()">
+                    <button class="btn-act btn-del" onclick="deleteAsset('\${f.id}')"><i class="fa fa-trash-alt"></i></button>
                 </td>
             \`;
             tr.onclick = () => f.mimeType.includes('folder') ? nav(f.id, f.name) : openViewer(f);
@@ -546,7 +599,7 @@ module.exports = function(app, context) {
     }
 
     async function deleteAsset(id) {
-        if(!confirm('ВНИМАНИЕ: Объект будет удален из облака и локального хранилища. Продолжить?')) return;
+        if(!confirm('Удалить объект из облака и локального зеркала?')) return;
         document.getElementById('loader').style.display = 'flex';
         await fetch('/storage/api/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id}) });
         refresh();
@@ -559,11 +612,15 @@ module.exports = function(app, context) {
         v.style.display = 'flex';
         b.innerHTML = '';
 
+        // Прокси для фото и видео через наш сервер
+        const proxyUrl = '/storage/api/proxy/' + f.id;
+
         if(f.mimeType.includes('image')) {
-            b.innerHTML = \`<img src="https://drive.google.com/uc?id=\${f.id}">\`;
+            b.innerHTML = \`<img src="\${proxyUrl}">\`;
         } else if(f.mimeType.includes('video')) {
-            b.innerHTML = \`<video controls autoplay><source src="https://drive.google.com/uc?export=download&id=\${f.id}"></video>\`;
+            b.innerHTML = \`<video controls autoplay><source src="\${proxyUrl}"></video>\`;
         } else {
+            // Для PDF и документов используем нативный превьюер Drive
             b.innerHTML = \`<iframe src="https://drive.google.com/file/d/\${f.id}/preview"></iframe>\`;
         }
     }
@@ -572,11 +629,10 @@ module.exports = function(app, context) {
 
     function openModal(action) {
         mAction = action;
-        const m = document.getElementById('modal');
-        document.getElementById('m-title').innerText = action === 'folder' ? 'НОВАЯ ПАПКА' : 'СОЗДАТЬ ФАЙЛ';
-        document.getElementById('m-file-opts').style.display = action === 'file' ? 'block' : 'none';
+        document.getElementById('modal').style.display = 'flex';
+        document.getElementById('m-title').innerText = action === 'folder' ? 'НОВАЯ ПАПКА' : 'НОВАЯ БАЗА';
+        document.getElementById('file-type-select').style.display = action === 'file' ? 'block' : 'none';
         document.getElementById('m-input').value = '';
-        m.style.display = 'flex';
     }
 
     function closeModal() { document.getElementById('modal').style.display = 'none'; }
@@ -585,13 +641,15 @@ module.exports = function(app, context) {
         const name = document.getElementById('m-input').value;
         if(!name) return;
         document.getElementById('loader').style.display = 'flex';
+        const type = document.getElementById('m-type').value;
         closeModal();
 
         const endpoint = mAction === 'folder' ? '/storage/api/mkdir' : '/storage/api/mkfile';
-        const body = { name, parentId: curId };
-        if(mAction === 'file') body.type = document.getElementById('m-file-type').value;
-
-        await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+        await fetch(endpoint, { 
+            method:'POST', 
+            headers:{'Content-Type':'application/json'}, 
+            body:JSON.stringify({name, parentId:curId, type}) 
+        });
         refresh();
     }
 
@@ -608,6 +666,7 @@ module.exports = function(app, context) {
 
     function refresh() { nav(curId, document.getElementById('bc').innerText.split('/').pop().trim()); }
 
+    // INITIALIZATION
     nav('root');
 </script>
 </body>
@@ -616,5 +675,5 @@ module.exports = function(app, context) {
 
     app.get('/storage', (req, res) => res.send(UI));
 
-    console.log("🦾 TITANIUM v146.0 ULTRA-INSTINCT GIGA-MONOLITH | FULL AUTONOMY ACTIVATED");
+    logNeural("TITANIUM ULTRA-INSTINCT GIGA-MONOLITH ACTIVATED | logist-x.store");
 };
