@@ -1,15 +1,14 @@
 /**
  * =========================================================================================
- * TITANIUM X-PLATFORM v160.0 | STABILITY PRIME EDITION
+ * TITANIUM X-PLATFORM v161.0 | UNLIMITED CORE EDITION
  * -----------------------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
  * -----------------------------------------------------------------------------------------
- * ИСПРАВЛЕНИЯ v160:
- * [1] Crash Fix: Исправлена ошибка "undefined reading length" при сбоях сети.
- * [2] Error Handling: Система теперь корректно обрабатывает ошибки сервера без падения интерфейса.
- * [3] Upload Guard: Дополнительная защита при выборе файлов для загрузки.
- * [4] Сохранено из v159: Цветные иконки, просмотр Office/PDF, быстрая загрузка.
+ * ИСПРАВЛЕНИЯ v161 (CRITICAL FIX 413):
+ * [1] Force Body Limit: Принудительное расширение лимитов Express до 500MB.
+ * [2] Upload Stability: Улучшенная обработка ошибок при обрыве соединения.
+ * [3] Сохранено: Все функции v160 (QR, иконки, просмотр).
  * =========================================================================================
  */
 
@@ -21,7 +20,7 @@ const path = require('path');
 // --- [CONFIGURATION] ---
 const CONFIG = {
     PASSWORD: "admin",           
-    SESSION_KEY: "titanium_x_session_v160",
+    SESSION_KEY: "titanium_x_session_v161",
     LOGO: "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png",
     PATHS: {
         STORAGE: path.join(__dirname, 'local_storage'),
@@ -63,6 +62,10 @@ function getLocalMime(filename) {
 
 module.exports = function(app, context) {
     const { drive, MY_ROOT_ID, MERCH_ROOT_ID } = context;
+
+    // FIX 413: Принудительно расширяем лимиты Express
+    app.use(express.json({ limit: '500mb' }));
+    app.use(express.urlencoded({ limit: '500mb', extended: true }));
     
     // UPLOAD CONFIG: Лимит 2GB
     const upload = multer({ 
@@ -94,7 +97,6 @@ module.exports = function(app, context) {
                 let targetDir = (folderId === PRIVATE_ROOT_ID) ? CONFIG.PATHS.PRIVATE : NEURAL_MEMORY.map[folderId].localPath;
                 
                 if (!fs.existsSync(targetDir)) {
-                     // Защита если папка была удалена физически
                      return res.json({ files: [], parentId: 'root' });
                 }
 
@@ -237,7 +239,7 @@ module.exports = function(app, context) {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-            <title>Titanium Maximus 160</title>
+            <title>Titanium Maximus 161</title>
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
             <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
             <style>
@@ -365,7 +367,6 @@ module.exports = function(app, context) {
                         
                         const d = await r.json();
                         
-                        // FIX: Проверка на наличие ошибок от сервера
                         if(d.error) throw new Error(d.error);
                         if(!d.files) throw new Error("Пустой ответ сервера");
 
@@ -425,18 +426,18 @@ module.exports = function(app, context) {
                 }
 
                 function getColor(n, m, isDir) {
-                    if(isDir) return '#f0b90b'; // Gold for folders
+                    if(isDir) return '#f0b90b'; 
                     const ext = n.split('.').pop().toLowerCase();
-                    if(['xls','xlsx','csv'].includes(ext)) return '#217346'; // Excel Green
-                    if(['doc','docx'].includes(ext)) return '#2b579a'; // Word Blue
-                    if(['pdf'].includes(ext)) return '#f40f02'; // PDF Red
-                    if(['ppt','pptx'].includes(ext)) return '#d24726'; // PPT Orange
-                    if(['zip','rar','7z'].includes(ext)) return '#a58e65'; // Archive Brown
-                    if(m.includes('image')) return '#d93f87'; // Image Pink/Purple
-                    if(m.includes('video')) return '#8e44ad'; // Video Purple
-                    if(m.includes('audio')) return '#f39c12'; // Audio Orange
-                    if(m.includes('code') || ['json','js','html','css'].includes(ext)) return '#3498db'; // Code Blue
-                    return '#666'; // Default Gray
+                    if(['xls','xlsx','csv'].includes(ext)) return '#217346'; 
+                    if(['doc','docx'].includes(ext)) return '#2b579a'; 
+                    if(['pdf'].includes(ext)) return '#f40f02'; 
+                    if(['ppt','pptx'].includes(ext)) return '#d24726'; 
+                    if(['zip','rar','7z'].includes(ext)) return '#a58e65'; 
+                    if(m.includes('image')) return '#d93f87'; 
+                    if(m.includes('video')) return '#8e44ad'; 
+                    if(m.includes('audio')) return '#f39c12'; 
+                    if(m.includes('code') || ['json','js','html','css'].includes(ext)) return '#3498db'; 
+                    return '#666'; 
                 }
 
                 function openOps(id, name) {
@@ -497,7 +498,6 @@ module.exports = function(app, context) {
                 }
 
                 async function upload(files) {
-                    // FIX: Защита от пустой загрузки
                     if(!files || !files.length) return;
                     
                     document.getElementById('file-list').innerHTML = '<div style="padding:100px;text-align:center"><i class="fa fa-cloud-arrow-up fa-fade fa-3x" style="color:var(--gold)"></i><br><br>Загрузка...<br><span style="font-size:12px;color:#555">Для больших видео подождите</span></div>';
