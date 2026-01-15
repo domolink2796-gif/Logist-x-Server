@@ -1,15 +1,15 @@
 /**
  * =========================================================================================
- * TITANIUM X-PLATFORM v158.0 | QUANTUM SHARE EDITION
+ * TITANIUM X-PLATFORM v159.0 | COLOR SPECTRUM EDITION
  * -----------------------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
  * -----------------------------------------------------------------------------------------
- * ИСПРАВЛЕНИЯ v158:
- * [1] QR-Share: Генерация QR-кода для мгновенной передачи файла на смартфон.
- * [2] Upload Core: Лимит загрузки 500MB (сохранено из v157).
- * [3] Smart Viewer: Просмотр PDF, Аудио, Текста (сохранено из v157).
- * [4] Icon Pack: Полный набор иконок (сохранено из v157).
+ * ИСПРАВЛЕНИЯ v159:
+ * [1] Color UI: Разноцветные иконки для визуального разделения типов файлов.
+ * [2] Office Viewer: Просмотр Excel/Word таблиц через веб-интерфейс.
+ * [3] Upload Fix: Оптимизирован алгоритм загрузки больших файлов (видео) в личное хранилище.
+ * [4] Stability: Отключен тайм-аут соединения при загрузке тяжелого контента.
  * =========================================================================================
  */
 
@@ -21,7 +21,7 @@ const path = require('path');
 // --- [CONFIGURATION] ---
 const CONFIG = {
     PASSWORD: "admin",           
-    SESSION_KEY: "titanium_x_session_v158",
+    SESSION_KEY: "titanium_x_session_v159",
     LOGO: "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png",
     PATHS: {
         STORAGE: path.join(__dirname, 'local_storage'),
@@ -64,10 +64,10 @@ function getLocalMime(filename) {
 module.exports = function(app, context) {
     const { drive, MY_ROOT_ID, MERCH_ROOT_ID } = context;
     
-    // UPLOAD CONFIG: 500MB
+    // UPLOAD CONFIG: Лимит 2GB для видео
     const upload = multer({ 
         dest: 'uploads/',
-        limits: { fileSize: 500 * 1024 * 1024 } 
+        limits: { fileSize: 2048 * 1024 * 1024 } 
     });
 
     const saveMemory = () => fs.writeFileSync(CONFIG.PATHS.NEURAL_MAP, JSON.stringify(NEURAL_MEMORY, null, 2));
@@ -167,12 +167,15 @@ module.exports = function(app, context) {
     });
 
     app.post('/storage/api/upload', upload.single('file'), protect, async (req, res) => {
+        // Отключаем таймаут для загрузки больших файлов
+        req.setTimeout(0); 
+        
         try {
             const folderId = req.body.folderId;
             if (folderId.startsWith('local_') || folderId === PRIVATE_ROOT_ID) {
                 const targetDir = (folderId === PRIVATE_ROOT_ID) ? CONFIG.PATHS.PRIVATE : NEURAL_MEMORY.map[folderId].localPath;
-                fs.copyFileSync(req.file.path, path.join(targetDir, req.file.originalname));
-                fs.unlinkSync(req.file.path);
+                // Используем renameSync (перемещение) вместо copy+unlink для скорости и надежности
+                fs.renameSync(req.file.path, path.join(targetDir, req.file.originalname));
             } else {
                 const driveParent = folderId === 'root' ? MY_ROOT_ID : folderId;
                 await drive.files.create({ 
@@ -182,7 +185,11 @@ module.exports = function(app, context) {
                 fs.unlinkSync(req.file.path);
             }
             res.sendStatus(200);
-        } catch (e) { console.error(e); res.status(500).send(e.message); }
+        } catch (e) { 
+            console.error("Upload Error:", e);
+            if(fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); // Очистка при ошибке
+            res.status(500).send(e.message); 
+        }
     });
 
     app.post('/storage/api/delete', express.json(), protect, async (req, res) => {
@@ -223,7 +230,7 @@ module.exports = function(app, context) {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-            <title>Titanium Maximus 158</title>
+            <title>Titanium Maximus 159</title>
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
             <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
             <style>
@@ -243,7 +250,10 @@ module.exports = function(app, context) {
                 .f-row { display: flex; align-items: center; padding: 15px 20px; border-bottom: 1px solid #111; gap: 15px; transition: 0.1s; }
                 .f-row:active { background: #111; }
                 .f-icon { width: 44px; height: 44px; border-radius: 12px; background: #151515; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #444; }
+                
+                /* Icon Colors Override */
                 .is-dir .f-icon { color: var(--gold); background: rgba(240,185,11,0.1); }
+
                 .f-details { flex: 1; min-width: 0; }
                 .f-name { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
                 .f-meta { font-size: 11px; color: #555; margin-top: 3px; }
@@ -265,7 +275,7 @@ module.exports = function(app, context) {
                 .v-close { position: absolute; top: 40px; right: 20px; font-size: 35px; color: #fff; z-index: 100; opacity: 0.8; cursor:pointer; }
                 .v-body { flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; overflow: auto; }
                 video, img { max-width: 100%; max-height: 100%; object-fit: contain; }
-                iframe { border: none; background: #fff; }
+                iframe { border: none; background: #fff; width: 100%; height: 100%; }
 
                 .fab { position: fixed; bottom: 35px; right: 25px; width: 65px; height: 65px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; color: #000; box-shadow: 0 10px 40px rgba(0,0,0,0.8); }
             </style>
@@ -363,10 +373,13 @@ module.exports = function(app, context) {
 
                         d.files.forEach(f => {
                             const isDir = f.mimeType.includes('folder');
+                            const iconClass = getIcon(f.name, f.mimeType);
+                            const iconColor = getColor(f.name, f.mimeType, isDir);
+                            
                             const div = document.createElement('div');
                             div.className = 'f-row ' + (isDir ? 'is-dir' : '');
                             div.innerHTML = \`
-                                <div class="f-icon"><i class="fa \${getIcon(f.name, f.mimeType)}"></i></div>
+                                <div class="f-icon" style="color:\${iconColor}"><i class="fa \${iconClass}"></i></div>
                                 <div class="f-details" onclick="\${isDir ? \`nav('\${f.id}')\` : \`view('\${f.id}', '\${f.mimeType}')\`}">
                                     <div class="f-name">\${f.name}</div>
                                     <div class="f-meta">\${isDir ? 'Папка' : (f.size/1024/1024).toFixed(2)+' MB'}</div>
@@ -394,6 +407,21 @@ module.exports = function(app, context) {
                         'zip':'fa-file-zipper', 'rar':'fa-file-zipper', '7z':'fa-file-zipper'
                     };
                     return icons[ext] || 'fa-file';
+                }
+
+                function getColor(n, m, isDir) {
+                    if(isDir) return '#f0b90b'; // Gold for folders
+                    const ext = n.split('.').pop().toLowerCase();
+                    if(['xls','xlsx','csv'].includes(ext)) return '#217346'; // Excel Green
+                    if(['doc','docx'].includes(ext)) return '#2b579a'; // Word Blue
+                    if(['pdf'].includes(ext)) return '#f40f02'; // PDF Red
+                    if(['ppt','pptx'].includes(ext)) return '#d24726'; // PPT Orange
+                    if(['zip','rar','7z'].includes(ext)) return '#a58e65'; // Archive Brown
+                    if(m.includes('image')) return '#d93f87'; // Image Pink/Purple
+                    if(m.includes('video')) return '#8e44ad'; // Video Purple
+                    if(m.includes('audio')) return '#f39c12'; // Audio Orange
+                    if(m.includes('code') || ['json','js','html','css'].includes(ext)) return '#3498db'; // Code Blue
+                    return '#666'; // Default Gray
                 }
 
                 function openOps(id, name) {
@@ -455,7 +483,7 @@ module.exports = function(app, context) {
 
                 async function upload(files) {
                     if(!files.length) return;
-                    document.getElementById('file-list').innerHTML = '<div style="padding:100px;text-align:center"><i class="fa fa-cloud-arrow-up fa-fade fa-3x" style="color:var(--gold)"></i><br><br>Загрузка...</div>';
+                    document.getElementById('file-list').innerHTML = '<div style="padding:100px;text-align:center"><i class="fa fa-cloud-arrow-up fa-fade fa-3x" style="color:var(--gold)"></i><br><br>Загрузка...<br><span style="font-size:12px;color:#555">Для больших видео подождите</span></div>';
                     for(let f of files) {
                         const fd = new FormData(); fd.append('file', f); fd.append('folderId', cur);
                         try {
@@ -470,6 +498,8 @@ module.exports = function(app, context) {
                 function view(id, mime) {
                     const body = document.getElementById('v-body');
                     const url = '/storage/api/proxy/' + id;
+                    const fullUrl = window.location.origin + url;
+                    
                     body.innerHTML = '<div style="color:#555"><i class="fa fa-spinner fa-spin fa-2x"></i></div>';
                     document.getElementById('viewer').style.display = 'flex';
                     
@@ -483,7 +513,11 @@ module.exports = function(app, context) {
                          body.innerHTML = '<div style="text-align:center"><i class="fa fa-music fa-5x" style="color:#333;margin-bottom:30px"></i><br><audio src="'+url+'" controls autoplay></audio></div>';
                     }
                     else if(mime.includes('pdf')) {
-                         body.innerHTML = '<iframe src="'+url+'" style="width:100%; height:100%"></iframe>';
+                         body.innerHTML = '<iframe src="'+url+'"></iframe>';
+                    }
+                    else if(mime.includes('excel') || mime.includes('spreadsheet') || mime.includes('word') || mime.includes('document')) {
+                         // Используем Google Docs Viewer для просмотра таблиц и документов
+                         body.innerHTML = '<iframe src="https://docs.google.com/viewer?url='+encodeURIComponent(fullUrl)+'&embedded=true"></iframe>';
                     }
                     else if(mime.includes('text') || mime.includes('json') || mime.includes('javascript') || mime.includes('xml')) {
                          fetch(url).then(r => r.text()).then(t => {
@@ -491,7 +525,7 @@ module.exports = function(app, context) {
                          }).catch(e => body.innerHTML = 'Error loading text');
                     }
                     else {
-                        body.innerHTML = '<div style="text-align:center"><h3>Файл загружен</h3><p>Формат не поддерживается для просмотра в браузере</p><button class="btn btn-gold" onclick="window.open(\\''+url+'\\')">СКАЧАТЬ</button></div>';
+                        body.innerHTML = '<div style="text-align:center"><h3>Файл загружен</h3><p>Формат не поддерживается для просмотра</p><button class="btn btn-gold" onclick="window.open(\\''+url+'\\')">СКАЧАТЬ</button></div>';
                     }
                 }
 
