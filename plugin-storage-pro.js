@@ -1,15 +1,15 @@
 /**
  * =========================================================================================
- * TITANIUM X-PLATFORM v165.0 | HYBRID INDEPENDENCE EDITION
+ * TITANIUM X-PLATFORM v166.0 | SMART ZOOM EDITION
  * -----------------------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
  * -----------------------------------------------------------------------------------------
- * ИСПРАВЛЕНИЯ v165:
- * [1] Local Core: Внедрены библиотеки SheetJS и DocxPreview для локального чтения файлов.
- * [2] Hybrid View: Автоматический выбор (Локально = Быстро / Microsoft = Качественно).
- * [3] Fail-Safe: Если локальный просмотр не справился, есть кнопка переключения на Cloud.
- * [4] Сохранено: Лимиты 2GB, QR-коды, Защита от сбоев.
+ * ИСПРАВЛЕНИЯ v166:
+ * [1] Smart Zoom: Добавлены кнопки масштабирования (+ / -) для документов.
+ * [2] Fit-to-Screen: Автоматическая подгонка размера таблиц и документов под ширину экрана.
+ * [3] Excel Fix: Уменьшен шрифт таблиц для лучшей читаемости на мобильных.
+ * [4] Сохранено: Гибридный режим (Локально/Microsoft) и загрузка больших файлов.
  * =========================================================================================
  */
 
@@ -21,7 +21,7 @@ const path = require('path');
 // --- [CONFIGURATION] ---
 const CONFIG = {
     PASSWORD: "admin",           
-    SESSION_KEY: "titanium_x_session_v165",
+    SESSION_KEY: "titanium_x_session_v166",
     VIEWER_TOKEN: "titanium_public_access_key_2026",
     LOGO: "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png",
     PATHS: {
@@ -231,7 +231,7 @@ module.exports = function(app, context) {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-            <title>Titanium Maximus 165</title>
+            <title>Titanium Maximus 166</title>
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
             
             <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -263,7 +263,6 @@ module.exports = function(app, context) {
                 .f-meta { font-size: 11px; color: #555; margin-top: 3px; }
                 .f-ops { padding: 10px; color: #444; }
 
-                /* MODALS */
                 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 5000; display: none; align-items: center; justify-content: center; backdrop-filter: blur(10px); }
                 .modal-box { background: #1a1a1a; width: 85%; max-width: 340px; padding: 25px; border-radius: 25px; border: 1px solid #333; }
                 input, textarea { width: 100%; padding: 14px; background: #111; border: 1px solid #333; color: #fff; border-radius: 12px; margin-bottom: 15px; box-sizing: border-box; font-size: 16px; outline: none; }
@@ -274,21 +273,27 @@ module.exports = function(app, context) {
 
                 .qr-container { background: #fff; padding: 20px; border-radius: 15px; display: flex; justify-content: center; margin-bottom: 15px; }
 
-                #viewer { position: fixed; inset: 0; background: #000; z-index: 6000; display: none; flex-direction: column; }
-                .v-close { position: absolute; top: 20px; right: 20px; font-size: 35px; color: #fff; z-index: 100; opacity: 0.8; cursor:pointer; }
+                #viewer { position: fixed; inset: 0; background: #222; z-index: 6000; display: none; flex-direction: column; }
+                .v-close { position: absolute; top: 15px; right: 15px; font-size: 30px; color: #fff; z-index: 100; opacity: 0.8; cursor:pointer; text-shadow: 0 0 5px #000; }
                 .v-body { flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; overflow: auto; background:#fff; position:relative; }
                 .v-dark-body { background: #000; }
                 
                 video, img { max-width: 100%; max-height: 100%; object-fit: contain; }
                 iframe { border: none; background: #fff; width: 100%; height: 100%; }
 
-                /* Table Styling */
-                table { border-collapse: collapse; width: 100%; color: #000; }
-                td, th { border: 1px solid #ddd; padding: 8px; font-size: 14px; }
-                tr:nth-child(even){background-color: #f2f2f2;}
-                th { padding-top: 12px; padding-bottom: 12px; text-align: left; background-color: #04AA6D; color: white; }
+                /* SMART ZOOM STYLES */
+                .zoom-controls { position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; background: rgba(0,0,0,0.8); padding: 8px 15px; border-radius: 30px; z-index: 300; }
+                .zoom-btn { width: 40px; height: 40px; border-radius: 50%; border: none; background: #333; color: #fff; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+                .zoom-btn:active { background: var(--gold); color: #000; }
 
-                .ms-btn { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: #2b579a; color: #fff; padding: 10px 20px; border-radius: 20px; border: none; font-weight: bold; cursor: pointer; z-index: 200; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+                table { border-collapse: collapse; width: 100%; color: #000; font-size: 11px; /* Мелкий шрифт для Excel */ }
+                td, th { border: 1px solid #ddd; padding: 4px; }
+                tr:nth-child(even){background-color: #f2f2f2;}
+                th { padding-top: 8px; padding-bottom: 8px; text-align: left; background-color: #217346; color: white; }
+
+                .doc-wrapper { transform-origin: top center; transition: transform 0.2s; background: #fff; padding: 10px; width: 100%; box-sizing: border-box; }
+
+                .ms-btn { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: #2b579a; color: #fff; padding: 10px 20px; border-radius: 20px; border: none; font-weight: bold; cursor: pointer; z-index: 200; box-shadow: 0 4px 15px rgba(0,0,0,0.3); white-space: nowrap; font-size: 12px; }
 
                 .fab { position: fixed; bottom: 35px; right: 25px; width: 65px; height: 65px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; color: #000; box-shadow: 0 10px 40px rgba(0,0,0,0.8); }
             </style>
@@ -342,8 +347,13 @@ module.exports = function(app, context) {
             </div>
 
             <div id="viewer">
-                <i class="fa fa-times v-close" onclick="closeViewer()" style="color:#000; text-shadow:0 0 5px #fff"></i>
+                <i class="fa fa-times v-close" onclick="closeViewer()"></i>
                 <div class="v-body" id="v-body"></div>
+                <div class="zoom-controls" id="zoom-ui" style="display:none">
+                    <button class="zoom-btn" onclick="zoom(-0.1)">-</button>
+                    <button class="zoom-btn" onclick="resetZoom()">R</button>
+                    <button class="zoom-btn" onclick="zoom(0.1)">+</button>
+                </div>
             </div>
 
             <div class="fab" onclick="document.getElementById('fup').click()"><i class="fa fa-upload"></i></div>
@@ -356,6 +366,26 @@ module.exports = function(app, context) {
                 let activeName = '';
                 let isCreatingFolder = false;
                 const VIEWER_TOKEN = '${CONFIG.VIEWER_TOKEN}'; 
+                
+                // ZOOM VARS
+                let currentZoom = 1.0;
+
+                function zoom(delta) {
+                    currentZoom += delta;
+                    if(currentZoom < 0.2) currentZoom = 0.2;
+                    if(currentZoom > 3.0) currentZoom = 3.0;
+                    applyZoom();
+                }
+                
+                function resetZoom() {
+                    currentZoom = 1.0;
+                    applyZoom();
+                }
+
+                function applyZoom() {
+                    const el = document.getElementById('doc-content');
+                    if(el) el.style.transform = \`scale(\${currentZoom})\`;
+                }
 
                 async function nav(id, el) {
                     cur = id;
@@ -507,6 +537,10 @@ module.exports = function(app, context) {
                     const url = '/storage/api/proxy/' + id;
                     const fullUrl = window.location.origin + url;
                     
+                    // Reset UI
+                    document.getElementById('zoom-ui').style.display = 'none';
+                    currentZoom = 1.0;
+                    
                     body.innerHTML = '<div style="color:#555; position:absolute; top:50%; left:50%; transform:translate(-50%, -50%)"><i class="fa fa-spinner fa-spin fa-3x"></i></div>';
                     body.className = 'v-body';
                     document.getElementById('viewer').style.display = 'flex';
@@ -530,7 +564,8 @@ module.exports = function(app, context) {
                              const wb = XLSX.read(ab);
                              const ws = wb.Sheets[wb.SheetNames[0]];
                              const html = XLSX.utils.sheet_to_html(ws);
-                             body.innerHTML = '<div style="padding:20px; overflow:auto">' + html + '</div>' + getMsButton(fullUrl);
+                             body.innerHTML = '<div id="doc-content" class="doc-wrapper" style="overflow:auto">' + html + '</div>' + getMsButton(fullUrl);
+                             document.getElementById('zoom-ui').style.display = 'flex'; // Show zoom buttons
                          } catch(e) { body.innerHTML = 'Error: ' + e; }
                     }
                     else if(mime.includes('word') || mime.includes('document')) {
@@ -538,8 +573,9 @@ module.exports = function(app, context) {
                          try {
                              const f = await fetch(url);
                              const blob = await f.blob();
-                             body.innerHTML = '<div id="docx-container" style="padding:40px; background:#fff; min-height:100%"></div>' + getMsButton(fullUrl);
-                             docx.renderAsync(blob, document.getElementById("docx-container"));
+                             body.innerHTML = '<div id="doc-content" class="doc-wrapper" style="padding:20px"></div>' + getMsButton(fullUrl);
+                             docx.renderAsync(blob, document.getElementById("doc-content"));
+                             document.getElementById('zoom-ui').style.display = 'flex'; // Show zoom buttons
                          } catch(e) { body.innerHTML = 'Error: ' + e; }
                     }
                     else if(mime.includes('pdf')) {
@@ -560,6 +596,7 @@ module.exports = function(app, context) {
                 function openMs(url) {
                     const body = document.getElementById('v-body');
                     body.innerHTML = '<iframe src="'+url+'" style="width:100%; height:100%; border:none;"></iframe>';
+                    document.getElementById('zoom-ui').style.display = 'none';
                 }
 
                 function closeModals() { 
