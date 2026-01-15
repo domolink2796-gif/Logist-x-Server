@@ -1,14 +1,15 @@
 /**
  * =========================================================================================
- * TITANIUM X-PLATFORM v161.0 | UNLIMITED CORE EDITION
+ * TITANIUM X-PLATFORM v163.0 | OFFICE VIEW EDITION
  * -----------------------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
  * -----------------------------------------------------------------------------------------
- * ИСПРАВЛЕНИЯ v161 (CRITICAL FIX 413):
- * [1] Force Body Limit: Принудительное расширение лимитов Express до 500MB.
- * [2] Upload Stability: Улучшенная обработка ошибок при обрыве соединения.
- * [3] Сохранено: Все функции v160 (QR, иконки, просмотр).
+ * ИСПРАВЛЕНИЯ v163:
+ * [1] Office Viewer: Замена Google Viewer на Microsoft Office Online (стабильнее для Excel/Word).
+ * [2] PDF Fix: Улучшенное отображение PDF через нативный фрейм браузера.
+ * [3] Viewer Logic: Добавлена кнопка "Скачать", если предпросмотр недоступен.
+ * [4] Сохранено: Все функции v162 (Auto-Recovery, Nginx Limit 2GB).
  * =========================================================================================
  */
 
@@ -20,7 +21,7 @@ const path = require('path');
 // --- [CONFIGURATION] ---
 const CONFIG = {
     PASSWORD: "admin",           
-    SESSION_KEY: "titanium_x_session_v161",
+    SESSION_KEY: "titanium_x_session_v163",
     LOGO: "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png",
     PATHS: {
         STORAGE: path.join(__dirname, 'local_storage'),
@@ -55,6 +56,7 @@ function getLocalMime(filename) {
         '.txt': 'text/plain', '.log': 'text/plain', '.json': 'application/json', '.js': 'text/javascript', '.html': 'text/html', '.css': 'text/css',
         '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.ppt': 'application/vnd.ms-powerpoint', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
         '.zip': 'application/zip', '.rar': 'application/x-rar-compressed'
     };
     return map[ext] || 'application/octet-stream';
@@ -63,11 +65,11 @@ function getLocalMime(filename) {
 module.exports = function(app, context) {
     const { drive, MY_ROOT_ID, MERCH_ROOT_ID } = context;
 
-    // FIX 413: Принудительно расширяем лимиты Express
+    // FIX 413
     app.use(express.json({ limit: '500mb' }));
     app.use(express.urlencoded({ limit: '500mb', extended: true }));
     
-    // UPLOAD CONFIG: Лимит 2GB
+    // UPLOAD CONFIG: 2GB
     const upload = multer({ 
         dest: 'uploads/',
         limits: { fileSize: 2048 * 1024 * 1024 } 
@@ -96,9 +98,7 @@ module.exports = function(app, context) {
             if (folderId === PRIVATE_ROOT_ID || (NEURAL_MEMORY.map[folderId] && NEURAL_MEMORY.map[folderId].isPrivate)) {
                 let targetDir = (folderId === PRIVATE_ROOT_ID) ? CONFIG.PATHS.PRIVATE : NEURAL_MEMORY.map[folderId].localPath;
                 
-                if (!fs.existsSync(targetDir)) {
-                     return res.json({ files: [], parentId: 'root' });
-                }
+                if (!fs.existsSync(targetDir)) return res.json({ files: [], parentId: 'root' });
 
                 const items = fs.readdirSync(targetDir);
                 files = items.map(name => {
@@ -180,7 +180,6 @@ module.exports = function(app, context) {
         req.setTimeout(0); 
         try {
             if (!req.file) throw new Error("File not received");
-            
             const folderId = req.body.folderId;
             if (folderId.startsWith('local_') || folderId === PRIVATE_ROOT_ID) {
                 const targetDir = (folderId === PRIVATE_ROOT_ID) ? CONFIG.PATHS.PRIVATE : NEURAL_MEMORY.map[folderId].localPath;
@@ -195,7 +194,6 @@ module.exports = function(app, context) {
             }
             res.sendStatus(200);
         } catch (e) { 
-            console.error("Upload Error:", e);
             if(req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
             res.status(500).send(e.message); 
         }
@@ -239,7 +237,7 @@ module.exports = function(app, context) {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-            <title>Titanium Maximus 161</title>
+            <title>Titanium Maximus 163</title>
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
             <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
             <style>
@@ -259,7 +257,6 @@ module.exports = function(app, context) {
                 .f-row { display: flex; align-items: center; padding: 15px 20px; border-bottom: 1px solid #111; gap: 15px; transition: 0.1s; }
                 .f-row:active { background: #111; }
                 .f-icon { width: 44px; height: 44px; border-radius: 12px; background: #151515; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #444; }
-                
                 .is-dir .f-icon { color: var(--gold); background: rgba(240,185,11,0.1); }
 
                 .f-details { flex: 1; min-width: 0; }
@@ -267,7 +264,6 @@ module.exports = function(app, context) {
                 .f-meta { font-size: 11px; color: #555; margin-top: 3px; }
                 .f-ops { padding: 10px; color: #444; }
 
-                /* MODALS */
                 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 5000; display: none; align-items: center; justify-content: center; backdrop-filter: blur(10px); }
                 .modal-box { background: #1a1a1a; width: 85%; max-width: 340px; padding: 25px; border-radius: 25px; border: 1px solid #333; }
                 input, textarea { width: 100%; padding: 14px; background: #111; border: 1px solid #333; color: #fff; border-radius: 12px; margin-bottom: 15px; box-sizing: border-box; font-size: 16px; outline: none; }
@@ -276,7 +272,6 @@ module.exports = function(app, context) {
                 .btn-gold { background: var(--gold); color: #000; }
                 .btn-dark { background: #222; color: #fff; }
 
-                /* QR SPECIFIC */
                 .qr-container { background: #fff; padding: 20px; border-radius: 15px; display: flex; justify-content: center; margin-bottom: 15px; }
 
                 #viewer { position: fixed; inset: 0; background: #000; z-index: 6000; display: none; flex-direction: column; }
@@ -362,9 +357,8 @@ module.exports = function(app, context) {
                     
                     try {
                         const r = await fetch('/storage/api/list?folderId=' + id);
-                        
+                        if(r.status === 401) { location.reload(); return; }
                         if(!r.ok) throw new Error("Server Error: " + r.status);
-                        
                         const d = await r.json();
                         
                         if(d.error) throw new Error(d.error);
@@ -373,7 +367,6 @@ module.exports = function(app, context) {
                         list.innerHTML = '';
                         parentCur = d.parentId;
 
-                        // Кнопка Назад
                         if(parentCur) {
                             const back = document.createElement('div');
                             back.className = 'f-row';
@@ -451,11 +444,7 @@ module.exports = function(app, context) {
                     const url = window.location.origin + '/storage/api/proxy/' + activeId;
                     const qrDiv = document.getElementById('qrcode');
                     qrDiv.innerHTML = '';
-                    new QRCode(qrDiv, {
-                        text: url,
-                        width: 200,
-                        height: 200
-                    });
+                    new QRCode(qrDiv, { text: url, width: 200, height: 200 });
                     document.getElementById('modal-qr').style.display = 'flex';
                 }
 
@@ -499,17 +488,14 @@ module.exports = function(app, context) {
 
                 async function upload(files) {
                     if(!files || !files.length) return;
-                    
                     document.getElementById('file-list').innerHTML = '<div style="padding:100px;text-align:center"><i class="fa fa-cloud-arrow-up fa-fade fa-3x" style="color:var(--gold)"></i><br><br>Загрузка...<br><span style="font-size:12px;color:#555">Для больших видео подождите</span></div>';
-                    
                     for(let f of files) {
                         const fd = new FormData(); fd.append('file', f); fd.append('folderId', cur);
                         try {
                             const r = await fetch('/storage/api/upload', { method:'POST', body:fd });
+                            if(r.status === 401) { location.reload(); return; }
                             if(!r.ok) throw new Error("Upload Failed: " + r.status);
-                        } catch(e) {
-                            alert("Ошибка загрузки файла " + f.name + ": " + e);
-                        }
+                        } catch(e) { alert("Ошибка загрузки файла " + f.name + ": " + e); }
                     }
                     nav(cur);
                 }
@@ -532,10 +518,14 @@ module.exports = function(app, context) {
                          body.innerHTML = '<div style="text-align:center"><i class="fa fa-music fa-5x" style="color:#333;margin-bottom:30px"></i><br><audio src="'+url+'" controls autoplay></audio></div>';
                     }
                     else if(mime.includes('pdf')) {
-                         body.innerHTML = '<iframe src="'+url+'"></iframe>';
+                         // Нативный PDF
+                         body.innerHTML = '<iframe src="'+url+'" type="application/pdf" width="100%" height="100%"></iframe>';
                     }
-                    else if(mime.includes('excel') || mime.includes('spreadsheet') || mime.includes('word') || mime.includes('document')) {
-                         body.innerHTML = '<iframe src="https://docs.google.com/viewer?url='+encodeURIComponent(fullUrl)+'&embedded=true"></iframe>';
+                    else if(mime.includes('excel') || mime.includes('spreadsheet') || mime.includes('word') || mime.includes('document') || mime.includes('presentation') || mime.includes('powerpoint')) {
+                         // Microsoft Viewer (более стабильный для docx/xlsx)
+                         const encoded = encodeURIComponent(fullUrl);
+                         const msViewer = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encoded;
+                         body.innerHTML = '<iframe src="'+msViewer+'" style="width:100%; height:100%; border:none;"></iframe>';
                     }
                     else if(mime.includes('text') || mime.includes('json') || mime.includes('javascript') || mime.includes('xml')) {
                          fetch(url).then(r => r.text()).then(t => {
@@ -543,7 +533,7 @@ module.exports = function(app, context) {
                          }).catch(e => body.innerHTML = 'Error loading text');
                     }
                     else {
-                        body.innerHTML = '<div style="text-align:center"><h3>Файл загружен</h3><p>Формат не поддерживается для просмотра</p><button class="btn btn-gold" onclick="window.open(\\''+url+'\\')">СКАЧАТЬ</button></div>';
+                        body.innerHTML = '<div style="text-align:center"><h3>Предпросмотр недоступен</h3><p>Этот формат нельзя открыть в браузере</p><button class="btn btn-gold" onclick="window.open(\\''+url+'\\')">СКАЧАТЬ ФАЙЛ</button></div>';
                     }
                 }
 
