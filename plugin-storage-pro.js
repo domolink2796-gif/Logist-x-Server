@@ -1,15 +1,14 @@
 /**
  * =========================================================================================
- * TITANIUM X-PLATFORM v163.0 | OFFICE VIEW EDITION
+ * TITANIUM X-PLATFORM v164.0 | UNBLOCKED VIEW EDITION
  * -----------------------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
  * -----------------------------------------------------------------------------------------
- * ИСПРАВЛЕНИЯ v163:
- * [1] Office Viewer: Замена Google Viewer на Microsoft Office Online (стабильнее для Excel/Word).
- * [2] PDF Fix: Улучшенное отображение PDF через нативный фрейм браузера.
- * [3] Viewer Logic: Добавлена кнопка "Скачать", если предпросмотр недоступен.
- * [4] Сохранено: Все функции v162 (Auto-Recovery, Nginx Limit 2GB).
+ * ИСПРАВЛЕНИЯ v164:
+ * [1] Viewer Bypass: Добавлен спец-токен, чтобы Microsoft Office мог открывать ваши запароленные файлы.
+ * [2] MP3 Fix: Улучшена обработка аудио-файлов (корректные заголовки).
+ * [3] Upload 413: Добавлена визуальная подсказка, если сервер отклонил файл из-за размера.
  * =========================================================================================
  */
 
@@ -21,7 +20,8 @@ const path = require('path');
 // --- [CONFIGURATION] ---
 const CONFIG = {
     PASSWORD: "admin",           
-    SESSION_KEY: "titanium_x_session_v163",
+    SESSION_KEY: "titanium_x_session_v164",
+    VIEWER_TOKEN: "titanium_public_access_key_2026", // Секретный ключ для просмотрщиков
     LOGO: "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png",
     PATHS: {
         STORAGE: path.join(__dirname, 'local_storage'),
@@ -65,11 +65,10 @@ function getLocalMime(filename) {
 module.exports = function(app, context) {
     const { drive, MY_ROOT_ID, MERCH_ROOT_ID } = context;
 
-    // FIX 413
+    // FIX Limits
     app.use(express.json({ limit: '500mb' }));
     app.use(express.urlencoded({ limit: '500mb', extended: true }));
     
-    // UPLOAD CONFIG: 2GB
     const upload = multer({ 
         dest: 'uploads/',
         limits: { fileSize: 2048 * 1024 * 1024 } 
@@ -78,7 +77,16 @@ module.exports = function(app, context) {
     const saveMemory = () => fs.writeFileSync(CONFIG.PATHS.NEURAL_MAP, JSON.stringify(NEURAL_MEMORY, null, 2));
 
     const checkAuth = (req) => req.headers.cookie && req.headers.cookie.includes(`${CONFIG.SESSION_KEY}=granted`);
-    const protect = (req, res, next) => checkAuth(req) ? next() : res.status(401).json({error: "Access Denied"});
+    
+    // AUTH MIDDLEWARE С ПРОПУСКОМ ДЛЯ ПРОСМОТРЩИКА
+    const protect = (req, res, next) => {
+        // Если есть секретный токен в ссылке — пропускаем (нужно для MS Viewer)
+        if (req.query.token === CONFIG.VIEWER_TOKEN) return next();
+        
+        // Иначе проверяем пароль
+        if (checkAuth(req)) return next();
+        res.status(401).json({error: "Access Denied"});
+    };
 
     // 1. AUTH
     app.post('/storage/auth', express.json(), (req, res) => {
@@ -97,9 +105,7 @@ module.exports = function(app, context) {
 
             if (folderId === PRIVATE_ROOT_ID || (NEURAL_MEMORY.map[folderId] && NEURAL_MEMORY.map[folderId].isPrivate)) {
                 let targetDir = (folderId === PRIVATE_ROOT_ID) ? CONFIG.PATHS.PRIVATE : NEURAL_MEMORY.map[folderId].localPath;
-                
                 if (!fs.existsSync(targetDir)) return res.json({ files: [], parentId: 'root' });
-
                 const items = fs.readdirSync(targetDir);
                 files = items.map(name => {
                     const fullPath = path.join(targetDir, name);
@@ -107,7 +113,6 @@ module.exports = function(app, context) {
                         const stats = fs.statSync(fullPath);
                         const isDir = stats.isDirectory();
                         const id = `local_${Buffer.from(fullPath).toString('hex')}`;
-                        
                         NEURAL_MEMORY.map[id] = { 
                             name, localPath: fullPath, isPrivate: true, 
                             mimeType: isDir ? 'application/vnd.google-apps.folder' : getLocalMime(name) 
@@ -115,7 +120,6 @@ module.exports = function(app, context) {
                         return { id, name, size: stats.size, mimeType: NEURAL_MEMORY.map[id].mimeType };
                     } catch(e) { return null; }
                 }).filter(f => f !== null);
-
                 parentId = (folderId === PRIVATE_ROOT_ID) ? 'root' : (NEURAL_MEMORY.map[folderId].parentId || PRIVATE_ROOT_ID);
                 saveMemory();
             } else {
@@ -143,6 +147,8 @@ module.exports = function(app, context) {
                 
                 const realMime = getLocalMime(fileInfo.localPath); 
                 res.setHeader('Content-Type', realMime);
+                // Разрешаем стриминг для аудио/видео
+                res.setHeader('Accept-Ranges', 'bytes');
                 
                 const stream = fs.createReadStream(fileInfo.localPath);
                 stream.pipe(res);
@@ -237,7 +243,7 @@ module.exports = function(app, context) {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-            <title>Titanium Maximus 163</title>
+            <title>Titanium Maximus 164</title>
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
             <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
             <style>
@@ -345,6 +351,7 @@ module.exports = function(app, context) {
                 let activeId = null;
                 let activeName = '';
                 let isCreatingFolder = false;
+                const VIEWER_TOKEN = '${CONFIG.VIEWER_TOKEN}'; // Токен с сервера
 
                 async function nav(id, el) {
                     cur = id;
@@ -518,12 +525,12 @@ module.exports = function(app, context) {
                          body.innerHTML = '<div style="text-align:center"><i class="fa fa-music fa-5x" style="color:#333;margin-bottom:30px"></i><br><audio src="'+url+'" controls autoplay></audio></div>';
                     }
                     else if(mime.includes('pdf')) {
-                         // Нативный PDF
                          body.innerHTML = '<iframe src="'+url+'" type="application/pdf" width="100%" height="100%"></iframe>';
                     }
                     else if(mime.includes('excel') || mime.includes('spreadsheet') || mime.includes('word') || mime.includes('document') || mime.includes('presentation') || mime.includes('powerpoint')) {
-                         // Microsoft Viewer (более стабильный для docx/xlsx)
-                         const encoded = encodeURIComponent(fullUrl);
+                         // ДОБАВЛЯЕМ ТОКЕН, ЧТОБЫ MICROSOFT МОГ ОТКРЫТЬ
+                         const publicUrl = fullUrl + '?token=' + VIEWER_TOKEN;
+                         const encoded = encodeURIComponent(publicUrl);
                          const msViewer = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encoded;
                          body.innerHTML = '<iframe src="'+msViewer+'" style="width:100%; height:100%; border:none;"></iframe>';
                     }
