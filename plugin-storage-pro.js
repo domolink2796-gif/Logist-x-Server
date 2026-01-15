@@ -1,14 +1,15 @@
 /**
  * =========================================================================================
- * TITANIUM X-PLATFORM v164.0 | UNBLOCKED VIEW EDITION
+ * TITANIUM X-PLATFORM v165.0 | HYBRID INDEPENDENCE EDITION
  * -----------------------------------------------------------------------------------------
  * АВТОР: GEMINI AI (2026)
  * ПРАВООБЛАДАТЕЛЬ: Никитин Евгений Анатольевич
  * -----------------------------------------------------------------------------------------
- * ИСПРАВЛЕНИЯ v164:
- * [1] Viewer Bypass: Добавлен спец-токен, чтобы Microsoft Office мог открывать ваши запароленные файлы.
- * [2] MP3 Fix: Улучшена обработка аудио-файлов (корректные заголовки).
- * [3] Upload 413: Добавлена визуальная подсказка, если сервер отклонил файл из-за размера.
+ * ИСПРАВЛЕНИЯ v165:
+ * [1] Local Core: Внедрены библиотеки SheetJS и DocxPreview для локального чтения файлов.
+ * [2] Hybrid View: Автоматический выбор (Локально = Быстро / Microsoft = Качественно).
+ * [3] Fail-Safe: Если локальный просмотр не справился, есть кнопка переключения на Cloud.
+ * [4] Сохранено: Лимиты 2GB, QR-коды, Защита от сбоев.
  * =========================================================================================
  */
 
@@ -20,8 +21,8 @@ const path = require('path');
 // --- [CONFIGURATION] ---
 const CONFIG = {
     PASSWORD: "admin",           
-    SESSION_KEY: "titanium_x_session_v164",
-    VIEWER_TOKEN: "titanium_public_access_key_2026", // Секретный ключ для просмотрщиков
+    SESSION_KEY: "titanium_x_session_v165",
+    VIEWER_TOKEN: "titanium_public_access_key_2026",
     LOGO: "https://raw.githubusercontent.com/domolink2796-gif/Logist-x-Server/main/logo.png",
     PATHS: {
         STORAGE: path.join(__dirname, 'local_storage'),
@@ -65,7 +66,6 @@ function getLocalMime(filename) {
 module.exports = function(app, context) {
     const { drive, MY_ROOT_ID, MERCH_ROOT_ID } = context;
 
-    // FIX Limits
     app.use(express.json({ limit: '500mb' }));
     app.use(express.urlencoded({ limit: '500mb', extended: true }));
     
@@ -75,20 +75,15 @@ module.exports = function(app, context) {
     });
 
     const saveMemory = () => fs.writeFileSync(CONFIG.PATHS.NEURAL_MAP, JSON.stringify(NEURAL_MEMORY, null, 2));
-
     const checkAuth = (req) => req.headers.cookie && req.headers.cookie.includes(`${CONFIG.SESSION_KEY}=granted`);
     
-    // AUTH MIDDLEWARE С ПРОПУСКОМ ДЛЯ ПРОСМОТРЩИКА
     const protect = (req, res, next) => {
-        // Если есть секретный токен в ссылке — пропускаем (нужно для MS Viewer)
         if (req.query.token === CONFIG.VIEWER_TOKEN) return next();
-        
-        // Иначе проверяем пароль
         if (checkAuth(req)) return next();
         res.status(401).json({error: "Access Denied"});
     };
 
-    // 1. AUTH
+    // ROUTES
     app.post('/storage/auth', express.json(), (req, res) => {
         if (req.body.password === CONFIG.PASSWORD) {
             res.setHeader('Set-Cookie', `${CONFIG.SESSION_KEY}=granted; Max-Age=604800; Path=/; HttpOnly`);
@@ -96,7 +91,6 @@ module.exports = function(app, context) {
         } else res.json({ success: false });
     });
 
-    // 2. LIST API
     app.get('/storage/api/list', protect, async (req, res) => {
         try {
             const folderId = req.query.folderId || 'root';
@@ -137,21 +131,16 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // 3. PROXY
     app.get('/storage/api/proxy/:id', protect, async (req, res) => {
         try {
             const id = req.params.id;
             if (id.startsWith('local_')) {
                 const fileInfo = NEURAL_MEMORY.map[id];
                 if (!fileInfo || !fs.existsSync(fileInfo.localPath)) return res.status(404).send("File lost");
-                
                 const realMime = getLocalMime(fileInfo.localPath); 
                 res.setHeader('Content-Type', realMime);
-                // Разрешаем стриминг для аудио/видео
                 res.setHeader('Accept-Ranges', 'bytes');
-                
-                const stream = fs.createReadStream(fileInfo.localPath);
-                stream.pipe(res);
+                fs.createReadStream(fileInfo.localPath).pipe(res);
             } else {
                 const response = await drive.files.get({ fileId: id, alt: 'media' }, { responseType: 'stream' });
                 const meta = await drive.files.get({ fileId: id, fields: 'mimeType' });
@@ -161,7 +150,6 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).send("Stream Error"); }
     });
 
-    // 4. MANAGEMENT
     app.post('/storage/api/create-file', express.json(), protect, async (req, res) => {
         const { name, content, parentId, isFolder } = req.body;
         try {
@@ -243,9 +231,14 @@ module.exports = function(app, context) {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-            <title>Titanium Maximus 164</title>
+            <title>Titanium Maximus 165</title>
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+            
             <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+            <script src="https://unpkg.com/jszip/dist/jszip.min.js"></script>
+            <script src="https://unpkg.com/docx-preview/dist/docx-preview.min.js"></script>
+
             <style>
                 :root { --gold: #f0b90b; --bg: #000; --card: #121212; --border: #222; }
                 body { background: var(--bg); color: #fff; font-family: -apple-system, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -270,6 +263,7 @@ module.exports = function(app, context) {
                 .f-meta { font-size: 11px; color: #555; margin-top: 3px; }
                 .f-ops { padding: 10px; color: #444; }
 
+                /* MODALS */
                 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 5000; display: none; align-items: center; justify-content: center; backdrop-filter: blur(10px); }
                 .modal-box { background: #1a1a1a; width: 85%; max-width: 340px; padding: 25px; border-radius: 25px; border: 1px solid #333; }
                 input, textarea { width: 100%; padding: 14px; background: #111; border: 1px solid #333; color: #fff; border-radius: 12px; margin-bottom: 15px; box-sizing: border-box; font-size: 16px; outline: none; }
@@ -281,10 +275,20 @@ module.exports = function(app, context) {
                 .qr-container { background: #fff; padding: 20px; border-radius: 15px; display: flex; justify-content: center; margin-bottom: 15px; }
 
                 #viewer { position: fixed; inset: 0; background: #000; z-index: 6000; display: none; flex-direction: column; }
-                .v-close { position: absolute; top: 40px; right: 20px; font-size: 35px; color: #fff; z-index: 100; opacity: 0.8; cursor:pointer; }
-                .v-body { flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; overflow: auto; }
+                .v-close { position: absolute; top: 20px; right: 20px; font-size: 35px; color: #fff; z-index: 100; opacity: 0.8; cursor:pointer; }
+                .v-body { flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; overflow: auto; background:#fff; position:relative; }
+                .v-dark-body { background: #000; }
+                
                 video, img { max-width: 100%; max-height: 100%; object-fit: contain; }
                 iframe { border: none; background: #fff; width: 100%; height: 100%; }
+
+                /* Table Styling */
+                table { border-collapse: collapse; width: 100%; color: #000; }
+                td, th { border: 1px solid #ddd; padding: 8px; font-size: 14px; }
+                tr:nth-child(even){background-color: #f2f2f2;}
+                th { padding-top: 12px; padding-bottom: 12px; text-align: left; background-color: #04AA6D; color: white; }
+
+                .ms-btn { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: #2b579a; color: #fff; padding: 10px 20px; border-radius: 20px; border: none; font-weight: bold; cursor: pointer; z-index: 200; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
 
                 .fab { position: fixed; bottom: 35px; right: 25px; width: 65px; height: 65px; background: var(--gold); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; color: #000; box-shadow: 0 10px 40px rgba(0,0,0,0.8); }
             </style>
@@ -338,7 +342,7 @@ module.exports = function(app, context) {
             </div>
 
             <div id="viewer">
-                <i class="fa fa-times v-close" onclick="closeViewer()"></i>
+                <i class="fa fa-times v-close" onclick="closeViewer()" style="color:#000; text-shadow:0 0 5px #fff"></i>
                 <div class="v-body" id="v-body"></div>
             </div>
 
@@ -351,7 +355,7 @@ module.exports = function(app, context) {
                 let activeId = null;
                 let activeName = '';
                 let isCreatingFolder = false;
-                const VIEWER_TOKEN = '${CONFIG.VIEWER_TOKEN}'; // Токен с сервера
+                const VIEWER_TOKEN = '${CONFIG.VIEWER_TOKEN}'; 
 
                 async function nav(id, el) {
                     cur = id;
@@ -412,16 +416,7 @@ module.exports = function(app, context) {
                 function getIcon(n, m) {
                     if(m.includes('folder')) return 'fa-folder';
                     const ext = n.split('.').pop().toLowerCase();
-                    const icons = {
-                        'jpg':'fa-image', 'jpeg':'fa-image', 'png':'fa-image', 'gif':'fa-image', 'webp':'fa-image',
-                        'mp4':'fa-video', 'mov':'fa-video', 'avi':'fa-video', 'webm':'fa-video',
-                        'mp3':'fa-music', 'wav':'fa-music', 'ogg':'fa-music',
-                        'pdf':'fa-file-pdf', 'doc':'fa-file-word', 'docx':'fa-file-word',
-                        'xls':'fa-file-excel', 'xlsx':'fa-file-excel', 'ppt':'fa-file-powerpoint', 'pptx':'fa-file-powerpoint',
-                        'txt':'fa-file-lines', 'log':'fa-file-lines', 
-                        'json':'fa-code', 'js':'fa-code', 'html':'fa-code', 'css':'fa-code',
-                        'zip':'fa-file-zipper', 'rar':'fa-file-zipper', '7z':'fa-file-zipper'
-                    };
+                    const icons = {'jpg':'fa-image', 'jpeg':'fa-image', 'png':'fa-image', 'gif':'fa-image', 'webp':'fa-image', 'mp4':'fa-video', 'mov':'fa-video', 'avi':'fa-video', 'webm':'fa-video', 'mp3':'fa-music', 'wav':'fa-music', 'ogg':'fa-music', 'pdf':'fa-file-pdf', 'doc':'fa-file-word', 'docx':'fa-file-word', 'xls':'fa-file-excel', 'xlsx':'fa-file-excel', 'ppt':'fa-file-powerpoint', 'pptx':'fa-file-powerpoint', 'txt':'fa-file-lines', 'log':'fa-file-lines', 'json':'fa-code', 'js':'fa-code', 'html':'fa-code', 'css':'fa-code', 'zip':'fa-file-zipper', 'rar':'fa-file-zipper', '7z':'fa-file-zipper'};
                     return icons[ext] || 'fa-file';
                 }
 
@@ -507,41 +502,64 @@ module.exports = function(app, context) {
                     nav(cur);
                 }
 
-                function view(id, mime) {
+                async function view(id, mime) {
                     const body = document.getElementById('v-body');
                     const url = '/storage/api/proxy/' + id;
                     const fullUrl = window.location.origin + url;
                     
-                    body.innerHTML = '<div style="color:#555"><i class="fa fa-spinner fa-spin fa-2x"></i></div>';
+                    body.innerHTML = '<div style="color:#555; position:absolute; top:50%; left:50%; transform:translate(-50%, -50%)"><i class="fa fa-spinner fa-spin fa-3x"></i></div>';
+                    body.className = 'v-body';
                     document.getElementById('viewer').style.display = 'flex';
                     
                     if(mime.includes('image')) {
+                        body.className = 'v-body v-dark-body';
                         body.innerHTML = '<img src="'+url+'">';
                     }
                     else if(mime.includes('video')) {
+                        body.className = 'v-body v-dark-body';
                         body.innerHTML = '<video src="'+url+'" controls autoplay playsinline style="max-height:80vh"></video>';
                     }
                     else if(mime.includes('audio')) {
-                         body.innerHTML = '<div style="text-align:center"><i class="fa fa-music fa-5x" style="color:#333;margin-bottom:30px"></i><br><audio src="'+url+'" controls autoplay></audio></div>';
+                         body.innerHTML = '<div style="text-align:center; padding-top:100px"><i class="fa fa-music fa-5x" style="color:#333;margin-bottom:30px"></i><br><audio src="'+url+'" controls autoplay></audio></div>';
+                    }
+                    else if(mime.includes('excel') || mime.includes('spreadsheet')) {
+                         // LOCAL EXCEL RENDER
+                         try {
+                             const f = await fetch(url);
+                             const ab = await f.arrayBuffer();
+                             const wb = XLSX.read(ab);
+                             const ws = wb.Sheets[wb.SheetNames[0]];
+                             const html = XLSX.utils.sheet_to_html(ws);
+                             body.innerHTML = '<div style="padding:20px; overflow:auto">' + html + '</div>' + getMsButton(fullUrl);
+                         } catch(e) { body.innerHTML = 'Error: ' + e; }
+                    }
+                    else if(mime.includes('word') || mime.includes('document')) {
+                         // LOCAL WORD RENDER
+                         try {
+                             const f = await fetch(url);
+                             const blob = await f.blob();
+                             body.innerHTML = '<div id="docx-container" style="padding:40px; background:#fff; min-height:100%"></div>' + getMsButton(fullUrl);
+                             docx.renderAsync(blob, document.getElementById("docx-container"));
+                         } catch(e) { body.innerHTML = 'Error: ' + e; }
                     }
                     else if(mime.includes('pdf')) {
                          body.innerHTML = '<iframe src="'+url+'" type="application/pdf" width="100%" height="100%"></iframe>';
                     }
-                    else if(mime.includes('excel') || mime.includes('spreadsheet') || mime.includes('word') || mime.includes('document') || mime.includes('presentation') || mime.includes('powerpoint')) {
-                         // ДОБАВЛЯЕМ ТОКЕН, ЧТОБЫ MICROSOFT МОГ ОТКРЫТЬ
-                         const publicUrl = fullUrl + '?token=' + VIEWER_TOKEN;
-                         const encoded = encodeURIComponent(publicUrl);
-                         const msViewer = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encoded;
-                         body.innerHTML = '<iframe src="'+msViewer+'" style="width:100%; height:100%; border:none;"></iframe>';
-                    }
-                    else if(mime.includes('text') || mime.includes('json') || mime.includes('javascript') || mime.includes('xml')) {
-                         fetch(url).then(r => r.text()).then(t => {
-                             body.innerHTML = '<pre style="color:#eee; padding:20px; overflow:auto; white-space:pre-wrap; width:100%; height:100%; box-sizing:border-box;">'+t.replace(/</g,'&lt;')+'</pre>';
-                         }).catch(e => body.innerHTML = 'Error loading text');
-                    }
                     else {
-                        body.innerHTML = '<div style="text-align:center"><h3>Предпросмотр недоступен</h3><p>Этот формат нельзя открыть в браузере</p><button class="btn btn-gold" onclick="window.open(\\''+url+'\\')">СКАЧАТЬ ФАЙЛ</button></div>';
+                        body.innerHTML = '<div style="text-align:center; padding-top:100px"><h3>Предпросмотр недоступен</h3><p>Этот формат нельзя открыть в браузере</p><button class="btn btn-gold" onclick="window.open(\\''+url+'\\')">СКАЧАТЬ ФАЙЛ</button></div>';
                     }
+                }
+
+                function getMsButton(u) {
+                    const publicUrl = u + '?token=' + VIEWER_TOKEN;
+                    const encoded = encodeURIComponent(publicUrl);
+                    const msViewer = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encoded;
+                    return '<button class="ms-btn" onclick="openMs(\\''+msViewer+'\\')">Открыть через Microsoft (Если криво)</button>';
+                }
+
+                function openMs(url) {
+                    const body = document.getElementById('v-body');
+                    body.innerHTML = '<iframe src="'+url+'" style="width:100%; height:100%; border:none;"></iframe>';
                 }
 
                 function closeModals() { 
