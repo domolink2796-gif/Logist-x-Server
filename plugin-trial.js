@@ -1,7 +1,7 @@
 module.exports = function(app, ctx) {
     const { readDatabase, saveDatabase, getOrCreateFolder, MERCH_ROOT_ID, MY_ROOT_ID } = ctx;
 
-    // 1. Создание ключа (оставляем как есть)
+    // 1. Создание ключа (API остается)
     app.post('/api/keys/add-trial', async (req, res) => {
         try {
             const { name, type } = req.body;
@@ -21,43 +21,37 @@ module.exports = function(app, ctx) {
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
-    // 2. ХИТРЫЙ ПЕРЕХВАТ: Переопределяем существующий путь /dashboard
-    const stack = app._router.stack;
-    const routeIndex = stack.findIndex(layer => layer.route && layer.route.path === '/dashboard');
-
-    if (routeIndex !== -1) {
-        // Запоминаем оригинал, чтобы достать из него HTML
-        const originalHandler = stack[routeIndex].route.stack[0].handle;
-        
-        // Ставим свой обработчик поверх
-        app.get('/dashboard', async (req, res) => {
-            // Временно перехватываем res.send
-            const oldSend = res.send;
-            res.send = function(body) {
-                if (typeof body === 'string' && body.includes('add()')) {
-                    body = body.replace(
-                        'onclick="add()">СОЗДАТЬ КЛЮЧ</button>',
-                        'onclick="add()">СОЗДАТЬ КЛЮЧ</button><button id="trialBtn" style="background:#4ade80; color:#000; padding:14px; border-radius:8px; border:none; font-weight:700; cursor:pointer; width:100%; margin-top:10px; font-size:14px;" onclick="addTrial()">🎁 ТЕСТ-ДРАЙВ (3 ДНЯ)</button>'
-                    );
-                    
-                    const script = `
+    // 2. ГЛОБАЛЬНАЯ ИНЪЕКЦИЯ (Через Middleware)
+    app.use((req, res, next) => {
+        const oldSend = res.send;
+        res.send = function(body) {
+            if (req.path === '/dashboard' && typeof body === 'string') {
+                // Вставляем плавающую кнопку управления в правый нижний угол
+                const overlayHtml = `
+                <div id="trial-layer" style="position:fixed; bottom:20px; right:20px; z-index:9999; background:#0d1117; border:2px solid #4ade80; padding:15px; border-radius:20px; box-shadow:0 10px 30px rgba(0,0,0,0.5); width:200px;">
+                    <div style="font-size:10px; color:#4ade80; font-weight:900; margin-bottom:10px; text-align:center;">TRIAL MODULE ACTIVE</div>
+                    <button onclick="addTrial()" style="background:#4ade80; color:#000; border:none; width:100%; padding:10px; border-radius:10px; font-weight:900; cursor:pointer;">🎁 ТЕСТ-ДРАЙВ</button>
+                </div>
+                <script>
                     async function addTrial(){
-                        const n = document.getElementById('n').value;
-                        const t = document.getElementById('t').value;
-                        if(!n) return alert('Введите имя');
+                        const n = document.getElementById('n')?.value || prompt('Введите имя объекта:');
+                        const t = document.getElementById('t')?.value || 'logist';
+                        if(!n) return;
                         const r = await fetch('/api/keys/add-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,type:t})});
-                        const res = await r.json();
-                        if(res.success) alert('Тестовый ключ: ' + res.key);
-                        load();
-                    }`;
-                    body = body.replace('load();', 'load();' + script);
-                }
-                oldSend.call(this, body);
-            };
-            originalHandler(req, res);
-        });
-        console.log("✅ ПЛАГИН ТЕСТ-ДРАЙВ: ПРЯМАЯ ИНЪЕКЦИЯ В РОУТ ВЫПОЛНЕНА");
-    } else {
-        console.log("⚠️ ПЛАГИН ТЕСТ-ДРАЙВ: Роут /dashboard не найден в памяти сервера");
-    }
+                        const resData = await r.json();
+                        if(resData.success) {
+                            alert('Ключ создан: ' + resData.key);
+                            if(typeof load === 'function') load();
+                        }
+                    }
+                </script>
+                `;
+                body = body.replace('</body>', overlayHtml + '</body>');
+            }
+            oldSend.call(this, body);
+        };
+        next();
+    });
+
+    console.log("✅ ПЛАГИН ТЕСТ-ДРАЙВ: АВТОНОМНЫЙ СЛОЙ ПОДКЛЮЧЕН");
 };
