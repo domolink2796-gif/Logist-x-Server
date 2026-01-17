@@ -877,6 +877,13 @@ try {
 } catch (e) {
     console.log("⚠️ Ошибка сканера: " + e.message);
 }
+// --- [НОВОЕ] 4. ПЛАГИН ТЕСТ-ДРАЙВА ---
+try {
+    require('./plugin-trial.js')(app, pluginContext);
+} catch (e) {
+    console.log("⚠️ Ошибка плагина тест-драйва: " + e.message);
+}
+
 // --- ЗАПУСК БОТА ---
 bot.launch().then(() => {
     console.log('✅ Бот запущен');
