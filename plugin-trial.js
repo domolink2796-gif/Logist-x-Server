@@ -9,7 +9,7 @@ module.exports = function(app, ctx) {
             const trialKey = "TRIAL-" + Math.random().toString(36).substring(2, 7).toUpperCase();
             
             const exp = new Date();
-            exp.setHours(exp.getHours() + 72); // Ровно 3 дня
+            exp.setHours(exp.getHours() + 72); // 3 дня
 
             const projectRoot = (type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
             const fId = await getOrCreateFolder(name + " (TRIAL)", projectRoot);
@@ -33,37 +33,46 @@ module.exports = function(app, ctx) {
         }
     });
 
-    // 2. ВНЕДРЕНИЕ КНОПКИ В ТВОЙ ИНТЕРФЕЙС (MAGIC INJECTION)
-    // Мы перехватываем ответ от /dashboard и добавляем кнопку программно
+    // 2. УЛУЧШЕННОЕ ВНЕДРЕНИЕ КНОПКИ (РАБОТАЕТ В TG И БРАУЗЕРЕ)
     app.use('/dashboard', (req, res, next) => {
         const send = res.send;
         res.send = function (body) {
-            if (typeof body === 'string' && body.includes('add()')) {
-                // Вставляем кнопку рядом с основной
-                let modified = body.replace(
-                    'onclick="add()">СОЗДАТЬ КЛЮЧ</button>',
-                    'onclick="add()">СОЗДАТЬ КЛЮЧ</button><button class="btn" style="background:#4ade80; color:#000; margin-top:10px;" onclick="addTrial()">🎁 ТЕСТ-ДРАЙВ (3 ДНЯ)</button>'
-                );
-                // Вставляем JS функцию для работы кнопки
-                modified = modified.replace(
-                    'load();',
-                    `load(); 
-                    window.addTrial = async () => {
-                        const n = document.getElementById('n').value;
-                        const t = document.getElementById('t').value;
-                        if(!n) return alert('Введите имя объекта');
-                        const r = await fetch('/api/keys/add-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,type:t})});
-                        const resData = await r.json();
-                        if(resData.success) alert('Тестовый ключ: ' + resData.key);
-                        load();
-                    };`
-                );
-                body = modified;
+            if (typeof body === 'string' && body.includes('</body>')) {
+                // Скрипт, который найдет блок создания ключа и добавит туда кнопку программно
+                const injection = `
+                <script>
+                    (function() {
+                        const checkExist = setInterval(function() {
+                           const container = document.querySelector('.card'); // Ищем первую карточку (добавление объекта)
+                           if (container && container.innerHTML.includes('add()')) {
+                              const trialBtn = document.createElement('button');
+                              trialBtn.className = 'btn';
+                              trialBtn.style.background = '#4ade80';
+                              trialBtn.style.color = '#000';
+                              trialBtn.style.marginTop = '10px';
+                              trialBtn.innerHTML = '🎁 СОЗДАТЬ ТЕСТ-ДРАЙВ (3 ДНЯ)';
+                              trialBtn.onclick = async () => {
+                                  const n = document.getElementById('n').value;
+                                  const t = document.getElementById('t').value;
+                                  if(!n) return alert('Введите имя объекта');
+                                  const r = await fetch('/api/keys/add-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,type:t})});
+                                  const resData = await r.json();
+                                  if(resData.success) alert('Тестовый ключ создан: ' + resData.key);
+                                  load();
+                              };
+                              container.appendChild(trialBtn);
+                              clearInterval(checkExist);
+                           }
+                        }, 100);
+                    })();
+                </script>
+                `;
+                body = body.replace('</body>', injection + '</body>');
             }
             send.call(this, body);
         };
         next();
     });
 
-    console.log("✅ ПЛАГИН ТЕСТ-ДРАЙВ С АВТО-КНОПКОЙ ПОДКЛЮЧЕН");
+    console.log("✅ ПЛАГИН ТЕСТ-ДРАЙВ (УНИВЕРСАЛЬНЫЙ) ПОДКЛЮЧЕН");
 };
