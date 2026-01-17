@@ -1,7 +1,7 @@
 module.exports = function(app, ctx) {
     const { readDatabase, saveDatabase, getOrCreateFolder, MERCH_ROOT_ID, MY_ROOT_ID } = ctx;
 
-    // 1. Создание ключа (API остается)
+    // 1. API для создания ключа
     app.post('/api/keys/add-trial', async (req, res) => {
         try {
             const { name, type } = req.body;
@@ -21,37 +21,38 @@ module.exports = function(app, ctx) {
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
-    // 2. ГЛОБАЛЬНАЯ ИНЪЕКЦИЯ (Через Middleware)
-    app.use((req, res, next) => {
-        const oldSend = res.send;
-        res.send = function(body) {
-            if (req.path === '/dashboard' && typeof body === 'string') {
-                // Вставляем плавающую кнопку управления в правый нижний угол
-                const overlayHtml = `
-                <div id="trial-layer" style="position:fixed; bottom:20px; right:20px; z-index:9999; background:#0d1117; border:2px solid #4ade80; padding:15px; border-radius:20px; box-shadow:0 10px 30px rgba(0,0,0,0.5); width:200px;">
-                    <div style="font-size:10px; color:#4ade80; font-weight:900; margin-bottom:10px; text-align:center;">TRIAL MODULE ACTIVE</div>
-                    <button onclick="addTrial()" style="background:#4ade80; color:#000; border:none; width:100%; padding:10px; border-radius:10px; font-weight:900; cursor:pointer;">🎁 ТЕСТ-ДРАЙВ</button>
-                </div>
-                <script>
-                    async function addTrial(){
-                        const n = document.getElementById('n')?.value || prompt('Введите имя объекта:');
-                        const t = document.getElementById('t')?.value || 'logist';
-                        if(!n) return;
-                        const r = await fetch('/api/keys/add-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,type:t})});
-                        const resData = await r.json();
-                        if(resData.success) {
-                            alert('Ключ создан: ' + resData.key);
-                            if(typeof load === 'function') load();
-                        }
-                    }
-                </script>
-                `;
-                body = body.replace('</body>', overlayHtml + '</body>');
-            }
-            oldSend.call(this, body);
-        };
-        next();
-    });
+    // 2. ГЛОБАЛЬНЫЙ ПЕРЕХВАТ (Force Injection)
+    // Мы заменяем метод send у прототипа ответа Express
+    const express = require('express');
+    const originalSend = express.response.send;
 
-    console.log("✅ ПЛАГИН ТЕСТ-ДРАЙВ: АВТОНОМНЫЙ СЛОЙ ПОДКЛЮЧЕН");
+    express.response.send = function (body) {
+        // Проверяем, что это HTML и мы на нужной странице
+        if (typeof body === 'string' && body.includes('ПАНЕЛЬ УПРАВЛЕНИЯ')) {
+            const inject = `
+            <div id="trial-float" style="position:fixed; top:80px; right:10px; z-index:99999;">
+                <button onclick="addTrial()" style="background:#4ade80; color:#000; border:2px solid #fff; padding:12px; border-radius:12px; font-weight:900; box-shadow:0 5px 15px rgba(0,0,0,0.5); cursor:pointer;">🎁 ТЕСТ-ДРАЙВ</button>
+            </div>
+            <script>
+                async function addTrial(){
+                    const n = prompt('Название объекта для теста:');
+                    if(!n) return;
+                    const r = await fetch('/api/keys/add-trial',{
+                        method:'POST',
+                        headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify({name:n, type:'logist'})
+                    });
+                    const res = await r.json();
+                    if(res.success) {
+                        alert('Ключ создан: ' + res.key);
+                        location.reload();
+                    }
+                }
+            </script>`;
+            body = body.replace('</body>', inject + '</body>');
+        }
+        return originalSend.call(this, body);
+    };
+
+    console.log("🚀 ПЛАГИН ТЕСТ-ДРАЙВ: ГЛОБАЛЬНЫЙ ФОРСИРОВАННЫЙ РЕЖИМ");
 };
