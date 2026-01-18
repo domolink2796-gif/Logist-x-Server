@@ -1,7 +1,7 @@
 module.exports = function(app, ctx) {
     const { readDatabase, saveDatabase, getOrCreateFolder, MERCH_ROOT_ID, MY_ROOT_ID, bot } = ctx;
 
-    // СЮДА ВСТАВИТЬ ТВОЙ ID (цифрами, без кавычек)
+    // --- ИСПРАВЛЕНО: Твой реальный Telegram ID ---
     const MY_TELEGRAM_ID = 6846149935; 
 
     // 1. ЛОГИКА СОЗДАНИЯ ТЕСТОВОГО КЛЮЧА + УВЕДОМЛЕНИЕ
@@ -10,13 +10,12 @@ module.exports = function(app, ctx) {
             const { name, type } = req.body;
             let keys = await readDatabase();
             
-            // Генерация ключа
+            // Генерация ключа TRIAL-XXXXX
             const trialKey = "TRIAL-" + Math.random().toString(36).substring(2, 7).toUpperCase();
             
             const exp = new Date();
             exp.setHours(exp.getHours() + 72); // Доступ на 3 дня
 
-            // Выбор корня диска в зависимости от программы
             const projectRoot = (type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
             const fId = await getOrCreateFolder(name + " (TRIAL)", projectRoot);
 
@@ -34,22 +33,32 @@ module.exports = function(app, ctx) {
 
             await saveDatabase(keys);
 
-            // ФОРМИРОВАНИЕ СООБЩЕНИЯ
-            const projectTypeLabel = type === 'merch' ? '📊 MERCH_X' : '🚚 LOGIST_X';
-            const msg = `🎁 **НОВЫЙ ТЕСТ-ДРАЙВ!**\n\n🏢 Объект: **${name}**\n🔑 Ключ: \`${trialKey}\` \n📦 Проект: ${projectTypeLabel}\n⏳ Срок: 3 дня`;
+            // ФОРМИРУЕМ ТЕКСТ УВЕДОМЛЕНИЯ
+            const projectLabel = type === 'merch' ? '📊 MERCH_X (Мерч)' : '🚚 LOGIST_X (Логист)';
+            const msg = `🎁 **НОВЫЙ ТЕСТ-ДРАЙВ!**\n\n` +
+                        `🏢 Объект: **${name}**\n` +
+                        `🔑 Ключ: \`${trialKey}\` \n` +
+                        `📦 Тип: ${projectLabel}\n` +
+                        `⏳ Срок: 3 дня`;
             
-            // ОТПРАВКА УВЕДОМЛЕНИЯ
+            // ОТПРАВЛЯЕМ В ТЕЛЕГРАМ С КНОПКОЙ
             try {
                 if (MY_TELEGRAM_ID) {
-                    await bot.telegram.sendMessage(MY_TELEGRAM_ID, msg, { parse_mode: 'Markdown' });
+                    await bot.telegram.sendMessage(MY_TELEGRAM_ID, msg, { 
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [[
+                                { text: "📂 Открыть папку объекта", url: `https://drive.google.com/drive/folders/${fId}` }
+                            ]]
+                        }
+                    });
                 }
             } catch (tgErr) {
-                console.log("Ошибка отправки в TG. Проверь ID или запущен ли бот:", tgErr.message);
+                console.log("Ошибка уведомления в TG:", tgErr.message);
             }
 
             res.json({ success: true, key: trialKey });
         } catch (e) {
-            console.error("Ошибка в add-trial:", e);
             res.status(500).json({ success: false, error: e.message });
         }
     });
@@ -69,17 +78,16 @@ module.exports = function(app, ctx) {
                     const n = prompt('Название объекта для теста:');
                     if(!n) return;
                     
-                    // Выбор типа при создании из админки
                     const t = confirm('Это проект MERCH_X? (ОК - Да, Отмена - LOGIST_X)') ? 'merch' : 'logist';
                     
                     const r = await fetch('/api/keys/add-trial',{
                         method:'POST',
                         headers:{'Content-Type':'application/json'},
-                        body:JSON.stringify({name: n, type: t})
+                        body:JSON.stringify({name:n, type:t})
                     });
                     const res = await r.json();
                     if(res.success) {
-                        alert('Ключ создан: ' + res.key + ' (уведомление отправлено)');
+                        alert('Ключ создан: ' + res.key);
                         if(typeof load === 'function') load();
                     }
                 }
@@ -89,5 +97,5 @@ module.exports = function(app, ctx) {
         return originalSend.call(this, body);
     };
 
-    console.log("🚀 ПЛАГИН ТЕСТ-ДРАЙВ: ГОТОВ К РАБОТЕ");
+    console.log("🚀 ПЛАГИН ТЕСТ-ДРАЙВ: ИСПРАВЛЕН И ЗАПУЩЕН");
 };
