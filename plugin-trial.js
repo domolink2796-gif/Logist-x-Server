@@ -1,20 +1,73 @@
+const nodemailer = require('nodemailer');
+
 module.exports = function(app, ctx) {
     const { readDatabase, saveDatabase, getOrCreateFolder, MERCH_ROOT_ID, MY_ROOT_ID, bot } = ctx;
 
-    // --- ИСПРАВЛЕНО: Твой реальный Telegram ID ---
     const MY_TELEGRAM_ID = 6846149935; 
+    const verificationCodes = new Map();
 
-    // 1. ЛОГИКА СОЗДАНИЯ ТЕСТОВОГО КЛЮЧА + УВЕДОМЛЕНИЕ
-    app.post('/api/keys/add-trial', async (req, res) => {
+    // --- НАСТРОЙКА ПОЧТЫ BEGET ---
+    const transporter = nodemailer.createTransport({
+        host: 'smtp.beget.com',
+        port: 465,
+        secure: true, 
+        auth: {
+            user: 'service@x-platform.ru', 
+            pass: 'NIKITIN_57_X' // Вставьте пароль от ящика
+        },
+        tls: { rejectUnauthorized: false }
+    });
+
+    // 1. Отправка кода подтверждения
+    app.post('/api/keys/send-verification', async (req, res) => {
         try {
-            const { name, type } = req.body;
-            let keys = await readDatabase();
+            const { email, name, type } = req.body;
+            const code = Math.floor(100000 + Math.random() * 900000).toString();
             
-            // Генерация ключа TRIAL-XXXXX
+            verificationCodes.set(email, { code, name, type, expires: Date.now() + 600000 });
+
+            await transporter.sendMail({
+                from: '"service x-platform" <Service@x-platform.ru>', // Название с маленькой буквы
+                to: email,
+                subject: "код подтверждения доступа | x-platform",
+                html: `
+                    <div style="font-family: sans-serif; padding: 30px; background-color: #0d1117; color: #e6edf3; border-radius: 15px; text-align: center; border: 1px solid #30363d;">
+                        <h1 style="color: #f59e0b; margin-bottom: 20px; font-size: 24px; text-transform: lowercase;">service x-platform core</h1>
+                        <p style="font-size: 16px; opacity: 0.9;">Код подтверждения для объекта:<br><b style="color: #fff;">${name}</b></p>
+                        
+                        <div style="background: rgba(245, 158, 11, 0.05); border: 1px solid rgba(245, 158, 11, 0.3); padding: 25px; border-radius: 12px; margin: 25px 0;">
+                            <span style="font-size: 42px; font-weight: bold; letter-spacing: 10px; color: #f59e0b;">${code}</span>
+                        </div>
+                        
+                        <p style="font-size: 13px; opacity: 0.6;">Введите этот код в окне активации на сайте.<br>Срок действия кода: 10 минут.</p>
+                        <hr style="border: 0; border-top: 1px solid #30363d; margin: 25px 0;">
+                        <p style="font-size: 11px; opacity: 0.4;">service x-platform — автоматическая система уведомлений</p>
+                    </div>
+                `
+            });
+            res.json({ success: true });
+        } catch (e) {
+            console.error("SMTP Error:", e.message);
+            res.status(500).json({ success: false, error: "Ошибка почтового сервера" });
+        }
+    });
+
+    // 2. Проверка кода и создание ключа
+    app.post('/api/keys/verify-and-generate', async (req, res) => {
+        try {
+            const { email, userCode } = req.body;
+            const stored = verificationCodes.get(email);
+
+            if (!stored || stored.code !== userCode || Date.now() > stored.expires) {
+                return res.json({ success: false, error: "Неверный или просроченный код" });
+            }
+
+            const { name, type } = stored;
+            let keys = await readDatabase();
             const trialKey = "TRIAL-" + Math.random().toString(36).substring(2, 7).toUpperCase();
             
             const exp = new Date();
-            exp.setHours(exp.getHours() + 72); // Доступ на 3 дня
+            exp.setHours(exp.getHours() + 72);
 
             const projectRoot = (type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
             const fId = await getOrCreateFolder(name + " (TRIAL)", projectRoot);
@@ -27,75 +80,21 @@ module.exports = function(app, ctx) {
                 workers: [],
                 ownerChatId: null,
                 folderId: fId,
-                type: type || 'logist',
-                isTrial: true
+                type: type,
+                isTrial: true,
+                clientEmail: email
             });
 
             await saveDatabase(keys);
+            verificationCodes.delete(email);
 
-            // ФОРМИРУЕМ ТЕКСТ УВЕДОМЛЕНИЯ
-            const projectLabel = type === 'merch' ? '📊 MERCH_X (Мерч)' : '🚚 LOGIST_X (Логист)';
-            const msg = `🎁 **НОВЫЙ ТЕСТ-ДРАЙВ!**\n\n` +
-                        `🏢 Объект: **${name}**\n` +
-                        `🔑 Ключ: \`${trialKey}\` \n` +
-                        `📦 Тип: ${projectLabel}\n` +
-                        `⏳ Срок: 3 дня`;
-            
-            // ОТПРАВЛЯЕМ В ТЕЛЕГРАМ С КНОПКОЙ
-            try {
-                if (MY_TELEGRAM_ID) {
-                    await bot.telegram.sendMessage(MY_TELEGRAM_ID, msg, { 
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [[
-                                { text: "📂 Открыть папку объекта", url: `https://drive.google.com/drive/folders/${fId}` }
-                            ]]
-                        }
-                    });
-                }
-            } catch (tgErr) {
-                console.log("Ошибка уведомления в TG:", tgErr.message);
-            }
+            // Уведомление владельцу
+            const msg = `📧 **service x-platform: подтверждение**\n\n🏢 Объект: **${name}**\n👤 Email: \`${email}\` \n🔑 Ключ: \`${trialKey}\``;
+            await bot.telegram.sendMessage(MY_TELEGRAM_ID, msg, { parse_mode: 'Markdown' });
 
             res.json({ success: true, key: trialKey });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
     });
-
-    // 2. ГЛОБАЛЬНЫЙ ПЕРЕХВАТ ИНТЕРФЕЙСА (Кнопка в админке)
-    const express = require('express');
-    const originalSend = express.response.send;
-
-    express.response.send = function (body) {
-        if (typeof body === 'string' && body.includes('ПАНЕЛЬ УПРАВЛЕНИЯ')) {
-            const inject = `
-            <div id="trial-float" style="position:fixed; top:80px; right:10px; z-index:99999;">
-                <button onclick="addTrial()" style="background:#4ade80; color:#000; border:2px solid #fff; padding:12px; border-radius:12px; font-weight:900; box-shadow:0 5px 15px rgba(0,0,0,0.5); cursor:pointer;">🎁 ТЕСТ-ДРАЙВ</button>
-            </div>
-            <script>
-                async function addTrial(){
-                    const n = prompt('Название объекта для теста:');
-                    if(!n) return;
-                    
-                    const t = confirm('Это проект MERCH_X? (ОК - Да, Отмена - LOGIST_X)') ? 'merch' : 'logist';
-                    
-                    const r = await fetch('/api/keys/add-trial',{
-                        method:'POST',
-                        headers:{'Content-Type':'application/json'},
-                        body:JSON.stringify({name:n, type:t})
-                    });
-                    const res = await r.json();
-                    if(res.success) {
-                        alert('Ключ создан: ' + res.key);
-                        if(typeof load === 'function') load();
-                    }
-                }
-            </script>`;
-            body = body.replace('</body>', inject + '</body>');
-        }
-        return originalSend.call(this, body);
-    };
-
-    console.log("🚀 ПЛАГИН ТЕСТ-ДРАЙВ: ИСПРАВЛЕН И ЗАПУЩЕН");
 };
