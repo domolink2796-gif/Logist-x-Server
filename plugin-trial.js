@@ -1,4 +1,4 @@
-require('dotenv').config(); // <--- ВОТ ЭТА СТРОЧКА ОБЯЗАТЕЛЬНА!
+require('dotenv').config(); // <--- ИСПРАВИЛ: маленькая буква 'r'
 
 const nodemailer = require('nodemailer');
 
@@ -16,7 +16,7 @@ module.exports = function(app, ctx) {
         secure: true, 
         auth: {
             user: 'service@x-platform.ru', 
-            pass: process.env.SMTP_PASSWORD // Теперь сервер увидит пароль
+            pass: process.env.SMTP_PASSWORD // Секретный пароль из файла
         }
     });
 
