@@ -1,16 +1,22 @@
 module.exports = function(app, ctx) {
     const { readDatabase, saveDatabase, getOrCreateFolder, MERCH_ROOT_ID, MY_ROOT_ID, bot } = ctx;
 
+    // СЮДА ВСТАВИТЬ ТВОЙ ID (цифрами, без кавычек)
+    const MY_TELEGRAM_ID = 575405332940; 
+
     // 1. ЛОГИКА СОЗДАНИЯ ТЕСТОВОГО КЛЮЧА + УВЕДОМЛЕНИЕ
     app.post('/api/keys/add-trial', async (req, res) => {
         try {
             const { name, type } = req.body;
             let keys = await readDatabase();
+            
+            // Генерация ключа
             const trialKey = "TRIAL-" + Math.random().toString(36).substring(2, 7).toUpperCase();
             
             const exp = new Date();
-            exp.setHours(exp.getHours() + 72); // 3 дня
+            exp.setHours(exp.getHours() + 72); // Доступ на 3 дня
 
+            // Выбор корня диска в зависимости от программы
             const projectRoot = (type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
             const fId = await getOrCreateFolder(name + " (TRIAL)", projectRoot);
 
@@ -28,22 +34,27 @@ module.exports = function(app, ctx) {
 
             await saveDatabase(keys);
 
-            // ОТПРАВКА УВЕДОМЛЕНИЯ ТЕБЕ В ТЕЛЕГРАМ
-            const msg = `🎁 **НОВЫЙ ТЕСТ-ДРАЙВ!**\n\n🏢 Объект: ${name}\n🔑 Ключ: \`${trialKey}\` \n📦 Тип: ${type === 'merch' ? 'Мерчендайзинг' : 'Логистика'}\n⏳ Срок: 3 дня`;
+            // ФОРМИРОВАНИЕ СООБЩЕНИЯ
+            const projectTypeLabel = type === 'merch' ? '📊 MERCH_X' : '🚚 LOGIST_X';
+            const msg = `🎁 **НОВЫЙ ТЕСТ-ДРАЙВ!**\n\n🏢 Объект: **${name}**\n🔑 Ключ: \`${trialKey}\` \n📦 Проект: ${projectTypeLabel}\n⏳ Срок: 3 дня`;
             
+            // ОТПРАВКА УВЕДОМЛЕНИЯ
             try {
-                await bot.telegram.sendMessage(MY_TELEGRAM_ID, msg, { parse_mode: 'Markdown' });
+                if (MY_TELEGRAM_ID) {
+                    await bot.telegram.sendMessage(MY_TELEGRAM_ID, msg, { parse_mode: 'Markdown' });
+                }
             } catch (tgErr) {
-                console.log("Ошибка отправки уведомления в TG:", tgErr.message);
+                console.log("Ошибка отправки в TG. Проверь ID или запущен ли бот:", tgErr.message);
             }
 
             res.json({ success: true, key: trialKey });
         } catch (e) {
+            console.error("Ошибка в add-trial:", e);
             res.status(500).json({ success: false, error: e.message });
         }
     });
 
-    // 2. ГЛОБАЛЬНЫЙ ПЕРЕХВАТ ИНТЕРФЕЙСА (ДЛЯ АДМИНКИ)
+    // 2. ГЛОБАЛЬНЫЙ ПЕРЕХВАТ ИНТЕРФЕЙСА (Кнопка в админке)
     const express = require('express');
     const originalSend = express.response.send;
 
@@ -57,14 +68,18 @@ module.exports = function(app, ctx) {
                 async function addTrial(){
                     const n = prompt('Название объекта для теста:');
                     if(!n) return;
+                    
+                    // Выбор типа при создании из админки
+                    const t = confirm('Это проект MERCH_X? (ОК - Да, Отмена - LOGIST_X)') ? 'merch' : 'logist';
+                    
                     const r = await fetch('/api/keys/add-trial',{
                         method:'POST',
                         headers:{'Content-Type':'application/json'},
-                        body:JSON.stringify({name:n, type:'logist'})
+                        body:JSON.stringify({name: n, type: t})
                     });
                     const res = await r.json();
                     if(res.success) {
-                        alert('Ключ создан: ' + res.key);
+                        alert('Ключ создан: ' + res.key + ' (уведомление отправлено)');
                         if(typeof load === 'function') load();
                     }
                 }
@@ -74,5 +89,5 @@ module.exports = function(app, ctx) {
         return originalSend.call(this, body);
     };
 
-    console.log("🚀 ПЛАГИН ТЕСТ-ДРАЙВ: РЕЖИМ С УВЕДОМЛЕНИЯМИ В TG");
+    console.log("🚀 ПЛАГИН ТЕСТ-ДРАЙВ: ГОТОВ К РАБОТЕ");
 };
