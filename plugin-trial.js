@@ -14,7 +14,7 @@ module.exports = function(app, ctx) {
         secure: true, 
         auth: {
             user: 'service@x-platform.ru', 
-            pass: 'NIKITIN_57_X' 
+            pass: 'Nikitin_57_X' 
         }
     });
 
