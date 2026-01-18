@@ -2,7 +2,7 @@ module.exports = function(app, ctx) {
     const { readDatabase, saveDatabase, getOrCreateFolder, MERCH_ROOT_ID, MY_ROOT_ID, bot } = ctx;
 
     // СЮДА ВСТАВИТЬ ТВОЙ ID (цифрами, без кавычек)
-    const MY_TELEGRAM_ID = 575405332940; 
+    const MY_TELEGRAM_ID = 6846149935; 
 
     // 1. ЛОГИКА СОЗДАНИЯ ТЕСТОВОГО КЛЮЧА + УВЕДОМЛЕНИЕ
     app.post('/api/keys/add-trial', async (req, res) => {
