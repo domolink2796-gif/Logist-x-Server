@@ -1,30 +1,31 @@
+require('dotenv').config(); // <--- ВОТ ЭТА СТРОЧКА ОБЯЗАТЕЛЬНА!
+
 const nodemailer = require('nodemailer');
 
 module.exports = function(app, ctx) {
     const { readDatabase, saveDatabase, getOrCreateFolder, MERCH_ROOT_ID, MY_ROOT_ID, bot } = ctx;
 
-    // Твой ID (Оставляем как было)
+    // Твой ID
     const MY_TELEGRAM_ID = 6846149935; 
     const verificationCodes = new Map();
 
-    // --- НАСТРОЙКА ПОЧТЫ (Добавлено) ---
+    // --- НАСТРОЙКА ПОЧТЫ ---
     const transporter = nodemailer.createTransport({
         host: 'smtp.beget.com',
         port: 465,
         secure: true, 
         auth: {
             user: 'service@x-platform.ru', 
-            pass: process.env.SMTP_PASSWORD
+            pass: process.env.SMTP_PASSWORD // Теперь сервер увидит пароль
         }
     });
 
-    // 1. ОТПРАВКА КОДА (Новый шаг)
+    // 1. ОТПРАВКА КОДА
     app.post('/api/keys/send-code', async (req, res) => {
         try {
             const { email, name } = req.body;
             const code = Math.floor(100000 + Math.random() * 900000).toString();
             
-            // Запоминаем код на 10 минут
             verificationCodes.set(email, { code, name, expires: Date.now() + 600000 });
 
             await transporter.sendMail({
@@ -44,13 +45,12 @@ module.exports = function(app, ctx) {
         }
     });
 
-    // 2. ПРОВЕРКА И СОЗДАНИЕ (Твоя старая логика, но с проверкой кода)
+    // 2. ПРОВЕРКА И СОЗДАНИЕ
     app.post('/api/keys/verify-trial', async (req, res) => {
         try {
             const { email, code, type } = req.body;
             const stored = verificationCodes.get(email);
 
-            // Проверяем код
             if (!stored || stored.code !== code) {
                 return res.json({ success: false, error: "Неверный код!" });
             }
@@ -58,10 +58,9 @@ module.exports = function(app, ctx) {
             const name = stored.name;
             let keys = await readDatabase();
             
-            // Создаем ключ
             const trialKey = "TRIAL-" + Math.random().toString(36).substring(2, 7).toUpperCase();
             const exp = new Date();
-            exp.setHours(exp.getHours() + 72); // 3 дня
+            exp.setHours(exp.getHours() + 72); 
 
             const projectRoot = (type === 'merch') ? MERCH_ROOT_ID : MY_ROOT_ID;
             const fId = await getOrCreateFolder(name + " (TRIAL)", projectRoot);
@@ -80,9 +79,8 @@ module.exports = function(app, ctx) {
             });
 
             await saveDatabase(keys);
-            verificationCodes.delete(email); // Удаляем использованный код
+            verificationCodes.delete(email);
 
-            // УВЕДОМЛЕНИЕ В TELEGRAM (Перевел на HTML, чтобы не ломалось от символов _)
             const projectLabel = type === 'merch' ? '📊 MERCH_X' : '🚚 LOGIST_X';
             const msg = `🎁 <b>НОВЫЙ ТЕСТ-ДРАЙВ!</b>\n\n` +
                         `🏢 Объект: <b>${name}</b>\n` +
@@ -111,7 +109,7 @@ module.exports = function(app, ctx) {
         }
     });
 
-    // 3. ВНЕДРЕНИЕ КНОПКИ (Обновил скрипт внутри)
+    // 3. КНОПКА
     const express = require('express');
     const originalSend = express.response.send;
 
@@ -123,7 +121,6 @@ module.exports = function(app, ctx) {
             </div>
             <script>
                 async function startTrialFlow(){
-                    // Шаг 1: Данные
                     const name = prompt('Введите название объекта (например: Магнит Орел):');
                     if(!name) return;
                     
@@ -132,7 +129,6 @@ module.exports = function(app, ctx) {
 
                     const t = confirm('Это проект MERCH_X? (ОК - Мерч, Отмена - Логист)') ? 'merch' : 'logist';
                     
-                    // Шаг 2: Отправка кода
                     alert('Отправляем код на ' + email + '...');
                     const r1 = await fetch('/api/keys/send-code', {
                         method:'POST',
@@ -142,7 +138,6 @@ module.exports = function(app, ctx) {
                     const ans1 = await r1.json();
                     if(!ans1.success) return alert('Ошибка отправки: ' + ans1.error);
 
-                    // Шаг 3: Проверка кода
                     const code = prompt('Введите код из письма:');
                     if(!code) return;
 
