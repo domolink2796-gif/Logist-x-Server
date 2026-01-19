@@ -1,66 +1,60 @@
 module.exports = function(app, context) {
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("📥 [AI] Попытка редактирования (Смена модели на более быструю)...");
+        console.log("📥 [AI] Запрос OpenRouter (Gemini 2.0 Flash)...");
         
         const fs = require('fs');
         const path = require('path');
         const { exec } = require('child_process');
 
-        const keyPath = '/root/my-system/ai-key.txt';
-        const HF_TOKEN = fs.readFileSync(keyPath, 'utf8').trim();
+        try {
+            const keyPath = '/root/my-system/ai-key.txt';
+            const API_KEY = fs.readFileSync(keyPath, 'utf8').trim().replace(/^S/, 's');
 
-        const { image } = req.body;
-        if (!image) return res.status(400).json({ error: "Нет фото" });
-        const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+            const { image } = req.body;
+            if (!image) return res.status(400).json({ error: "Нет фото" });
+            const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
 
-        // Меняем модель на проверенную временем
-        const MODEL = "kandinsky-community/kandinsky-2-2-controlnet-depth"; 
-        
-        const makeRequest = (attempt) => {
-            const tempFile = path.join(__dirname, `hf_req_${Date.now()}.json`);
-            const outputImage = path.join(__dirname, `result_${Date.now()}.jpg`);
-            
+            // Самая свежая БЕСПЛАТНАЯ модель Gemini
+            const MODEL = "google/gemini-2.0-flash-exp:free"; 
+
             const payload = {
-                inputs: "A professional photo of a man in a dark blue business suit, white shirt and tie, solid white background, high quality",
-                image: base64Data, // Твое фото как карта глубины/основа
+                model: MODEL,
+                messages: [{
+                    role: "user",
+                    content: [
+                        { type: "text", text: "Это фото человека. Оставь лицо точно таким же. Переодень его в темно-синий мужской деловой костюм, белую рубашку и галстук. Сделай фон идеально белым. Верни ТОЛЬКО чистый base64 код изображения." },
+                        { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
+                    ]
+                }]
             };
-            
+
+            const tempFile = path.join(__dirname, `or_req_${Date.now()}.json`);
             fs.writeFileSync(tempFile, JSON.stringify(payload));
 
-            const cmd = `curl -s -X POST https://api-inference.huggingface.co/models/${MODEL} \
-              -H "Authorization: Bearer ${HF_TOKEN}" \
+            const cmd = `curl -s -X POST https://openrouter.ai/api/v1/chat/completions \
+              -H "Authorization: Bearer ${API_KEY}" \
               -H "Content-Type: application/json" \
-              -d @${tempFile} \
-              --output ${outputImage}`;
+              -H "HTTP-Referer: https://logist-x.store" \
+              -d @${tempFile}`;
 
-            exec(cmd, (error) => {
+            exec(cmd, (error, stdout) => {
                 try { fs.unlinkSync(tempFile); } catch(e) {}
                 
-                let isImage = false;
-                if (fs.existsSync(outputImage)) {
-                    const stats = fs.statSync(outputImage);
-                    if (stats.size > 5000) isImage = true;
-                }
-
-                if (isImage) {
-                    const bitmap = fs.readFileSync(outputImage);
-                    const base64Image = Buffer.from(bitmap).toString('base64');
-                    console.log(`✅ [AI] УСПЕХ! Попытка №${attempt}`);
-                    try { fs.unlinkSync(outputImage); } catch(e) {}
-                    return res.json({ success: true, processedImage: "data:image/jpeg;base64," + base64Image });
-                } else {
-                    try { fs.unlinkSync(outputImage); } catch(e) {}
-                    console.log(`⚠️ Попытка №${attempt}: Сервер занят, ждем...`);
-
-                    if (attempt < 4) { 
-                        setTimeout(() => makeRequest(attempt + 1), 20000); // Ждем 20 сек
+                try {
+                    const data = JSON.parse(stdout);
+                    if (data.choices && data.choices[0]) {
+                        let content = data.choices[0].message.content;
+                        let finalBase64 = content.replace(/```base64|```|data:image\/\w+;base64,|data:image\/png;base64,/g, '').trim();
+                        console.log("✅ [AI] ФОТО ГОТОВО!");
+                        res.json({ success: true, processedImage: "data:image/jpeg;base64," + finalBase64 });
                     } else {
-                        res.status(500).json({ error: "Нейросеть перегружена. Попробуйте через 5 минут." });
+                        console.error("❌ Ошибка OpenRouter:", stdout);
+                        res.status(500).json({ error: data.error ? data.error.message : "Ошибка API" });
                     }
+                } catch (e) {
+                    res.status(500).json({ error: "Ошибка обработки" });
                 }
             });
-        };
-
-        makeRequest(1);
+        } catch (err) { res.status(500).json({ error: err.message }); }
     });
 };
