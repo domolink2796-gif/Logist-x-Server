@@ -1,11 +1,8 @@
-const { SocksProxyAgent } = require('socks-proxy-agent');
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-
-module.exports = function(app, context) {
+export default function(app, context) {
     const API_KEY = "AIzaSyDCp29_4e334f1F4YVuzXhsjY9ihDAOrcA";
 
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("📥 [AI] Запрос получен. Работаем через WARP туннель...");
+        console.log("📥 [AI] Запрос получен. Пробиваем туннель через WARP...");
         try {
             const { image } = req.body;
             if (!image) return res.status(400).json({ error: "Нет фото" });
@@ -13,7 +10,11 @@ module.exports = function(app, context) {
             const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
             
-            // Настройка туннеля через локальный WARP
+            // Динамический импорт модулей для совместимости с твоим сервером
+            const { default: fetch } = await import('node-fetch');
+            const { SocksProxyAgent } = await import('socks-proxy-agent');
+            
+            // Настройка туннеля через твой WARP (порт 40000)
             const agent = new SocksProxyAgent('socks5://127.0.0.1:40000');
 
             const response = await fetch(apiUrl, {
@@ -48,10 +49,10 @@ module.exports = function(app, context) {
             }
 
         } catch (err) {
-            console.error("❌ Ошибка:", err.message);
+            console.error("❌ Ошибка плагина:", err.message);
             res.status(500).json({ success: false, error: err.message });
         }
     });
 
     console.log("✅ МОДУЛЬ PHOTO-AI (VPN MODE) ПОДКЛЮЧЕН");
-};
+}
