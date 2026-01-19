@@ -2,15 +2,15 @@ module.exports = function(app, context) {
     const API_KEY = "AIzaSyDCp29_4e334f1F4YVuzXhsjY9ihDAOrcA";
 
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("📥 [AI] Запрос через туннель WARP...");
+        console.log("📥 [AI] Запрос через WARP (Метод: Full-Path)...");
         try {
             const { image } = req.body;
             if (!image) return res.status(400).json({ error: "Нет фото" });
 
             const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
             
-            // Мы будем пробовать gemini-1.5-flash-8b, она доступна везде
-            const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key=" + API_KEY;
+            // Используем v1beta и ПОЛНЫЙ путь к модели
+            const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + API_KEY;
             
             const { SocksProxyAgent } = require('socks-proxy-agent');
             const agent = new SocksProxyAgent('socks5://127.0.0.1:40000');
@@ -22,7 +22,7 @@ module.exports = function(app, context) {
                 body: JSON.stringify({
                     contents: [{
                         parts: [
-                            { text: "Инструкция: Сделай фон идеально белым. Одень человека на фото в темно-синий мужской деловой костюм, белую рубашку и галстук. Верни ТОЛЬКО base64 код изображения." },
+                            { text: "Сделай фон идеально белым. Одень человека на фото в темно-синий мужской деловой костюм, белую рубашку и галстук. Верни ТОЛЬКО base64 код изображения." },
                             { inlineData: { mimeType: "image/jpeg", data: base64Data } }
                         ]
                     }]
@@ -31,9 +31,13 @@ module.exports = function(app, context) {
 
             const data = await response.json();
 
+            // Если модель снова не найдена, выведем список того, что ВООБЩЕ доступно ключу
+            if (data.error && data.error.code === 404) {
+                console.log("⚠️ Ошибка 404. Google не видит модель. Проверь API Key в консоли Google.");
+            }
+
             if (data.error) {
-                console.error("❌ Google (Error " + data.error.code + "):", data.error.message);
-                // Если модель 8b тоже не найдена, значит надо включить API в консоли Google
+                console.error("❌ Google ответил:", JSON.stringify(data.error));
                 return res.status(500).json({ success: false, error: data.error.message });
             }
 
@@ -47,10 +51,10 @@ module.exports = function(app, context) {
                 throw new Error("Пустой ответ от нейросети");
             }
         } catch (err) {
-            console.error("❌ Ошибка в плагине:", err.message);
+            console.error("❌ Ошибка плагина:", err.message);
             res.status(500).json({ success: false, error: err.message });
         }
     });
 
-    console.log("✅ МОДУЛЬ PHOTO-AI ПОДКЛЮЧЕН (WARP ACTIVE)");
+    console.log("✅ МОДУЛЬ PHOTO-AI ПОДКЛЮЧЕН");
 };
