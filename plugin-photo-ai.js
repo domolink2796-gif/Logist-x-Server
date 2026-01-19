@@ -6,32 +6,43 @@ module.exports = function(app, context) {
         const genAI = new GoogleGenerativeAI(GEN_AI_KEY);
 
         app.post('/api/photo-ai-process', async (req, res) => {
-            console.log("📥 [AI] Получен запрос на фото");
+            console.log("📥 [AI] Получен запрос на фото. Начинаю обработку...");
             try {
                 const { image } = req.body;
                 if (!image) return res.status(400).json({ error: "Нет изображения" });
 
-                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-                const prompt = "Удали фон, сделай его чисто белым. Одень человека в строгий темно-синий костюм с галстуком. Верни только base64.";
+                // ИСПОЛЬЗУЕМ БОЛЕЕ СТАБИЛЬНУЮ МОДЕЛЬ
+                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" }); 
+
+                const prompt = "Ты профессиональный фотограф. Сделай фон чисто белым (#FFFFFF). Одень мужчину на фото в классический темно-синий костюм, белую рубашку и темный галстук. Верни ТОЛЬКО base64 код изображения.";
 
                 const result = await model.generateContent([
-                    prompt,
-                    { inlineData: { data: image.replace(/^data:image\/\w+;base64,/, ""), mimeType: "image/jpeg" } }
+                    { text: prompt },
+                    {
+                        inlineData: {
+                            data: image.replace(/^data:image\/\w+;base64,/, ""),
+                            mimeType: "image/jpeg"
+                        }
+                    }
                 ]);
 
                 const response = await result.response;
-                let finalBase64 = response.text().trim().replace(/```base64|```|data:image\/jpeg;base64,|data:image\/png;base64,/g, '');
+                let finalBase64 = response.text().trim();
+                
+                // Очистка ответа от лишних знаков
+                finalBase64 = finalBase64.replace(/```base64|```|data:image\/jpeg;base64,|data:image\/png;base64,/g, '').trim();
 
+                console.log("✅ [AI] Фото успешно переодето и фон удален!");
                 res.json({ success: true, processedImage: `data:image/jpeg;base64,${finalBase64}` });
-                console.log("✅ [AI] Фото готово");
+
             } catch (err) {
-                console.error("❌ Ошибка обработки фото:", err.message);
+                console.error("❌ Ошибка внутри Gemini:", err.message);
                 res.status(500).json({ success: false, error: err.message });
             }
         });
 
-        console.log("✅ МОДУЛЬ PHOTO-AI (JIMI) ПОДКЛЮЧЕН К LOGIST_X");
+        console.log("✅ МОДУЛЬ PHOTO-AI (JIMI) ПОДКЛЮЧЕН И ГОТОВ К РАБОТЕ");
     } catch (e) {
-        console.log("❌ Ошибка инициализации Photo-AI: " + e.message);
+        console.log("❌ Ошибка инициализации: " + e.message);
     }
 };
