@@ -1,8 +1,8 @@
-export default function(app, context) {
+module.exports = function(app, context) {
     const API_KEY = "AIzaSyDCp29_4e334f1F4YVuzXhsjY9ihDAOrcA";
 
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("📥 [AI] Запрос получен. Пробиваем туннель через WARP...");
+        console.log("📥 [AI] Запрос получен. Работаем через WARP туннель...");
         try {
             const { image } = req.body;
             if (!image) return res.status(400).json({ error: "Нет фото" });
@@ -10,11 +10,11 @@ export default function(app, context) {
             const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
             
-            // Динамический импорт модулей для совместимости с твоим сервером
+            // Динамический импорт нужных библиотек
             const { default: fetch } = await import('node-fetch');
             const { SocksProxyAgent } = await import('socks-proxy-agent');
             
-            // Настройка туннеля через твой WARP (порт 40000)
+            // Прокси-агент для WARP (порт 40000)
             const agent = new SocksProxyAgent('socks5://127.0.0.1:40000');
 
             const response = await fetch(apiUrl, {
@@ -24,7 +24,7 @@ export default function(app, context) {
                 body: JSON.stringify({
                     contents: [{
                         parts: [
-                            { text: "Инструкция: Сделай фон идеально белым. Одень человека на фото в темно-синий мужской деловой костюм, белую рубашку и галстук. Верни ТОЛЬКО base64 готового изображения." },
+                            { text: "Сделай фон чисто белым. Одень человека на фото в темно-синий мужской деловой костюм, белую рубашку и галстук. Верни ТОЛЬКО base64." },
                             { inlineData: { mimeType: "image/jpeg", data: base64Data } }
                         ]
                     }]
@@ -42,7 +42,7 @@ export default function(app, context) {
                 let resultText = data.candidates[0].content.parts[0].text;
                 let finalBase64 = resultText.trim().replace(/```base64|```|data:image\/jpeg;base64,|data:image\/png;base64,/g, '').trim();
 
-                console.log("✅ [AI] ФОТО ОБРАБОТАНО УСПЕШНО!");
+                console.log("✅ [AI] Фото успешно обработано через VPN!");
                 res.json({ success: true, processedImage: `data:image/jpeg;base64,${finalBase64}` });
             } else {
                 throw new Error("Пустой ответ от нейросети");
@@ -55,4 +55,4 @@ export default function(app, context) {
     });
 
     console.log("✅ МОДУЛЬ PHOTO-AI (VPN MODE) ПОДКЛЮЧЕН");
-}
+};
