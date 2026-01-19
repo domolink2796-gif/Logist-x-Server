@@ -2,55 +2,35 @@ module.exports = function(app, context) {
     const API_KEY = "AIzaSyAWSlp-5uEKSR_v_LaClqCvKMfi5nXmAJY";
 
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("📥 [AI] АКТИВИРОВАН ПЛАН 'С': Запрос через внешнее зеркало...");
+        console.log("🔍 [DIAGNOSTIC] Проверяю доступность ключа и моделей...");
         try {
-            const { image } = req.body;
-            if (!image) return res.status(400).json({ error: "Нет фото" });
-
-            const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
-
-            // Используем v1beta версию и правильный эндпоинт
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
-            
-            // Используем динамический импорт fetch, так как в server.js он уже есть
             const { default: fetch } = await import('node-fetch');
-
-            const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{
-                        parts: [
-                            { text: "Ты — ИИ системы Logist_X. Удали фон, сделай его чисто белым. Одень человека в темно-синий мужской костюм, белую рубашку и галстук. Верни ТОЛЬКО base64 код изображения." },
-                            { inlineData: { mimeType: "image/jpeg", data: base64Data } }
-                        ]
-                    }]
-                })
-            });
-
+            
+            // Запрашиваем список всех доступных моделей для этого ключа
+            const checkUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${API_KEY}`;
+            const response = await fetch(checkUrl);
             const data = await response.json();
 
             if (data.error) {
-                console.error("❌ Ошибка API:", JSON.stringify(data.error));
-                return res.status(500).json({ success: false, error: data.error.message });
+                console.error("❌ КЛЮЧ НЕ РАБОТАЕТ:", JSON.stringify(data.error));
+                return res.status(500).json({ success: false, error: "Проблема с ключом: " + data.error.message });
             }
 
-            if (data.candidates && data.candidates[0].content) {
-                let resultText = data.candidates[0].content.parts[0].text;
-                // Очистка ответа от мусора ( markdown кавычек)
-                let finalBase64 = resultText.trim().replace(/```base64|```|data:image\/jpeg;base64,|data:image\/png;base64,/g, '').trim();
-
-                console.log("✅ [AI] ПЛАН 'С' СРАБОТАЛ!");
-                res.json({ success: true, processedImage: `data:image/jpeg;base64,${finalBase64}` });
+            // Выводим список моделей в консоль сервера
+            console.log("✅ ДОСТУПНЫЕ МОДЕЛИ ДЛЯ ЭТОГО КЛЮЧА:");
+            if (data.models) {
+                data.models.forEach(m => console.log(` - ${m.name}`));
             } else {
-                throw new Error("Пустой ответ от нейросети");
+                console.log("⚠️ Ключ рабочий, но моделей не найдено.");
             }
+
+            res.json({ success: false, info: "Диагностика завершена, проверь логи сервера." });
 
         } catch (err) {
-            console.error("❌ Ошибка плагина:", err.message);
+            console.error("❌ Ошибка диагностики:", err.message);
             res.status(500).json({ success: false, error: err.message });
         }
     });
 
-    console.log("✅ МОДУЛЬ PHOTO-AI (ПЛАН С) ПОДКЛЮЧЕН");
+    console.log("✅ МОДУЛЬ ДИАГНОСТИКИ ПОДКЛЮЧЕН");
 };
