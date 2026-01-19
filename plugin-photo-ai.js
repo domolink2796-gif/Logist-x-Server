@@ -1,32 +1,31 @@
-// Используем тот же стиль, что и в твоем server.js
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-
 module.exports = function(app, context) {
     const API_KEY = "AIzaSyDCp29_4e334f1F4YVuzXhsjY9ihDAOrcA";
 
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("📥 [AI] Запрос через WARP туннель (порт 40000)...");
+        console.log("📥 [AI] Запрос получен. Работаем через WARP туннель...");
         try {
             const { image } = req.body;
             if (!image) return res.status(400).json({ error: "Нет фото" });
 
             const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
-            
-            // Стабильная версия API v1
             const apiUrl = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=" + API_KEY;
             
-            // Подключаем библиотеку SocksProxyAgent (мы её только что установили)
-            const SocksProxyAgent = require('socks-proxy-agent').SocksProxyAgent;
+            // Загружаем библиотеки только внутри функции
+            const nodeFetch = await import('node-fetch');
+            const fetch = nodeFetch.default;
+            const { SocksProxyAgent } = require('socks-proxy-agent');
+            
+            // Настройка агента для твоего VPN (порт 40000)
             const agent = new SocksProxyAgent('socks5://127.0.0.1:40000');
 
             const response = await fetch(apiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                agent: agent, 
+                agent: agent,
                 body: JSON.stringify({
                     contents: [{
                         parts: [
-                            { text: "Сделай фон идеально белым. Одень человека на фото в темно-синий мужской деловой костюм, белую рубашку и галстук. Верни ТОЛЬКО base64 готового изображения." },
+                            { text: "Сделай фон идеально белым. Одень человека на фото в темно-синий мужской деловой костюм, белую рубашку и галстук. Верни ТОЛЬКО base64 код изображения." },
                             { inlineData: { mimeType: "image/jpeg", data: base64Data } }
                         ]
                     }]
@@ -36,7 +35,7 @@ module.exports = function(app, context) {
             const data = await response.json();
 
             if (data.error) {
-                console.error("❌ Ошибка Google:", data.error.message);
+                console.error("❌ Ошибка API:", data.error.message);
                 return res.status(500).json({ success: false, error: data.error.message });
             }
 
@@ -44,16 +43,17 @@ module.exports = function(app, context) {
                 let resultText = data.candidates[0].content.parts[0].text;
                 let finalBase64 = resultText.trim().replace(/```base64|```|data:image\/jpeg;base64,|data:image\/png;base64,/g, '').trim();
 
-                console.log("✅ [AI] ПОБЕДА! Фото обработано успешно через VPN.");
+                console.log("✅ [AI] ФОТО ОБРАБОТАНО УСПЕШНО!");
                 res.json({ success: true, processedImage: "data:image/jpeg;base64," + finalBase64 });
             } else {
-                throw new Error("Пустой ответ от Google");
+                throw new Error("Пустой ответ от нейросети");
             }
+
         } catch (err) {
-            console.error("❌ Ошибка плагина:", err.message);
+            console.error("❌ Ошибка:", err.message);
             res.status(500).json({ success: false, error: err.message });
         }
     });
 
-    console.log("✅ МОДУЛЬ PHOTO-AI (VPN-READY) ПОДКЛЮЧЕН");
+    console.log("✅ МОДУЛЬ PHOTO-AI ПОДКЛЮЧЕН");
 };
