@@ -1,36 +1,59 @@
 module.exports = function(app, context) {
-    const API_KEY = "AIzaSyAWSlp-5uEKSR_v_LaClqCvKMfi5nXmAJY";
+    // Твой новый ключ уже здесь
+    const API_KEY = "AIzaSyDCp29_4e334f1F4YVuzXhsjY9ihDAOrcA";
 
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("🔍 [DIAGNOSTIC] Проверяю доступность ключа и моделей...");
+        console.log("📥 [AI] Запрос получен. Пробиваем туннель через прокси...");
         try {
-            const { default: fetch } = await import('node-fetch');
+            const { image } = req.body;
+            if (!image) return res.status(400).json({ error: "Нет фото" });
+
+            const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+
+            // Используем специальный шлюз-прокси, который скроет твой российский IP от Google
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`
+            )}`;
             
-            // Запрашиваем список всех доступных моделей для этого ключа
-            const checkUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${API_KEY}`;
-            const response = await fetch(checkUrl);
+            const { default: fetch } = await import('node-fetch');
+
+            const response = await fetch(proxyUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [
+                            { text: "Ты профессиональный ретушер. Инструкция: 1. Сделай фон идеально белым. 2. Одень мужчину на фото в темно-синий деловой костюм, белую рубашку и галстук. 3. Верни ТОЛЬКО base64 готового изображения." },
+                            { inlineData: { mimeType: "image/jpeg", data: base64Data } }
+                        ]
+                    }]
+                })
+            });
+
             const data = await response.json();
 
+            // Если прокси сработал, мы получим ответ от Google
             if (data.error) {
-                console.error("❌ КЛЮЧ НЕ РАБОТАЕТ:", JSON.stringify(data.error));
-                return res.status(500).json({ success: false, error: "Проблема с ключом: " + data.error.message });
+                console.error("❌ Ошибка Google через прокси:", JSON.stringify(data.error));
+                return res.status(500).json({ success: false, error: data.error.message });
             }
 
-            // Выводим список моделей в консоль сервера
-            console.log("✅ ДОСТУПНЫЕ МОДЕЛИ ДЛЯ ЭТОГО КЛЮЧА:");
-            if (data.models) {
-                data.models.forEach(m => console.log(` - ${m.name}`));
+            if (data.candidates && data.candidates[0].content) {
+                let resultText = data.candidates[0].content.parts[0].text;
+                // Очистка от лишних символов
+                let finalBase64 = resultText.trim().replace(/```base64|```|data:image\/jpeg;base64,|data:image\/png;base64,/g, '').trim();
+
+                console.log("✅ [AI] ПОБЕДА! Фото успешно обработано в обход блокировки.");
+                res.json({ success: true, processedImage: `data:image/jpeg;base64,${finalBase64}` });
             } else {
-                console.log("⚠️ Ключ рабочий, но моделей не найдено.");
+                throw new Error("Пустой ответ от нейросети");
             }
-
-            res.json({ success: false, info: "Диагностика завершена, проверь логи сервера." });
 
         } catch (err) {
-            console.error("❌ Ошибка диагностики:", err.message);
-            res.status(500).json({ success: false, error: err.message });
+            console.error("❌ Критическая ошибка туннеля:", err.message);
+            res.status(500).json({ success: false, error: "Ошибка связи с ИИ. Повторите попытку." });
         }
     });
 
-    console.log("✅ МОДУЛЬ ДИАГНОСТИКИ ПОДКЛЮЧЕН");
+    console.log("✅ МОДУЛЬ PHOTO-AI (РЕЖИМ ТУННЕЛЬ) АКТИВИРОВАН С НОВЫМ КЛЮЧОМ");
 };
