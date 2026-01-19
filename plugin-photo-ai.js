@@ -2,15 +2,15 @@ module.exports = function(app, context) {
     const API_KEY = "AIzaSyAWSlp-5uEKSR_v_LaClqCvKMfi5nXmAJY";
 
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("📥 [AI] Запрос получен. Пробую подключиться к Gemini 1.5 Flash...");
+        console.log("📥 [AI] Запрос на фото. Проверка связи с Gemini...");
         try {
             const { image } = req.body;
             if (!image) return res.status(400).json({ error: "Нет фото" });
 
             const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
 
-            // Используем v1 с полным названием модели
-            const apiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
+            // Используем модель gemini-pro-vision (она иногда стабильнее для фото)
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
 
             const { default: fetch } = await import('node-fetch');
 
@@ -20,24 +20,18 @@ module.exports = function(app, context) {
                 body: JSON.stringify({
                     contents: [{
                         parts: [
-                            { text: "Ты — ИИ системы Logist_X. Удали фон, сделай его белым. Одень человека в темно-синий костюм с галстуком. Верни ТОЛЬКО base64." },
+                            { text: "Сделай фон белым. Одень человека в темно-синий костюм и галстук. Верни ТОЛЬКО base64." },
                             { inlineData: { mimeType: "image/jpeg", data: base64Data } }
                         ]
-                    }],
-                    generationConfig: {
-                        temperature: 0.4,
-                        topK: 32,
-                        topP: 1,
-                        maxOutputTokens: 4096,
-                    }
+                    }]
                 })
             });
 
             const data = await response.json();
 
-            // Если модель не найдена, выведем подробности в консоль сервера
+            // ВАЖНО: Если ошибка, выводим всё, что ответил Google
             if (data.error) {
-                console.error("❌ Ошибка Google API:", JSON.stringify(data.error));
+                console.log("❌ ПОЛНЫЙ ОТВЕТ ОШИБКИ:", JSON.stringify(data));
                 return res.status(500).json({ success: false, error: data.error.message });
             }
 
@@ -45,17 +39,18 @@ module.exports = function(app, context) {
                 let resultText = data.candidates[0].content.parts[0].text;
                 let finalBase64 = resultText.trim().replace(/```base64|```|data:image\/jpeg;base64,|data:image\/png;base64,/g, '').trim();
 
-                console.log("✅ [AI] Фото успешно обработано!");
+                console.log("✅ [AI] Успешно!");
                 res.json({ success: true, processedImage: `data:image/jpeg;base64,${finalBase64}` });
             } else {
-                throw new Error("Нейросеть вернула пустой ответ");
+                console.log("⚠️ Странный ответ:", JSON.stringify(data));
+                throw new Error("Нет данных в ответе");
             }
 
         } catch (err) {
-            console.error("❌ Ошибка плагина:", err.message);
+            console.error("❌ Ошибка:", err.message);
             res.status(500).json({ success: false, error: err.message });
         }
     });
 
-    console.log("✅ МОДУЛЬ PHOTO-AI (FLASH 1.5) ПОДКЛЮЧЕН");
+    console.log("✅ МОДУЛЬ PHOTO-AI ЗАПУЩЕН");
 };
