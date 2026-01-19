@@ -10,11 +10,13 @@ module.exports = function(app, context) {
             const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
             
-            // Динамический импорт нужных библиотек
-            const { default: fetch } = await import('node-fetch');
-            const { SocksProxyAgent } = await import('socks-proxy-agent');
+            // Загружаем модули только в момент вызова, чтобы не злить Linter гитхаба
+            const nodeFetch = await import('node-fetch');
+            const fetch = nodeFetch.default;
+            const socks = await import('socks-proxy-agent');
+            const SocksProxyAgent = socks.SocksProxyAgent;
             
-            // Прокси-агент для WARP (порт 40000)
+            // Настройка агента для твоего VPN (порт 40000)
             const agent = new SocksProxyAgent('socks5://127.0.0.1:40000');
 
             const response = await fetch(apiUrl, {
@@ -24,7 +26,7 @@ module.exports = function(app, context) {
                 body: JSON.stringify({
                     contents: [{
                         parts: [
-                            { text: "Сделай фон чисто белым. Одень человека на фото в темно-синий мужской деловой костюм, белую рубашку и галстук. Верни ТОЛЬКО base64." },
+                            { text: "Ты — профессиональный ИИ ретушер системы Logist_X. Инструкция: Сделай фон идеально белым. Одень мужчину на фото в темно-синий деловой костюм, белую рубашку и галстук. Верни ТОЛЬКО base64 код готового изображения." },
                             { inlineData: { mimeType: "image/jpeg", data: base64Data } }
                         ]
                     }]
@@ -42,17 +44,17 @@ module.exports = function(app, context) {
                 let resultText = data.candidates[0].content.parts[0].text;
                 let finalBase64 = resultText.trim().replace(/```base64|```|data:image\/jpeg;base64,|data:image\/png;base64,/g, '').trim();
 
-                console.log("✅ [AI] Фото успешно обработано через VPN!");
+                console.log("✅ [AI] ФОТО ОБРАБОТАНО ЧЕРЕЗ VPN!");
                 res.json({ success: true, processedImage: `data:image/jpeg;base64,${finalBase64}` });
             } else {
                 throw new Error("Пустой ответ от нейросети");
             }
 
         } catch (err) {
-            console.error("❌ Ошибка плагина:", err.message);
+            console.error("❌ Ошибка:", err.message);
             res.status(500).json({ success: false, error: err.message });
         }
     });
 
-    console.log("✅ МОДУЛЬ PHOTO-AI (VPN MODE) ПОДКЛЮЧЕН");
+    console.log("✅ МОДУЛЬ PHOTO-AI (VPN-READY) ПОДКЛЮЧЕН");
 };
