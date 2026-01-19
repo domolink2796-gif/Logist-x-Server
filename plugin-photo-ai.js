@@ -1,28 +1,27 @@
-const fetch = require('node-fetch');
-
 module.exports = function(app, context) {
     const API_KEY = "AIzaSyAWSlp-5uEKSR_v_LaClqCvKMfi5nXmAJY";
 
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("📥 [AI] Запрос получен. Включаю европейский прокси-туннель...");
+        console.log("📥 [AI] Запрос получен. Работаю...");
         try {
             const { image } = req.body;
             if (!image) return res.status(400).json({ error: "Нет фото" });
 
             const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
 
-            // Используем альтернативный эндпоинт-прокси для обхода блокировок
-            const proxyUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
+            // Используем v1beta версию API
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
 
-            const response = await fetch(proxyUrl, {
+            // Используем динамический импорт fetch, как в твоем server.js
+            const { default: fetch } = await import('node-fetch');
+
+            const response = await fetch(apiUrl, {
                 method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     contents: [{
                         parts: [
-                            { text: "Ты профессиональный ИИ-фотограф. ИНСТРУКЦИЯ: 1. Удали фон и сделай его строго белым. 2. Одень мужчину в темно-синий деловой костюм, белую рубашку и галстук. 3. Верни ТОЛЬКО base64 код картинки." },
+                            { text: "Ты — ИИ системы Logist_X. Инструкция: Сделай фон чисто белым. Одень человека в темно-синий деловой костюм, белую рубашку и галстук. Верни ТОЛЬКО base64 код изображения." },
                             { inlineData: { mimeType: "image/jpeg", data: base64Data } }
                         ]
                     }]
@@ -31,26 +30,26 @@ module.exports = function(app, context) {
 
             const data = await response.json();
 
-            // Если всё еще блокирует, мы увидим это в логах
             if (data.error) {
-                console.error("❌ Ошибка Google:", data.error.message);
-                if (data.error.message.includes("location")) {
-                    return res.status(500).json({ success: false, error: "Региональная блокировка Google. Пробую резервный путь..." });
-                }
-                throw new Error(data.error.message);
+                console.error("❌ Ошибка Google API:", data.error.message);
+                return res.status(500).json({ success: false, error: data.error.message });
             }
 
-            const resultText = data.candidates[0].content.parts[0].text;
-            const finalBase64 = resultText.trim().replace(/```base64|```|data:image\/jpeg;base64,|data:image\/png;base64,/g, '');
+            if (data.candidates && data.candidates[0].content.parts[0].text) {
+                let resultText = data.candidates[0].content.parts[0].text;
+                let finalBase64 = resultText.trim().replace(/```base64|```|data:image\/jpeg;base64,|data:image\/png;base64,/g, '').trim();
 
-            console.log("✅ [AI] Прокси сработал! Фото обработано.");
-            res.json({ success: true, processedImage: `data:image/jpeg;base64,${finalBase64}` });
+                console.log("✅ [AI] Фото успешно обработано.");
+                res.json({ success: true, processedImage: `data:image/jpeg;base64,${finalBase64}` });
+            } else {
+                throw new Error("Пустой ответ от нейросети");
+            }
 
         } catch (err) {
-            console.error("❌ Критическая ошибка плагина:", err.message);
-            res.status(500).json({ success: false, error: "Ошибка связи с ИИ. Попробуйте еще раз через минуту." });
+            console.error("❌ Ошибка плагина:", err.message);
+            res.status(500).json({ success: false, error: err.message });
         }
     });
 
-    console.log("✅ МОДУЛЬ PHOTO-AI (JIMI) АКТИВИРОВАН ЧЕРЕЗ ТУННЕЛЬ");
+    console.log("✅ МОДУЛЬ PHOTO-AI ПОДКЛЮЧЕН");
 };
