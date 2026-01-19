@@ -1,18 +1,23 @@
 module.exports = function(app, context) {
-    // Вставь сюда свой последний ключ (тот самый sk-or-v1-3872...)
-    const OPENROUTER_KEY = "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";
-
     app.post('/api/photo-ai-process', async (req, res) => {
-        // Очищаем ключ от возможных пробелов по краям
-        const CLEAN_KEY = OPENROUTER_KEY.trim().replace(/^S/, 's');
-        
-        console.log("📥 [AI] Запрос OpenRouter (Ключ очищен, режим DIRECT)...");
+        console.log("📥 [AI] Запрос (Чтение ключа из ai-key.txt)...");
         
         const fs = require('fs');
         const path = require('path');
         const { exec } = require('child_process');
 
         try {
+            // Путь к секретному файлу на твоем сервере
+            const keyPath = '/root/my-system/ai-key.txt';
+            
+            if (!fs.existsSync(keyPath)) {
+                console.error("❌ Файл ai-key.txt не найден на сервере!");
+                return res.status(500).json({ error: "Настройте ai-key.txt в консоли" });
+            }
+            
+            // Читаем ключ и убираем лишнее (пробелы, переносы, автозамену S)
+            const OPENROUTER_KEY = fs.readFileSync(keyPath, 'utf8').trim().replace(/^S/, 's');
+
             const { image } = req.body;
             if (!image) return res.status(400).json({ error: "Нет фото" });
             const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
@@ -22,7 +27,7 @@ module.exports = function(app, context) {
                 messages: [{
                     role: "user",
                     content: [
-                        { type: "text", text: "Сделай фон идеально белым. Одень человека в темно-синий мужской костюм, белую рубашку и галстук. Верни ТОЛЬКО base64." },
+                        { type: "text", text: "Сделай фон идеально белым. Одень человека в темно-синий деловой костюм, белую рубашку и галстук. Верни ТОЛЬКО base64 код изображения." },
                         { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
                     ]
                 }]
@@ -31,20 +36,15 @@ module.exports = function(app, context) {
             const tempFile = path.join(__dirname, `temp_ai_${Date.now()}.json`);
             fs.writeFileSync(tempFile, JSON.stringify(requestData));
 
-            // Используем чистый ключ и прямой запрос
+            // Запрос напрямую (Direct)
             const cmd = `curl -s -X POST https://openrouter.ai/api/v1/chat/completions \
-              -H "Authorization: Bearer ${CLEAN_KEY}" \
+              -H "Authorization: Bearer ${OPENROUTER_KEY}" \
               -H "Content-Type: application/json" \
               -d @${tempFile}`;
 
             exec(cmd, { maxBuffer: 1024 * 1024 * 50 }, (error, stdout) => {
                 try { fs.unlinkSync(tempFile); } catch(e) {}
-
-                if (error) {
-                    console.error("❌ Ошибка CURL:", error);
-                    return res.status(500).json({ error: "Ошибка сети" });
-                }
-
+                
                 try {
                     const data = JSON.parse(stdout);
                     if (data.choices && data.choices[0]) {
@@ -53,12 +53,12 @@ module.exports = function(app, context) {
                         console.log("✅ [AI] ФОТО ГОТОВО!");
                         res.json({ success: true, processedImage: "data:image/jpeg;base64," + finalBase64 });
                     } else {
-                        console.error("❌ Ответ API:", stdout);
+                        console.error("❌ Ошибка API:", stdout);
                         res.status(500).json({ error: data.error ? data.error.message : "Ошибка API" });
                     }
                 } catch (e) {
-                    console.error("❌ Ошибка JSON:", stdout);
-                    res.status(500).json({ error: "Ошибка обработки" });
+                    console.error("❌ Ошибка обработки ответа:", stdout);
+                    res.status(500).json({ error: "Ошибка обработки данных" });
                 }
             });
         } catch (err) {
