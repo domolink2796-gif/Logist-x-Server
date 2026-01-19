@@ -2,20 +2,17 @@ module.exports = function(app, context) {
     const API_KEY = "AIzaSyDCp29_4e334f1F4YVuzXhsjY9ihDAOrcA";
 
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("📥 [AI] Запрос через WARP (v1/gemini-1.5-flash)...");
+        console.log("📥 [AI] Запрос через туннель WARP (gemini-1.5-flash-latest)...");
         try {
             const { image } = req.body;
             if (!image) return res.status(400).json({ error: "Нет фото" });
 
             const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
             
-            // ПРАВИЛЬНЫЙ АДРЕС ДЛЯ v1
-            const apiUrl = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=" + API_KEY;
+            // Используем v1beta и ПОЛНОЕ имя модели - это решит проблему 404
+            const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=" + API_KEY;
             
-            // Используем динамическую загрузку, чтобы GitHub не ругался на крестик
-            const { default: fetch } = await import('node-fetch');
             const { SocksProxyAgent } = require('socks-proxy-agent');
-            
             const agent = new SocksProxyAgent('socks5://127.0.0.1:40000');
 
             const response = await fetch(apiUrl, {
@@ -25,7 +22,7 @@ module.exports = function(app, context) {
                 body: JSON.stringify({
                     contents: [{
                         parts: [
-                            { text: "Сделай фон идеально белым. Одень человека на фото в темно-синий мужской деловой костюм, белую рубашку и галстук. Верни ТОЛЬКО base64 код изображения." },
+                            { text: "Ты профессиональный ретушер. Инструкция: Сделай фон идеально белым. Одень человека на фото в темно-синий мужской деловой костюм, белую рубашку и галстук. Верни ТОЛЬКО base64 код изображения." },
                             { inlineData: { mimeType: "image/jpeg", data: base64Data } }
                         ]
                     }]
@@ -34,9 +31,8 @@ module.exports = function(app, context) {
 
             const data = await response.json();
 
-            // Если модель снова "не найдена", выведем всё, что ответил Google
             if (data.error) {
-                console.error("❌ Google ответил:", JSON.stringify(data.error));
+                console.error("❌ Ответ Google:", JSON.stringify(data.error));
                 return res.status(500).json({ success: false, error: data.error.message });
             }
 
@@ -44,7 +40,7 @@ module.exports = function(app, context) {
                 let resultText = data.candidates[0].content.parts[0].text;
                 let finalBase64 = resultText.trim().replace(/```base64|```|data:image\/jpeg;base64,|data:image\/png;base64,/g, '').trim();
 
-                console.log("✅ [AI] ПОБЕДА! Фото обработано успешно.");
+                console.log("✅ [AI] ПОБЕДА! Фото успешно получено из Google.");
                 res.json({ success: true, processedImage: "data:image/jpeg;base64," + finalBase64 });
             } else {
                 throw new Error("Пустой ответ от нейросети");
@@ -55,5 +51,5 @@ module.exports = function(app, context) {
         }
     });
 
-    console.log("✅ МОДУЛЬ PHOTO-AI ПОДКЛЮЧЕН (VPN MODE)");
+    console.log("✅ МОДУЛЬ PHOTO-AI ПОДКЛЮЧЕН");
 };
