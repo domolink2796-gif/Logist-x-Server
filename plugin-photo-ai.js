@@ -1,6 +1,6 @@
 module.exports = function(app, context) {
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("📥 [AI] Запуск генерации (FLUX через NEW ROUTER)...");
+        console.log("📥 [AI] Запуск редактирования (timbrooks/instruct-pix2pix)...");
         
         const fs = require('fs');
         const path = require('path');
@@ -8,27 +8,30 @@ module.exports = function(app, context) {
 
         try {
             const keyPath = '/root/my-system/ai-key.txt';
-            if (!fs.existsSync(keyPath)) return res.status(500).json({ error: "Ключ не найден" });
             const HF_TOKEN = fs.readFileSync(keyPath, 'utf8').trim();
 
             const { image } = req.body;
             if (!image) return res.status(400).json({ error: "Нет фото" });
+            const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
 
-            // Используем модель FLUX через новый роутер
-            const MODEL = "black-forest-labs/FLUX.1-dev"; 
-            const prompt = "Professional studio portrait of the person from image, wearing a dark blue business suit, white shirt, and tie. Solid white background, high quality, realistic.";
+            // Эта модель создана именно для изменения существующих фото (Pix2Pix)
+            const MODEL = "timbrooks/instruct-pix2pix"; 
 
             const payload = {
-                inputs: prompt,
-                parameters: { width: 512, height: 512 }
+                inputs: base64Data,
+                parameters: {
+                    // Команда: что именно изменить на фото
+                    instruction: "Dress the person in a dark blue business suit, white shirt and tie. Make the background solid white. Keep the face exactly the same.",
+                    num_inference_steps: 20
+                }
             };
 
             const tempFile = path.join(__dirname, `hf_req_${Date.now()}.json`);
             const outputImage = path.join(__dirname, `result_${Date.now()}.jpg`);
             fs.writeFileSync(tempFile, JSON.stringify(payload));
 
-            // ОБНОВЛЕННЫЙ АДРЕС: router.huggingface.co
-            const cmd = `curl -s -X POST https://router.huggingface.co/hf-inference/models/${MODEL} \
+            // Используем прямой адрес модели, он самый надежный
+            const cmd = `curl -s -X POST https://api-inference.huggingface.co/models/${MODEL} \
               -H "Authorization: Bearer ${HF_TOKEN}" \
               -H "Content-Type: application/json" \
               -d @${tempFile} \
@@ -41,18 +44,13 @@ module.exports = function(app, context) {
                     const bitmap = fs.readFileSync(outputImage);
                     const base64Image = Buffer.from(bitmap).toString('base64');
                     
-                    console.log("✅ [AI] ФОТО ГОТОВО!");
+                    console.log("✅ [AI] ФОТО ИЗМЕНЕНО УСПЕШНО!");
                     try { fs.unlinkSync(outputImage); } catch(e) {}
                     
                     res.json({ success: true, processedImage: "data:image/jpeg;base64," + base64Image });
                 } else {
-                    let errorMsg = "Модель загружается или ошибка роутера";
-                    try {
-                        const errData = JSON.parse(fs.readFileSync(outputImage, 'utf8'));
-                        if (errData.error) errorMsg = errData.error;
-                    } catch(e) {}
-                    console.error("❌ Ошибка:", errorMsg);
-                    res.status(500).json({ error: errorMsg });
+                    console.error("❌ Ошибка или модель еще грузится");
+                    res.status(500).json({ error: "Модель подготавливается, попробуй еще раз через 30 секунд" });
                     try { fs.unlinkSync(outputImage); } catch(e) {}
                 }
             });
