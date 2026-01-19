@@ -1,6 +1,6 @@
 module.exports = function(app, context) {
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("📥 [AI] Запуск редактирования (Авто-повтор включен)...");
+        console.log("📥 [AI] Попытка редактирования (Смена модели на более быструю)...");
         
         const fs = require('fs');
         const path = require('path');
@@ -13,19 +13,16 @@ module.exports = function(app, context) {
         if (!image) return res.status(400).json({ error: "Нет фото" });
         const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
 
-        const MODEL = "timbrooks/instruct-pix2pix"; 
+        // Меняем модель на проверенную временем
+        const MODEL = "kandinsky-community/kandinsky-2-2-controlnet-depth"; 
         
-        // Функция для одной попытки запроса
         const makeRequest = (attempt) => {
             const tempFile = path.join(__dirname, `hf_req_${Date.now()}.json`);
             const outputImage = path.join(__dirname, `result_${Date.now()}.jpg`);
             
             const payload = {
-                inputs: base64Data,
-                parameters: {
-                    instruction: "Keep the person's face exactly the same. Dress him in a dark blue business suit, white shirt and tie. Solid white background.",
-                    num_inference_steps: 20
-                }
+                inputs: "A professional photo of a man in a dark blue business suit, white shirt and tie, solid white background, high quality",
+                image: base64Data, // Твое фото как карта глубины/основа
             };
             
             fs.writeFileSync(tempFile, JSON.stringify(payload));
@@ -36,39 +33,34 @@ module.exports = function(app, context) {
               -d @${tempFile} \
               --output ${outputImage}`;
 
-            exec(cmd, (error, stdout) => {
+            exec(cmd, (error) => {
                 try { fs.unlinkSync(tempFile); } catch(e) {}
                 
                 let isImage = false;
                 if (fs.existsSync(outputImage)) {
                     const stats = fs.statSync(outputImage);
-                    // Если файл больше 5кб — это точно картинка, а не текст ошибки
                     if (stats.size > 5000) isImage = true;
                 }
 
                 if (isImage) {
                     const bitmap = fs.readFileSync(outputImage);
                     const base64Image = Buffer.from(bitmap).toString('base64');
-                    console.log(`✅ [AI] УСПЕХ на попытке №${attempt}!`);
+                    console.log(`✅ [AI] УСПЕХ! Попытка №${attempt}`);
                     try { fs.unlinkSync(outputImage); } catch(e) {}
                     return res.json({ success: true, processedImage: "data:image/jpeg;base64," + base64Image });
                 } else {
-                    let rawError = "";
-                    try { rawError = fs.readFileSync(outputImage, 'utf8'); } catch(e) {}
                     try { fs.unlinkSync(outputImage); } catch(e) {}
-                    
-                    console.log(`⚠️ Попытка №${attempt}: Модель еще грузится...`);
+                    console.log(`⚠️ Попытка №${attempt}: Сервер занят, ждем...`);
 
-                    if (attempt < 5) { // Пробуем до 5 раз
-                        setTimeout(() => makeRequest(attempt + 1), 15000); // Ждем 15 сек перед повтором
+                    if (attempt < 4) { 
+                        setTimeout(() => makeRequest(attempt + 1), 20000); // Ждем 20 сек
                     } else {
-                        console.error("❌ Все попытки исчерпаны");
-                        res.status(500).json({ error: "Модель не проснулась. Попробуйте еще раз через минуту." });
+                        res.status(500).json({ error: "Нейросеть перегружена. Попробуйте через 5 минут." });
                     }
                 }
             });
         };
 
-        makeRequest(1); // Запускаем первую попытку
+        makeRequest(1);
     });
 };
