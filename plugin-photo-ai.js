@@ -1,6 +1,6 @@
 module.exports = function(app, context) {
     app.post('/api/photo-ai-process', async (req, res) => {
-        console.log("📥 [AI] Запрос OpenRouter (Переключаемся на PIXTRAL-12B)...");
+        console.log("📥 [AI] Запрос OpenRouter (Llama 3.2 Vision Free)...");
         
         const fs = require('fs');
         const path = require('path');
@@ -8,14 +8,18 @@ module.exports = function(app, context) {
 
         try {
             const keyPath = '/root/my-system/ai-key.txt';
+            if (!fs.existsSync(keyPath)) {
+                console.error("❌ Файл с ключом не найден!");
+                return res.status(500).json({ error: "Ключ не найден на сервере" });
+            }
             const API_KEY = fs.readFileSync(keyPath, 'utf8').trim().replace(/^S/, 's');
 
             const { image } = req.body;
             if (!image) return res.status(400).json({ error: "Нет фото" });
             const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
 
-            // Используем модель Pixtral — она мощная в визуальных задачах
-            const MODEL = "mistralai/pixtral-12b:free"; 
+            // Используем Llama 3.2 Vision - она сейчас самая стабильная бесплатная
+            const MODEL = "meta-llama/llama-3.2-11b-vision-instruct:free"; 
 
             const payload = {
                 model: MODEL,
@@ -24,7 +28,7 @@ module.exports = function(app, context) {
                     content: [
                         { 
                             type: "text", 
-                            text: "Transform this person. Keep the face and head EXACTLY as they are in the original photo. Change the clothing to a professional dark blue business suit, white shirt, and a tie. Change the background to a solid studio white color. Return ONLY the base64 code of the result, no talk." 
+                            text: "Photorealistic transformation. Keep the person's face and hair EXACTLY as they are. Change the outfit to a formal dark blue business suit, white shirt, and tie. Background: solid office white. Return ONLY the base64 string of the processed image. No preamble, no text, just base64." 
                         },
                         { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
                     ]
@@ -48,21 +52,24 @@ module.exports = function(app, context) {
                     if (data.choices && data.choices[0]) {
                         let content = data.choices[0].message.content;
                         
-                        // Очистка: убираем всё лишнее, оставляем только чистый base64
+                        // Чистим результат от Markdown и лишних символов
                         let finalBase64 = content.replace(/[\s\S]*?base64,|```base64|```|data:image\/\w+;base64,|"/g, '').trim();
                         finalBase64 = finalBase64.split(' ')[0].split('\n')[0];
 
-                        console.log("✅ [AI] PIXTRAL ОТВЕТИЛ! Длина данных: " + finalBase64.length);
+                        console.log("✅ [AI] ГОТОВО! Длина строки: " + finalBase64.length);
                         res.json({ success: true, processedImage: "data:image/jpeg;base64," + finalBase64 });
                     } else {
                         console.error("❌ Ошибка OpenRouter:", stdout);
-                        res.status(500).json({ error: "Нейросеть не смогла обработать фото" });
+                        res.status(500).json({ error: "Нейросеть не ответила" });
                     }
                 } catch (e) {
-                    console.error("❌ Ошибка разбора JSON:", e.message);
-                    res.status(500).json({ error: "Ошибка сервера при чтении ответа" });
+                    console.error("❌ Ошибка обработки ответа:", e.message);
+                    res.status(500).json({ error: "Ошибка сервера" });
                 }
             });
-        } catch (err) { res.status(500).json({ error: err.message }); }
+        } catch (err) { 
+            console.error("❌ Глобальная ошибка:", err.message);
+            res.status(500).json({ error: err.message }); 
+        }
     });
 };
