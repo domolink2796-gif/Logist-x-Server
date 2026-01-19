@@ -883,6 +883,12 @@ try {
 } catch (e) {
     console.log("⚠️ Ошибка плагина тест-драйва: " + e.message);
 }
+// --- 4. ПЛАГИН АВТО-ФОТО (GEMINI AI) ---
+try {
+    require('./plugin-photo-ai.js')(app, pluginContext);
+} catch (e) {
+    console.log("⚠️ Не удалось загрузить плагин Photo-AI: " + e.message);
+}
 
 // --- ЗАПУСК БОТА ---
 bot.launch().then(() => {
