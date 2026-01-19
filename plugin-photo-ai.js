@@ -1,18 +1,22 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 module.exports = function(app, context) {
-    // Твой персональный ключ Gemini (Jimi)
+    // Твой ключ API
     const GEN_AI_KEY = "AIzaSyAWSlp-5uEKSR_v_LaClqCvKMfi5nXmAJY"; 
     const genAI = new GoogleGenerativeAI(GEN_AI_KEY);
 
-    // Маршрут для нейронной обработки фото
+    // ВАЖНО: используем именно .post и проверяем путь
     app.post('/api/photo-ai-process', async (req, res) => {
+        console.log("📥 [AI] Получен запрос на обработку фото");
+
         try {
             const { image } = req.body; 
 
-            if (!image) return res.status(400).json({ error: "Нет изображения" });
+            if (!image) {
+                console.log("❌ [AI] Ошибка: Изображение не получено");
+                return res.status(400).json({ error: "Нет изображения в теле запроса" });
+            }
 
-            // Используем модель 1.5 Flash для мгновенной реакции
             const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
             const prompt = `
@@ -37,8 +41,10 @@ module.exports = function(app, context) {
             const response = await result.response;
             let finalBase64 = response.text().trim();
             
-            // Очистка ответа от лишних знаков нейросети
+            // Очистка base64
             finalBase64 = finalBase64.replace(/```base64|```|data:image\/jpeg;base64,|data:image\/png;base64,/g, '');
+
+            console.log("✅ [AI] Фото успешно обработано через Gemini");
 
             res.json({ 
                 success: true, 
@@ -46,7 +52,7 @@ module.exports = function(app, context) {
             });
 
         } catch (error) {
-            console.error("Ошибка AI модуля:", error);
+            console.error("❌ [AI] КРИТИЧЕСКАЯ ОШИБКА:", error.message);
             res.status(500).json({ success: false, error: error.message });
         }
     });
