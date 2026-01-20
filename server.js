@@ -889,6 +889,12 @@ try {
 } catch (e) {
     console.log("⚠️ Не удалось загрузить плагин Photo-AI: " + e.message);
 }
+// Подключаем наш новый пульт
+try {
+    require('./plugin-remote.js')(app, pluginContext);
+} catch (e) {
+    console.error("❌ Не удалось загрузить плагин пульта:", e);
+}
 
 // --- ЗАПУСК БОТА ---
 bot.launch().then(() => {
