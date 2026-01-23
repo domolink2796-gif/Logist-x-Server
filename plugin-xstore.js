@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const AdmZip = require('adm-zip'); 
-const express = require('express'); // Добавили для статики
+const express = require('express'); 
 const { Telegraf, Markup } = require('telegraf');
 
 const STORE_BOT_TOKEN = '8177397301:AAH4eNkzks_DuvuMB0leavzpcKMowwFz4Uw'; 
@@ -21,7 +21,6 @@ if (!fs.existsSync(dbFile)) fs.writeFileSync(dbFile, '[]');
 
 const upload = multer({ dest: quarantineDir });
 
-// --- ФУНКЦИЯ: ГЕНЕРАЦИЯ ССЫЛКИ НА VIRUSTOTAL ---
 function getVirusTotalLink(type, data) {
     if (type === 'file_hash') {
         return `https://www.virustotal.com/gui/file/${data}`;
@@ -33,12 +32,8 @@ function getVirusTotalLink(type, data) {
 
 module.exports = function(app, context) {
     
-    // 🔥 РЕШЕНИЕ ПРОБЛЕМЫ "Cannot GET":
-    // Эта строка заставляет плагин сам раздавать файлы из папки public.
-    // Теперь ссылка https://logist-x.store/public/apps/... будет работать!
     app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
-    // ОТДАЕМ СПИСОК (NO-CACHE)
     app.get('/x-api/apps', (req, res) => {
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         if (fs.existsSync(dbFile)) res.json(JSON.parse(fs.readFileSync(dbFile)));
@@ -53,7 +48,6 @@ module.exports = function(app, context) {
         }
     });
 
-    // 2. АДМИНКА
     app.get('/x-admin', (req, res) => {
         let activeApps = [];
         try { activeApps = JSON.parse(fs.readFileSync(dbFile)); } catch(e) {}
@@ -64,18 +58,8 @@ module.exports = function(app, context) {
                 const id = jsonName.replace('.json', '');
                 let info = {};
                 try { info = JSON.parse(fs.readFileSync(path.join(quarantineDir, jsonName))); } catch(e){}
-                
                 const hasZip = fs.existsSync(path.join(quarantineDir, id));
-                let scanLink = '#';
-
-                if (hasZip) {
-                    const fileBuffer = fs.readFileSync(path.join(quarantineDir, id));
-                    const hash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-                    scanLink = getVirusTotalLink('file_hash', hash);
-                } else if (info.url) {
-                    scanLink = `https://www.virustotal.com/gui/search/${encodeURIComponent(info.url)}`;
-                }
-
+                let scanLink = hasZip ? getVirusTotalLink('file_hash', crypto.createHash('sha256').update(fs.readFileSync(path.join(quarantineDir, id))).digest('hex')) : `https://www.virustotal.com/gui/search/${encodeURIComponent(info.url)}`;
                 return { id, name: info.name, cat: info.cat, type: hasZip ? 'ZIP' : 'LINK', url: info.url, scanLink };
             }).reverse();
 
@@ -92,28 +76,16 @@ module.exports = function(app, context) {
         .title { color: #ff6600; font-weight: bold; font-size: 16px; margin-bottom: 5px; }
         .meta { color: #888; font-size: 12px; margin-bottom: 10px; }
         .btn { width: 100%; padding: 10px; border: none; border-radius: 8px; font-weight: bold; margin-top: 5px; cursor: pointer; color: white; font-size: 12px; }
-        .btn-pub { background: #28a745; }
-        .btn-del { background: #dc3545; }
-        .btn-check { background: #1f6feb; }
-        .btn-scan { background: #6f42c1; display: flex; align-items: center; justify-content: center; gap: 5px; }
+        .btn-pub { background: #28a745; } .btn-del { background: #dc3545; } .btn-check { background: #1f6feb; } .btn-scan { background: #6f42c1; display: flex; align-items: center; justify-content: center; gap: 5px; }
     </style>
 </head>
 <body>
     <h2 style="color: #28a745; border-color: #28a745;">🟢 В МАГАЗИНЕ (${activeApps.length})</h2>
-    ${activeApps.map(app => `
-        <div class="card" id="app-${app.id}">
-            <div class="title">${app.title}</div>
-            <div class="meta">${app.cat}</div>
-            <a href="${app.url}" target="_blank" style="text-decoration:none;"><button class="btn btn-check">🔗 ОТКРЫТЬ</button></a>
-            <button class="btn btn-del" onclick="unpublish('${app.id}')">❌ УДАЛИТЬ</button>
-        </div>
-    `).join('')}
-
+    ${activeApps.map(app => `<div class="card"><div class="title">${app.title}</div><button class="btn btn-del" onclick="unpublish('${app.id}')">❌ УДАЛИТЬ</button></div>`).join('')}
     <h2 style="color: #ffc107; border-color: #ffc107;">🟡 НА ПРОВЕРКЕ (${pendingFiles.length})</h2>
     ${pendingFiles.map(f => `
-        <div class="card" id="req-${f.id}">
+        <div class="card">
             <div class="title">${f.name}</div>
-            <div class="meta">Тип: ${f.type} • ${f.cat}</div>
             <a href="${f.scanLink}" target="_blank" style="text-decoration:none;"><button class="btn btn-scan">🛡 VIRUS TOTAL</button></a>
             <div style="display:flex; gap:5px; margin-top:5px;">
                 <button class="btn btn-pub" onclick="publish('${f.id}')">✅ ПРИНЯТЬ</button>
@@ -121,32 +93,16 @@ module.exports = function(app, context) {
             </div>
         </div>
     `).join('')}
-
     <script>
-        async function unpublish(id) {
-            if(confirm("Удалить из магазина?")) {
-                await fetch('/x-api/unpublish/' + id, { method: 'POST' });
-                location.reload();
-            }
-        }
-        async function publish(id) {
-            if(confirm("Опубликовать приложение?")) {
-                await fetch('/x-api/publish/' + id, { method: 'POST' });
-                location.reload();
-            }
-        }
-        async function reject(id) {
-            if(confirm("Удалить заявку?")) {
-                await fetch('/x-api/delete/' + id, { method: 'DELETE' });
-                location.reload();
-            }
-        }
+        async function unpublish(id) { if(confirm("Удалить?")) { await fetch('/x-api/unpublish/'+id, {method:'POST'}); location.reload(); } }
+        async function publish(id) { if(confirm("Опубликовать?")) { await fetch('/x-api/publish/'+id, {method:'POST'}); location.reload(); } }
+        async function reject(id) { if(confirm("Удалить?")) { await fetch('/x-api/delete/'+id, {method:'DELETE'}); location.reload(); } }
     </script>
 </body>
 </html>`);
     });
 
-    // 3. ПУБЛИКАЦИЯ (С РАСПАКОВКОЙ)
+    // --- ПУБЛИКАЦИЯ С ПОИСКОМ ИКОНКИ ---
     app.post('/x-api/publish/:id', (req, res) => {
         const id = req.params.id;
         const infoPath = path.join(quarantineDir, id + '.json');
@@ -155,8 +111,8 @@ module.exports = function(app, context) {
         const info = JSON.parse(fs.readFileSync(infoPath));
         const appFolderName = `app_${Date.now()}`;
         let finalUrl = info.url;
+        let finalIcon = 'https://cdn-icons-png.flaticon.com/512/3208/3208728.png'; // Дефолт
 
-        // Если это ZIP — распаковываем
         const zipPath = path.join(quarantineDir, id);
         if (fs.existsSync(zipPath) && !info.url) {
             try {
@@ -164,8 +120,14 @@ module.exports = function(app, context) {
                 const extractPath = path.join(publicDir, appFolderName);
                 zip.extractAllTo(extractPath, true);
                 
-                // 🔥 Генерируем правильную ссылку для открытия
                 finalUrl = `https://logist-x.store/public/apps/${appFolderName}/index.html`;
+
+                // Ищем иконку внутри распакованной папки
+                const files = fs.readdirSync(extractPath);
+                const iconFile = files.find(f => f.toLowerCase().startsWith('icon.'));
+                if (iconFile) {
+                    finalIcon = `https://logist-x.store/public/apps/${appFolderName}/${iconFile}`;
+                }
             } catch (e) {
                 return res.status(500).json({error: "Ошибка распаковки"});
             }
@@ -177,7 +139,7 @@ module.exports = function(app, context) {
             title: info.name,
             cat: info.cat,
             desc: info.desc || '',
-            icon: 'https://cdn-icons-png.flaticon.com/512/3208/3208728.png',
+            icon: finalIcon, // Теперь иконка подтягивается сама!
             url: finalUrl,
             folder: appFolderName 
         });
@@ -186,27 +148,23 @@ module.exports = function(app, context) {
         if(fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
         if(fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-        storeBot.telegram.sendMessage(MY_ID, `🛡 Приложение "${info.name}" теперь в магазине.`);
+        storeBot.telegram.sendMessage(MY_ID, `🛡 Приложение "${info.name}" опубликовано с иконкой.`);
         res.json({ success: true });
     });
 
-    // 4. УДАЛЕНИЕ (С ЧИСТКОЙ ФАЙЛОВ)
     app.post('/x-api/unpublish/:id', (req, res) => {
         const id = req.params.id;
         let db = JSON.parse(fs.readFileSync(dbFile));
         const appData = db.find(a => String(a.id) === String(id));
-        
         if (appData && appData.folder) {
             const folderPath = path.join(publicDir, appData.folder);
             if (fs.existsSync(folderPath)) fs.rmSync(folderPath, { recursive: true, force: true });
         }
-        
         db = db.filter(a => String(a.id) !== String(id));
         fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
         res.json({ success: true });
     });
 
-    // 5. ЗАГРУЗКА
     app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
         const { name, email, cat, desc, url } = req.body;
         const id = req.file ? req.file.filename : `req_${Date.now()}`;
@@ -215,7 +173,6 @@ module.exports = function(app, context) {
         res.json({ success: true });
     });
 
-    // 6. ОТКЛОНЕНИЕ
     app.delete('/x-api/delete/:id', (req, res) => {
         const id = req.params.id;
         const p1 = path.join(quarantineDir, id);
