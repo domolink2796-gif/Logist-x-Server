@@ -80,36 +80,36 @@ module.exports = function(app, context) {
     </style>
 </head>
 <body>
-    <h2 style="color: #28a745; border-color: #28a745;">🟢 В МАГАЗИНЕ (${activeApps.length})</h2>
-    ${activeApps.map(app => `<div class="card"><div class="title">${app.title}</div><button class="btn btn-del" onclick="unpublish('${app.id}')">❌ УДАЛИТЬ</button></div>`).join('')}
-    <h2 style="color: #ffc107; border-color: #ffc107;">🟡 НА ПРОВЕРКЕ (${pendingFiles.length})</h2>
-    ${pendingFiles.map(f => `
+    <h2 style="color: #28a745; border-color: #28a745;">🟢 В МАГАЗИНЕ (\${activeApps.length})</h2>
+    \${activeApps.map(app => \`<div class="card"><div class="title">\${app.title}</div><button class="btn btn-del" onclick="unpublish('\${app.id}')">❌ УДАЛИТЬ</button></div>\`).join('')}
+    <h2 style="color: #ffc107; border-color: #ffc107;">🟡 НА ПРОВЕРКЕ (\${pendingFiles.length})</h2>
+    \${pendingFiles.map(f => \`
         <div class="card">
-            <div class="title">${f.name}</div>
-            <a href="${f.scanLink}" target="_blank" style="text-decoration:none;"><button class="btn btn-scan">🛡 VIRUS TOTAL</button></a>
+            <div class="title">\${f.name}</div>
+            <a href="\${f.scanLink}" target="_blank" style="text-decoration:none;"><button class="btn btn-scan">🛡 VIRUS TOTAL</button></a>
             <div style="display:flex; gap:5px; margin-top:5px;">
-                <button class="btn btn-pub" onclick="publish('${f.id}')">✅ ПРИНЯТЬ</button>
-                <button class="btn btn-del" onclick="reject('${f.id}')">🗑 ОТКЛОНИТЬ</button>
+                <button class="btn btn-pub" onclick="publish('\${f.id}')">✅ ПРИНЯТЬ</button>
+                <button class="btn btn-del" onclick="reject('\${f.id}')">🗑 ОТКЛОНИТЬ</button>
             </div>
         </div>
-    `).join('')}
+    \`).join('')}
     <script>
         async function unpublish(id) { if(confirm("Удалить?")) { await fetch('/x-api/unpublish/'+id, {method:'POST'}); location.reload(); } }
         async function publish(id) { if(confirm("Опубликовать?")) { await fetch('/x-api/publish/'+id, {method:'POST'}); location.reload(); } }
         async function reject(id) { if(confirm("Удалить?")) { await fetch('/x-api/delete/'+id, {method:'DELETE'}); location.reload(); } }
     </script>
 </body>
-</html>`);
+</html>\`);
     });
 
-    // --- ПУБЛИКАЦИЯ С ТВОЕЙ ЭТАЛОННОЙ ЛОГИКОЙ PWA ---
+    // --- ПУБЛИКАЦИЯ С АВТО-ГЕНЕРАЦИЕЙ PWA ---
     app.post('/x-api/publish/:id', (req, res) => {
         const id = req.params.id;
         const infoPath = path.join(quarantineDir, id + '.json');
         if (!fs.existsSync(infoPath)) return res.status(404).json({error: "Нет заявки"});
 
         const info = JSON.parse(fs.readFileSync(infoPath));
-        const appFolderName = `app_${Date.now()}`;
+        const appFolderName = \`app_\${Date.now()}\`;
         const extractPath = path.join(publicDir, appFolderName);
         let finalUrl = info.url;
         let finalIcon = 'https://cdn-icons-png.flaticon.com/512/3208/3208728.png';
@@ -120,16 +120,16 @@ module.exports = function(app, context) {
             try {
                 const zip = new AdmZip(zipPath);
                 zip.extractAllTo(extractPath, true);
-                finalUrl = `https://logist-x.store/public/apps/${appFolderName}/index.html`;
+                finalUrl = \`https://logist-x.store/public/apps/\${appFolderName}/index.html\`;
 
                 const files = fs.readdirSync(extractPath);
                 const iconFile = files.find(f => f.toLowerCase().startsWith('icon.'));
                 if (iconFile) {
                     iconFileName = iconFile;
-                    finalIcon = `https://logist-x.store/public/apps/${appFolderName}/${iconFile}`;
+                    finalIcon = \`https://logist-x.store/public/apps/\${appFolderName}/\${iconFile}\`;
                 }
 
-                // 🚀 1. Твой эталонный манифест (адаптированный под ZIP)
+                // 🚀 1. Авто-генерация Манифеста
                 const manifest = {
                     "name": info.name,
                     "short_name": info.name,
@@ -144,7 +144,7 @@ module.exports = function(app, context) {
                 };
                 fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
-                // 🚀 2. Твой эталонный Service Worker (динамический кэш v2)
+                // 🚀 2. Авто-генерация Service Worker (твоя стратегия кэширования)
                 const swCode = \`
 const CACHE_NAME = 'app-dynamic-\${appFolderName}';
 const ASSETS = ['index.html', 'manifest.json', '\${iconFileName}'];
@@ -171,23 +171,27 @@ self.addEventListener('fetch', (e) => {
 });\`;
                 fs.writeFileSync(path.join(extractPath, 'sw.js'), swCode);
 
-                // 🚀 3. Твой эталонный мост установки
+                // 🚀 3. Вживление логики установки в index.html
                 const htmlPath = path.join(extractPath, 'index.html');
                 if (fs.existsSync(htmlPath)) {
                     let html = fs.readFileSync(htmlPath, 'utf8');
                     const injectCode = \`
 <link rel="manifest" href="manifest.json">
 <script>
-  if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js');}
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').then(() => console.log('SW Active'));
+  }
   let defP;
   window.addEventListener('beforeinstallprompt',(e)=>{
     e.preventDefault(); defP=e;
+    console.log('PWA Ready');
     if(window.opener) window.opener.postMessage('pwa-ready', '*');
   });
   window.addEventListener('message',(ev)=>{
     if(ev.data==='trigger-pwa-install'&&defP) defP.prompt();
   });
 </script>\`;
+                    // Вставляем код сразу после <head>
                     html = html.replace('<head>', '<head>' + injectCode);
                     fs.writeFileSync(htmlPath, html);
                 }
@@ -226,7 +230,7 @@ self.addEventListener('fetch', (e) => {
         fs.writeFileSync(path.join(quarantineDir, id + '.json'), JSON.stringify({ name, email, cat, desc, url }));
         
         const typeStr = req.file ? '📦 ZIP-архив' : '🔗 Ссылка';
-        const msg = \`🆕 ЗАЯВКА В STORE\n\n📛: \${name}\n📂: \${cat}\n📧: \${email}\n🛠: \${typeStr}\n📝: \${desc || 'Нет'}\`;
+        const msg = \`🆕 ЗАЯВКА В STORE\\n\\n📛: \${name}\\n📂: \${cat}\\n📧: \${email}\\n🛠: \${typeStr}\\n📝: \${desc || 'Нет'}\`;
 
         storeBot.telegram.sendMessage(MY_ID, msg, Markup.inlineKeyboard([
             [Markup.button.url('🛡 ПАНЕЛЬ УПРАВЛЕНИЯ', 'https://logist-x.store/x-admin')]
