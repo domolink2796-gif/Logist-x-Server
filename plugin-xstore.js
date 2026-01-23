@@ -102,7 +102,7 @@ module.exports = function(app, context) {
 </html>`);
     });
 
-    // --- ПУБЛИКАЦИЯ С ГЕНЕРАЦИЕЙ PWA И ИКОНКИ ---
+    // --- ПУБЛИКАЦИЯ С ТВОЕЙ ЭТАЛОННОЙ ЛОГИКОЙ PWA ---
     app.post('/x-api/publish/:id', (req, res) => {
         const id = req.params.id;
         const infoPath = path.join(quarantineDir, id + '.json');
@@ -129,24 +129,65 @@ module.exports = function(app, context) {
                     finalIcon = `https://logist-x.store/public/apps/${appFolderName}/${iconFile}`;
                 }
 
-                // 🔥 1. Создаем гарантированно рабочий манифест
+                // 🚀 1. Твой эталонный манифест (адаптированный под ZIP)
                 const manifest = {
-                    "name": info.name, "short_name": info.name,
-                    "start_url": "index.html", "display": "standalone",
-                    "background_color": "#0b0b0b", "theme_color": "#ff6600",
-                    "icons": [{ "src": iconFileName, "sizes": "512x512", "type": "image/png" }]
+                    "name": info.name,
+                    "short_name": info.name,
+                    "start_url": "index.html",
+                    "display": "standalone",
+                    "background_color": "#0b0b0b",
+                    "theme_color": "#ff6600",
+                    "icons": [
+                        { "src": iconFileName, "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+                        { "src": iconFileName, "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+                    ]
                 };
                 fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
-                // 🔥 2. Создаем Service Worker (обязателен для появления кнопки установки)
-                const swCode = `self.addEventListener('install', (e) => self.skipWaiting()); self.addEventListener('fetch', (event) => { event.respondWith(fetch(event.request)); });`;
+                // 🚀 2. Твой эталонный Service Worker (динамический кэш v2)
+                const swCode = \`
+const CACHE_NAME = 'app-dynamic-\${appFolderName}';
+const ASSETS = ['index.html', 'manifest.json', '\${iconFileName}'];
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(ASSETS)));
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))));
+});
+
+self.addEventListener('fetch', (e) => {
+  e.respondWith(
+    caches.match(e.request).then((res) => {
+      const fP = fetch(e.request).then((nR) => {
+        caches.open(CACHE_NAME).then((c) => c.put(e.request, nR.clone()));
+        return nR;
+      });
+      return res || fP;
+    })
+  );
+});\`;
                 fs.writeFileSync(path.join(extractPath, 'sw.js'), swCode);
 
-                // 🔥 3. Вживляем скрипт-слушатель для магазина в index.html
+                // 🚀 3. Твой эталонный мост установки
                 const htmlPath = path.join(extractPath, 'index.html');
                 if (fs.existsSync(htmlPath)) {
                     let html = fs.readFileSync(htmlPath, 'utf8');
-                    const injectCode = `<link rel="manifest" href="manifest.json"><script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js');}let defP;window.addEventListener('beforeinstallprompt',(e)=>{e.preventDefault();defP=e;});window.addEventListener('message',(ev)=>{if(ev.data==='trigger-pwa-install'&&defP)defP.prompt();});</script>`;
+                    const injectCode = \`
+<link rel="manifest" href="manifest.json">
+<script>
+  if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js');}
+  let defP;
+  window.addEventListener('beforeinstallprompt',(e)=>{
+    e.preventDefault(); defP=e;
+    if(window.opener) window.opener.postMessage('pwa-ready', '*');
+  });
+  window.addEventListener('message',(ev)=>{
+    if(ev.data==='trigger-pwa-install'&&defP) defP.prompt();
+  });
+</script>\`;
                     html = html.replace('<head>', '<head>' + injectCode);
                     fs.writeFileSync(htmlPath, html);
                 }
@@ -162,8 +203,7 @@ module.exports = function(app, context) {
         if(fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
         if(fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-        // Уведомление об успешной публикации с кнопкой админки
-        storeBot.telegram.sendMessage(MY_ID, `✅ ПРИЛОЖЕНИЕ "${info.name}" ОПУБЛИКОВАНО\n📂 Ссылка: ${finalUrl}`, Markup.inlineKeyboard([[Markup.button.url('⚙️ УПРАВЛЕНИЕ СТОРОМ', 'https://logist-x.store/x-admin')]]));
+        storeBot.telegram.sendMessage(MY_ID, \`✅ ПРИЛОЖЕНИЕ "\${info.name}" ОПУБЛИКОВАНО\`, Markup.inlineKeyboard([[Markup.button.url('⚙️ УПРАВЛЕНИЕ', 'https://logist-x.store/x-admin')]]));
         res.json({ success: true });
     });
 
@@ -180,23 +220,16 @@ module.exports = function(app, context) {
         res.json({ success: true });
     });
 
-    // --- УВЕДОМЛЕНИЕ В БОТ СО ВСЕМИ ДАННЫМИ ---
     app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
         const { name, email, cat, desc, url } = req.body;
-        const id = req.file ? req.file.filename : `req_${Date.now()}`;
+        const id = req.file ? req.file.filename : \`req_\${Date.now()}\`;
         fs.writeFileSync(path.join(quarantineDir, id + '.json'), JSON.stringify({ name, email, cat, desc, url }));
         
-        const typeStr = req.file ? '📦 ZIP-архив' : '🔗 Ссылка на сайт';
-        const msg = `🆕 НОВАЯ ЗАЯВКА В STORE\n\n` +
-                    `🏷 Название: ${name}\n` +
-                    `📂 Категория: ${cat}\n` +
-                    `📧 E-mail: ${email}\n` +
-                    `🛠 Тип: ${typeStr}\n` +
-                    `📝 Описание: ${desc || 'Нет'}\n` +
-                    `🔗 URL: ${url || 'В архиве'}`;
+        const typeStr = req.file ? '📦 ZIP-архив' : '🔗 Ссылка';
+        const msg = \`🆕 ЗАЯВКА В STORE\n\n📛: \${name}\n📂: \${cat}\n📧: \${email}\n🛠: \${typeStr}\n📝: \${desc || 'Нет'}\`;
 
         storeBot.telegram.sendMessage(MY_ID, msg, Markup.inlineKeyboard([
-            [Markup.button.url('🛡 ПЕРЕЙТИ В ПАНЕЛЬ УПРАВЛЕНИЯ', 'https://logist-x.store/x-admin')]
+            [Markup.button.url('🛡 ПАНЕЛЬ УПРАВЛЕНИЯ', 'https://logist-x.store/x-admin')]
         ]));
 
         res.json({ success: true });
