@@ -8,18 +8,31 @@ const MY_ID = 6846149935;
 const storeBot = new Telegraf(STORE_BOT_TOKEN);
 
 const uploadDir = 'uploads-quarantine/';
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
 const upload = multer({ dest: uploadDir });
 
 module.exports = function(app, context) {
 
-    // --- 0. ПИНГ ДЛЯ МАГАЗИНА (Чтобы горела зеленая точка) ---
+    // --- 0. ПИНГ (ДЛЯ МАГАЗИНА) ---
     app.get('/x-api/ping', (req, res) => {
         res.json({ status: "online", message: "X-Server Bridge is Working!" });
     });
 
-    // --- 1. ГЕНЕРАЦИЯ АДМИНКИ (HTML ПРЯМО ТУТ) ---
+    // --- 1. ОБРАБОТКА КОМАНД БОТА (START) ---
+    storeBot.start((ctx) => {
+        if (ctx.from.id === MY_ID) {
+            return ctx.reply('👋 Привет, Евгений! Твоя админка X-Store готова к работе.', 
+                Markup.inlineKeyboard([
+                    [Markup.button.webApp('📂 ОТКРЫТЬ АДМИН-ПАНЕЛЬ', `https://logist-x.store/x-admin`)]
+                ])
+            );
+        } else {
+            return ctx.reply('🔒 Доступ запрещен. Это приватный бот управления X-Store.');
+        }
+    });
+
+    // --- 2. ГЕНЕРАЦИЯ АДМИНКИ (HTML) ---
     app.get('/x-admin', (req, res) => {
         const files = fs.readdirSync(uploadDir).map(name => {
             const stats = fs.statSync(path.join(uploadDir, name));
@@ -52,7 +65,6 @@ module.exports = function(app, context) {
         <div class="title">X-STORE ADMIN</div>
         <div style="font-size:10px; opacity:0.5;">v1.0</div>
     </div>
-    
     <div id="list">
         ${files.length ? files.map(f => `
             <div class="card" id="card-${f.name}">
@@ -63,21 +75,16 @@ module.exports = function(app, context) {
                     <button class="btn btn-del" onclick="del('${f.name}')">УДАЛИТЬ</button>
                 </div>
             </div>
-        `).join('') : '<div class="no-data">Заявок пока нет</div>'}
+        `).join('') : '<div class="no-data">Заявки отсутствуют</div>'}
     </div>
-
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
         tg.MainButton.setText("ОБНОВИТЬ СПИСОК").show().onClick(() => location.reload());
 
-        function scan(id) {
-            tg.showConfirm("Запустить антивирусную проверку файла?");
-        }
-
         async function del(id) {
-            if(confirm("Удалить файл навсегда?")) {
+            if(confirm("Удалить этот ZIP навсегда?")) {
                 const res = await fetch('/x-api/delete/' + id, { method: 'DELETE' });
                 if(res.ok) document.getElementById('card-' + id).remove();
             }
@@ -88,7 +95,7 @@ module.exports = function(app, context) {
         `);
     });
 
-    // --- 2. API ДЛЯ УДАЛЕНИЯ ---
+    // --- 3. API ДЛЯ УДАЛЕНИЯ ---
     app.delete('/x-api/delete/:id', (req, res) => {
         const filePath = path.join(uploadDir, req.params.id);
         if (fs.existsSync(filePath)) {
@@ -97,7 +104,7 @@ module.exports = function(app, context) {
         } else res.sendStatus(404);
     });
 
-    // --- 3. ПРИЕМ ФАЙЛА И УВЕДОМЛЕНИЕ ---
+    // --- 4. ПРИЕМ ФАЙЛА ---
     app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
         try {
             const { name, email } = req.body;
@@ -106,10 +113,12 @@ module.exports = function(app, context) {
             await storeBot.telegram.sendMessage(MY_ID, msg, Markup.inlineKeyboard([
                 [Markup.button.webApp('📂 ОТКРЫТЬ АДМИН-ПАНЕЛЬ', `https://logist-x.store/x-admin`)]
             ]));
-
             res.json({ success: true });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    storeBot.launch().catch(err => console.log("Бот магазина не запущен:", err.message));
+    // Запуск бота с обработкой ошибок
+    storeBot.launch()
+        .then(() => console.log("✅ БОТ X-STORE: Запущен и ждет команд."))
+        .catch(err => console.error("❌ Ошибка запуска бота:", err.message));
 };
