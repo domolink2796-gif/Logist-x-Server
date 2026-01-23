@@ -126,6 +126,7 @@ module.exports = function(app, context) {
                     finalIcon = "https://logist-x.store/public/apps/" + appFolderName + "/" + iconFile;
                 }
 
+                // Генерируем корректный Манифест
                 const manifest = {
                     "name": info.name,
                     "short_name": info.name,
@@ -140,23 +141,50 @@ module.exports = function(app, context) {
                 };
                 fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
-                const swCode = "const CACHE_NAME = 'dynamic-" + appFolderName + "'; const ASSETS = ['index.html', 'manifest.json', '" + iconFileName + "']; self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(ASSETS))); self.skipWaiting(); }); self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); }); self.addEventListener('fetch', (e) => { e.respondWith(caches.match(e.request).then((res) => { const fP = fetch(e.request).then((nR) => { caches.open(CACHE_NAME).then((c) => { if(nR.status === 200) c.put(e.request, nR.clone()); }); return nR; }); return res || fP; })); });";
+                // Улучшенный Service Worker
+                const swCode = `const CACHE_NAME = 'x-app-${appFolderName}'; self.addEventListener('install', (e) => { self.skipWaiting(); }); self.addEventListener('fetch', (e) => { e.respondWith(fetch(e.request).catch(() => caches.match(e.request))); });`;
                 fs.writeFileSync(path.join(extractPath, 'sw.js'), swCode);
 
+                // 🔥 УМНАЯ ИНЪЕКЦИЯ КОДА УСТАНОВКИ
                 const htmlPath = path.join(extractPath, 'index.html');
                 if (fs.existsSync(htmlPath)) {
                     let html = fs.readFileSync(htmlPath, 'utf8');
-                    const injectCode = "<link rel='manifest' href='manifest.json'><script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js');} let defP; window.addEventListener('beforeinstallprompt',(e)=>{ e.preventDefault(); defP=e; if(window.opener) window.opener.postMessage('pwa-ready', '*'); }); window.addEventListener('message',(ev)=>{ if(ev.data==='trigger-pwa-install'&&defP) defP.prompt(); });</script>";
+                    const injectCode = `
+<link rel="manifest" href="manifest.json">
+<script>
+    let deferredPrompt;
+    if('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        
+        // Если открыто из магазина с параметром установки
+        if (window.location.search.includes('mode=install')) {
+            setTimeout(() => {
+                if (deferredPrompt) {
+                    deferredPrompt.prompt();
+                    deferredPrompt.userChoice.then((choice) => {
+                        if (choice.outcome === 'accepted' && window.opener) {
+                            window.opener.postMessage('installed-success', '*');
+                        }
+                    });
+                }
+            }, 800);
+        }
+    });
+</script>`;
+                    // Вставляем код сразу после открывающего <head>
                     html = html.replace('<head>', '<head>' + injectCode);
                     fs.writeFileSync(htmlPath, html);
                 }
             } catch (e) {
-                return res.status(500).json({error: "Ошибка PWA"});
+                return res.status(500).json({error: "Ошибка сборки PWA"});
             }
         }
 
         const db = JSON.parse(fs.readFileSync(dbFile));
-        db.push({ id: appFolderName, title: info.name, cat: info.cat, icon: finalIcon, url: finalUrl, folder: appFolderName });
+        db.push({ id: appFolderName, title: info.name, cat: info.cat, icon: finalIcon, url: finalUrl, folder: appFolderName, desc: info.desc });
         fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
 
         if(fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
