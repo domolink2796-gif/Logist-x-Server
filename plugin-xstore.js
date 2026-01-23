@@ -102,7 +102,7 @@ module.exports = function(app, context) {
 </html>`);
     });
 
-    // --- ПУБЛИКАЦИЯ С ПОИСКОМ ИКОНКИ ---
+    // --- ПУБЛИКАЦИЯ С ГЕНЕРАЦИЕЙ PWA И ИКОНКИ ---
     app.post('/x-api/publish/:id', (req, res) => {
         const id = req.params.id;
         const infoPath = path.join(quarantineDir, id + '.json');
@@ -110,45 +110,59 @@ module.exports = function(app, context) {
 
         const info = JSON.parse(fs.readFileSync(infoPath));
         const appFolderName = `app_${Date.now()}`;
+        const extractPath = path.join(publicDir, appFolderName);
         let finalUrl = info.url;
-        let finalIcon = 'https://cdn-icons-png.flaticon.com/512/3208/3208728.png'; // Дефолт
+        let finalIcon = 'https://cdn-icons-png.flaticon.com/512/3208/3208728.png';
+        let iconFileName = 'icon.png';
 
         const zipPath = path.join(quarantineDir, id);
         if (fs.existsSync(zipPath) && !info.url) {
             try {
                 const zip = new AdmZip(zipPath);
-                const extractPath = path.join(publicDir, appFolderName);
                 zip.extractAllTo(extractPath, true);
-                
                 finalUrl = `https://logist-x.store/public/apps/${appFolderName}/index.html`;
 
-                // Ищем иконку внутри распакованной папки
                 const files = fs.readdirSync(extractPath);
                 const iconFile = files.find(f => f.toLowerCase().startsWith('icon.'));
                 if (iconFile) {
+                    iconFileName = iconFile;
                     finalIcon = `https://logist-x.store/public/apps/${appFolderName}/${iconFile}`;
                 }
+
+                // 1. Создаем манифест
+                const manifest = {
+                    "name": info.name, "short_name": info.name,
+                    "start_url": "index.html", "display": "standalone",
+                    "background_color": "#0b0b0b", "theme_color": "#ff6600",
+                    "icons": [{ "src": iconFileName, "sizes": "192x192", "type": "image/png" }]
+                };
+                fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify(manifest, null, 2));
+
+                // 2. Создаем Service Worker
+                const swCode = `self.addEventListener('install', (e) => self.skipWaiting()); self.addEventListener('fetch', (event) => { event.respondWith(fetch(event.request)); });`;
+                fs.writeFileSync(path.join(extractPath, 'sw.js'), swCode);
+
+                // 3. Вживляем мост установки в index.html
+                const htmlPath = path.join(extractPath, 'index.html');
+                if (fs.existsSync(htmlPath)) {
+                    let html = fs.readFileSync(htmlPath, 'utf8');
+                    const injectCode = `<link rel="manifest" href="manifest.json"><script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js');}let defP;window.addEventListener('beforeinstallprompt',(e)=>{e.preventDefault();defP=e;});window.addEventListener('message',(ev)=>{if(ev.data==='trigger-pwa-install'&&defP)defP.prompt();});</script>`;
+                    html = html.replace('<head>', '<head>' + injectCode);
+                    fs.writeFileSync(htmlPath, html);
+                }
             } catch (e) {
-                return res.status(500).json({error: "Ошибка распаковки"});
+                return res.status(500).json({error: "Ошибка создания PWA"});
             }
         }
 
         const db = JSON.parse(fs.readFileSync(dbFile));
-        db.push({
-            id: appFolderName, 
-            title: info.name,
-            cat: info.cat,
-            desc: info.desc || '',
-            icon: finalIcon, // Теперь иконка подтягивается сама!
-            url: finalUrl,
-            folder: appFolderName 
-        });
+        db.push({ id: appFolderName, title: info.name, cat: info.cat, desc: info.desc || '', icon: finalIcon, url: finalUrl, folder: appFolderName });
         fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
 
         if(fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
         if(fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-        storeBot.telegram.sendMessage(MY_ID, `🛡 Приложение "${info.name}" опубликовано с иконкой.`);
+        storeBot.telegram.sendMessage(MY_ID, `✅ ПРИЛОЖЕНИЕ ОПУБЛИКОВАНО\n📦 Название: ${info.name}\n📂 Папка: ${appFolderName}`, Markup.inlineKeyboard([[Markup.button.url('⚙️ УПРАВЛЕНИЕ', 'https://logist-x.store/x-admin')]]));
         res.json({ success: true });
     });
 
@@ -165,11 +179,25 @@ module.exports = function(app, context) {
         res.json({ success: true });
     });
 
+    // --- УВЕДОМЛЕНИЕ В БОТ СО ВСЕМИ ДАННЫМИ ---
     app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
         const { name, email, cat, desc, url } = req.body;
         const id = req.file ? req.file.filename : `req_${Date.now()}`;
         fs.writeFileSync(path.join(quarantineDir, id + '.json'), JSON.stringify({ name, email, cat, desc, url }));
-        storeBot.telegram.sendMessage(MY_ID, `🆕 Новая заявка: ${name}`);
+        
+        const typeStr = req.file ? '📦 ZIP-архив' : '🔗 Ссылка на сайт';
+        const msg = `🆕 НОВАЯ ЗАЯВКА В STORE\n\n` +
+                    `🏷 Название: ${name}\n` +
+                    `📂 Категория: ${cat}\n` +
+                    `📧 E-mail: ${email}\n` +
+                    `🛠 Тип: ${typeStr}\n` +
+                    `📝 Описание: ${desc || 'Нет'}\n` +
+                    `🔗 URL: ${url || 'В архиве'}`;
+
+        storeBot.telegram.sendMessage(MY_ID, msg, Markup.inlineKeyboard([
+            [Markup.button.url('🛡 ОТКРЫТЬ ПАНЕЛЬ УПРАВЛЕНИЯ', 'https://logist-x.store/x-admin')]
+        ]));
+
         res.json({ success: true });
     });
 
