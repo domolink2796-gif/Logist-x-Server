@@ -14,6 +14,11 @@ const upload = multer({ dest: uploadDir });
 
 module.exports = function(app, context) {
 
+    // --- 0. ПИНГ ДЛЯ МАГАЗИНА (Чтобы горела зеленая точка) ---
+    app.get('/x-api/ping', (req, res) => {
+        res.json({ status: "online", message: "X-Server Bridge is Working!" });
+    });
+
     // --- 1. ГЕНЕРАЦИЯ АДМИНКИ (HTML ПРЯМО ТУТ) ---
     app.get('/x-admin', (req, res) => {
         const files = fs.readdirSync(uploadDir).map(name => {
