@@ -2,7 +2,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const AdmZip = require('adm-zip'); // Библиотека для распаковки
+const AdmZip = require('adm-zip'); 
+const express = require('express'); // Добавили для статики
 const { Telegraf, Markup } = require('telegraf');
 
 const STORE_BOT_TOKEN = '8177397301:AAH4eNkzks_DuvuMB0leavzpcKMowwFz4Uw'; 
@@ -32,6 +33,11 @@ function getVirusTotalLink(type, data) {
 
 module.exports = function(app, context) {
     
+    // 🔥 РЕШЕНИЕ ПРОБЛЕМЫ "Cannot GET":
+    // Эта строка заставляет плагин сам раздавать файлы из папки public.
+    // Теперь ссылка https://logist-x.store/public/apps/... будет работать!
+    app.use('/public', express.static(path.join(process.cwd(), 'public')));
+
     // ОТДАЕМ СПИСОК (NO-CACHE)
     app.get('/x-api/apps', (req, res) => {
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -157,7 +163,8 @@ module.exports = function(app, context) {
                 const zip = new AdmZip(zipPath);
                 const extractPath = path.join(publicDir, appFolderName);
                 zip.extractAllTo(extractPath, true);
-                // Ссылка теперь ведет на файл внутри папки
+                
+                // 🔥 Генерируем правильную ссылку для открытия
                 finalUrl = `https://logist-x.store/public/apps/${appFolderName}/index.html`;
             } catch (e) {
                 return res.status(500).json({error: "Ошибка распаковки"});
@@ -172,7 +179,7 @@ module.exports = function(app, context) {
             desc: info.desc || '',
             icon: 'https://cdn-icons-png.flaticon.com/512/3208/3208728.png',
             url: finalUrl,
-            folder: appFolderName // Запоминаем папку для удаления
+            folder: appFolderName 
         });
         fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
 
