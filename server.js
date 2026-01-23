@@ -895,28 +895,33 @@ try {
 } catch (e) {
     console.error("❌ Не удалось загрузить плагин пульта:", e);
 }
-// --- [X-STORE BRIDGE] ---
-// Подключаем магазин x-platform.ru
+// --- [X-STORE BRIDGE] ОБНОВЛЕННЫЙ ---
 try {
-    const path = require('path');
     const fs = require('fs');
-    const xStorePluginPath = path.join(__dirname, '..', 'x-store', 'plugin-xstore.js');
+    const path = require('path');
+    
+    // Пытаемся найти плагин в разных местах (рядом или уровнем выше)
+    const paths = [
+        path.join(__dirname, 'plugin-xstore.js'),
+        path.join(__dirname, '..', 'x-store', 'plugin-xstore.js'),
+        path.join(process.cwd(), 'x-store', 'plugin-xstore.js')
+    ];
 
-    // Проверяем наличие файла и существование переменной app
-    if (fs.existsSync(xStorePluginPath)) {
-        // Если вдруг app не определена глобально, пробуем взять её из context
-        const expressApp = (typeof app !== 'undefined') ? app : (typeof pluginContext !== 'undefined' ? pluginContext.app : null);
-        
-        if (expressApp) {
-            require(xStorePluginPath)(expressApp, pluginContext);
-            console.log("🚀 МОСТ С X-STORE УСТАНОВЛЕН");
-        } else {
-            console.log("⚠️ Не удалось найти переменную 'app' для запуска X-Store");
+    let found = false;
+    for (const p of paths) {
+        if (fs.existsSync(p)) {
+            require(p)(app, pluginContext);
+            console.log("🚀 МОСТ С X-STORE УСТАНОВЛЕН (путь: " + p + ")");
+            found = true;
+            break;
         }
     }
+    if (!found) console.log("⚠️ ПРЕДУПРЕЖДЕНИЕ: Файл plugin-xstore.js не найден ни по одному адресу");
+
 } catch (e) {
-    console.log("❌ ОШИБКА X-STORE: " + e.message);
+    console.log("❌ КРИТИЧЕСКАЯ ОШИБКА X-STORE: " + e.message);
 }
+
 
 // --- ЗАПУСК БОТА ---
 bot.launch().then(() => {
