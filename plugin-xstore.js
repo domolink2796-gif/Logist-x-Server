@@ -129,20 +129,20 @@ module.exports = function(app, context) {
                     finalIcon = `https://logist-x.store/public/apps/${appFolderName}/${iconFile}`;
                 }
 
-                // 1. Создаем манифест
+                // 🔥 1. Создаем гарантированно рабочий манифест
                 const manifest = {
                     "name": info.name, "short_name": info.name,
                     "start_url": "index.html", "display": "standalone",
                     "background_color": "#0b0b0b", "theme_color": "#ff6600",
-                    "icons": [{ "src": iconFileName, "sizes": "192x192", "type": "image/png" }]
+                    "icons": [{ "src": iconFileName, "sizes": "512x512", "type": "image/png" }]
                 };
                 fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
-                // 2. Создаем Service Worker
+                // 🔥 2. Создаем Service Worker (обязателен для появления кнопки установки)
                 const swCode = `self.addEventListener('install', (e) => self.skipWaiting()); self.addEventListener('fetch', (event) => { event.respondWith(fetch(event.request)); });`;
                 fs.writeFileSync(path.join(extractPath, 'sw.js'), swCode);
 
-                // 3. Вживляем мост установки в index.html
+                // 🔥 3. Вживляем скрипт-слушатель для магазина в index.html
                 const htmlPath = path.join(extractPath, 'index.html');
                 if (fs.existsSync(htmlPath)) {
                     let html = fs.readFileSync(htmlPath, 'utf8');
@@ -162,7 +162,8 @@ module.exports = function(app, context) {
         if(fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
         if(fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-        storeBot.telegram.sendMessage(MY_ID, `✅ ПРИЛОЖЕНИЕ ОПУБЛИКОВАНО\n📦 Название: ${info.name}\n📂 Папка: ${appFolderName}`, Markup.inlineKeyboard([[Markup.button.url('⚙️ УПРАВЛЕНИЕ', 'https://logist-x.store/x-admin')]]));
+        // Уведомление об успешной публикации с кнопкой админки
+        storeBot.telegram.sendMessage(MY_ID, `✅ ПРИЛОЖЕНИЕ "${info.name}" ОПУБЛИКОВАНО\n📂 Ссылка: ${finalUrl}`, Markup.inlineKeyboard([[Markup.button.url('⚙️ УПРАВЛЕНИЕ СТОРОМ', 'https://logist-x.store/x-admin')]]));
         res.json({ success: true });
     });
 
@@ -195,7 +196,7 @@ module.exports = function(app, context) {
                     `🔗 URL: ${url || 'В архиве'}`;
 
         storeBot.telegram.sendMessage(MY_ID, msg, Markup.inlineKeyboard([
-            [Markup.button.url('🛡 ОТКРЫТЬ ПАНЕЛЬ УПРАВЛЕНИЯ', 'https://logist-x.store/x-admin')]
+            [Markup.button.url('🛡 ПЕРЕЙТИ В ПАНЕЛЬ УПРАВЛЕНИЯ', 'https://logist-x.store/x-admin')]
         ]));
 
         res.json({ success: true });
