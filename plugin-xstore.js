@@ -7,9 +7,12 @@ const STORE_BOT_TOKEN = '8177397301:AAH4eNkzks_DuvuMB0leavzpcKMowwFz4Uw';
 const MY_ID = 6846149935; 
 const storeBot = new Telegraf(STORE_BOT_TOKEN);
 
-// Важно: используем абсолютный путь, чтобы не потерять файлы
-const uploadDir = path.join(__dirname, 'uploads-quarantine');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+// ГАРАНТИРУЕМ ПРАВИЛЬНЫЙ ПУТЬ К ПАПКЕ (в корне проекта)
+const uploadDir = path.join(process.cwd(), 'uploads-quarantine');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+    console.log("📁 Папка карантина создана:", uploadDir);
+}
 
 const upload = multer({ dest: uploadDir });
 
@@ -19,11 +22,10 @@ module.exports = function(app, context) {
         res.json({ status: "online" });
     });
 
-    // --- 1. АДМИНКА (ИСПРАВЛЕННЫЙ СПИСОК) ---
+    // --- 1. ПОЛНОЦЕННАЯ АДМИНКА ---
     app.get('/x-admin', (req, res) => {
-        // Читаем все файлы, исключая скрытые
         const files = fs.readdirSync(uploadDir)
-            .filter(name => !name.startsWith('.')) 
+            .filter(name => !name.startsWith('.'))
             .map(name => {
                 const stats = fs.statSync(path.join(uploadDir, name));
                 return { name, size: (stats.size / 1024 / 1024).toFixed(2), time: stats.mtime };
@@ -37,32 +39,35 @@ module.exports = function(app, context) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { background: #0b0b0b; color: #e6edf3; font-family: sans-serif; padding: 15px; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 15px; margin-bottom: 15px; }
-        .title { color: #ff6600; font-weight: bold; margin-bottom: 10px; font-size: 14px; word-break: break-all; }
-        .btn { background: #ff6600; color: white; border: none; padding: 10px; border-radius: 8px; width: 100%; font-weight: bold; margin-top: 10px; }
+        body { background: #0b0b0b; color: #e6edf3; font-family: sans-serif; padding: 15px; margin: 0; }
+        .header { border-bottom: 2px solid #ff6600; padding-bottom: 10px; margin-bottom: 20px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 15px; margin-bottom: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        .file-id { font-family: monospace; font-size: 11px; color: #58a6ff; margin-bottom: 8px; display: block; overflow: hidden; text-overflow: ellipsis; }
+        .btn-del { background: #da3633; color: white; border: none; padding: 10px; border-radius: 8px; width: 100%; font-weight: bold; cursor: pointer; }
         .no-data { text-align: center; opacity: 0.5; padding-top: 50px; }
     </style>
 </head>
 <body>
-    <h3 style="color: #ff6600;">📦 Файлы в карантине (${files.length})</h3>
+    <div class="header">
+        <h3 style="margin:0; color:#ff6600;">📦 КАРАНТИН (${files.length})</h3>
+    </div>
     <div id="list">
         ${files.length ? files.map(f => `
             <div class="card" id="card-${f.name}">
-                <div class="title">📄 ID: ${f.name}</div>
-                <div style="font-size: 11px; opacity: 0.6;">Вес: ${f.size} MB | ${f.time.toLocaleString()}</div>
-                <button class="btn" onclick="del('${f.name}')" style="background: #da3633;">УДАЛИТЬ ФАЙЛ</button>
+                <span class="file-id">ID: ${f.name}</span>
+                <div style="font-size: 13px; margin-bottom: 10px;">⚖️ Вес: ${f.size} MB<br>📅 ${f.time.toLocaleString()}</div>
+                <button class="btn-del" onclick="del('${f.name}')">УДАЛИТЬ ИЗ КАРМАНИЩА</button>
             </div>
-        `).join('') : '<div class="no-data">Пусто. Заявки еще не дошли до папки.</div>'}
+        `).join('') : '<div class="no-data">Пусто. Файлы не найдены в директории.</div>'}
     </div>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
-        tg.MainButton.setText("ОБНОВИТЬ СПИСОК").show().onClick(() => location.reload());
+        tg.MainButton.setText("🔄 ОБНОВИТЬ СПИСОК").show().onClick(() => location.reload());
 
         async function del(id) {
-            if(confirm("Удалить файл?")) {
+            if(confirm("Удалить файл навсегда?")) {
                 const res = await fetch('/x-api/delete/' + id, { method: 'DELETE' });
                 if(res.ok) document.getElementById('card-' + id).remove();
             }
@@ -84,19 +89,39 @@ module.exports = function(app, context) {
         }
     });
 
-    // --- 3. ЗАГРУЗКА ---
+    // --- 3. ПРИЕМ ЗАЯВКИ (С ПОЛНЫМ УВЕДОМЛЕНИЕМ) ---
     app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
         try {
-            const { name, email } = req.body;
-            // Уведомление в бот
-            await storeBot.telegram.sendMessage(MY_ID, `🛡 **НОВАЯ ЗАЯВКА**\n\n📦 ${name}\n👤 ${email}`, Markup.inlineKeyboard([
-                [Markup.button.webApp('📂 ОТКРЫТЬ АДМИНКУ', 'https://logist-x.store/x-admin')]
-            ]));
+            const { name, email, cat, url, type } = req.body;
+            const file = req.file;
+
+            let fullMessage = `🛡 **НОВАЯ ЗАЯВКА X-STORE**\n\n` +
+                              `📦 Проект: **${name}**\n` +
+                              `👤 Автор: ${email}\n` +
+                              `🗂 Категория: ${cat}\n`;
+            
+            if (file) {
+                fullMessage += `⚖️ Размер ZIP: ${(file.size / (1024 * 1024)).toFixed(2)} MB\n` +
+                               `📁 Статус: Сохранен в карантин`;
+            } else if (url) {
+                fullMessage += `🔗 Ссылка: ${url}\n` +
+                               `📁 Статус: Внешний хостинг`;
+            }
+
+            // Отправляем полное уведомление с кнопкой WebApp
+            await storeBot.telegram.sendMessage(MY_ID, fullMessage, {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.webApp('📂 ОТКРЫТЬ АДМИН-ПАНЕЛЬ', 'https://logist-x.store/x-admin')]
+                ])
+            });
+
             res.json({ success: true });
         } catch (e) {
+            console.error("Ошибка при загрузке:", e);
             res.status(500).json({ error: e.message });
         }
     });
 
-    storeBot.launch().catch(err => console.error("Бот X-Store:", err));
+    storeBot.launch().catch(err => console.error("Бот магазина ошибка:", err));
 };
