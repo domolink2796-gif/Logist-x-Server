@@ -1,6 +1,4 @@
-// 1. ПОДТЯГИВАЕМ ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
 require('dotenv').config();
-
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -19,202 +17,83 @@ const transporter = nodemailer.createTransport({
     host: 'smtp.beget.com',
     port: 465,
     secure: true,
-    auth: {
-        user: 'service@x-platform.ru',
-        pass: process.env.SMTP_PASSWORD 
-    }
+    auth: { user: 'service@x-platform.ru', pass: process.env.SMTP_PASSWORD }
 });
 
 const quarantineDir = path.join(process.cwd(), 'uploads-quarantine');
 const publicDir = path.join(process.cwd(), 'public', 'apps');
 const dbFile = path.join(process.cwd(), 'public', 'apps.json');
 
-// Создаем папки
 if (!fs.existsSync(quarantineDir)) fs.mkdirSync(quarantineDir, { recursive: true });
 if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
 if (!fs.existsSync(dbFile)) fs.writeFileSync(dbFile, '[]');
 
 const upload = multer({ dest: quarantineDir });
 
-// --- ФУНКЦИЯ ОТПРАВКИ ПИСЕМ ---
 async function sendStoreMail(to, subject, text) {
     try {
-        if (!process.env.SMTP_PASSWORD) {
-            console.error("❌ ОШИБКА: Не найдена переменная SMTP_PASSWORD в .env");
-            return;
-        }
-        await transporter.sendMail({
-            from: '"X-PLATFORM CORE" <service@x-platform.ru>',
-            to: to,
-            subject: subject,
-            text: text
-        });
-        console.log(`✅ Письмо отправлено на: ${to} (через Beget)`);
-    } catch (e) {
-        console.error("❌ Ошибка отправки почты:", e.message);
-    }
+        if (!process.env.SMTP_PASSWORD) return;
+        await transporter.sendMail({ from: '"X-PLATFORM CORE" <service@x-platform.ru>', to, subject, text });
+        console.log(`✅ Письмо отправлено на: ${to}`);
+    } catch (e) { console.error("❌ Ошибка почты:", e.message); }
 }
 
 function getVirusTotalLink(type, data) {
-    if (type === 'file_hash') {
-        return `https://www.virustotal.com/gui/file/${data}`;
-    } else {
-        const encodedUrl = Buffer.from(data).toString('base64').replace(/=/g, '');
-        return `https://www.virustotal.com/gui/url/${encodedUrl}`;
-    }
+    if (type === 'file_hash') return `https://www.virustotal.com/gui/file/${data}`;
+    const encodedUrl = Buffer.from(data).toString('base64').replace(/=/g, '');
+    return `https://www.virustotal.com/gui/url/${encodedUrl}`;
 }
 
 module.exports = function(app, context) {
-    
+    // Используем функции из основного server.js через context
+    const { readDatabase } = context;
+
     app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
     // API для получения списка приложений
     app.get('/x-api/apps', (req, res) => {
-        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-        if (fs.existsSync(dbFile)) res.json(JSON.parse(fs.readFileSync(dbFile)));
-        else res.json([]);
+        const db = JSON.parse(fs.readFileSync(dbFile));
+        const now = new Date();
+        // Отдаем только те, у которых не истёк срок (синхронно с ключами)
+        const activeApps = db.filter(a => !a.expiryDate || new Date(a.expiryDate) > now);
+        res.json(activeApps);
     });
 
-    // --- НОВОЕ: СКАЧИВАНИЕ ФАЙЛА ---
     app.get('/x-api/download/:id', (req, res) => {
-        const id = req.params.id;
-        const filePath = path.join(quarantineDir, id);
-        
-        if (fs.existsSync(filePath)) {
-            // Отдаем файл как ZIP архив
-            res.download(filePath, `app_check_${id}.zip`);
-        } else {
-            res.status(404).send('Файл архива не найден');
-        }
+        const filePath = path.join(quarantineDir, req.params.id);
+        if (fs.existsSync(filePath)) res.download(filePath, `check_${req.params.id}.zip`);
+        else res.status(404).send('Файл не найден');
     });
 
     app.get('/x-api/ping', (req, res) => res.json({ status: "online" }));
 
-    // Старт бота
-    storeBot.start((ctx) => {
-        if (ctx.from.id === MY_ID) {
-            ctx.reply('🛡 Админка защиты готова!', Markup.inlineKeyboard([[Markup.button.webApp('📂 УПРАВЛЕНИЕ + АНТИВИРУС', 'https://logist-x.store/x-admin')]]));
-        }
-    });
-
-    // --- АДМИН ПАНЕЛЬ (УМНАЯ ПРОВЕРКА + СКАЧИВАНИЕ) ---
+    // --- АДМИН ПАНЕЛЬ ---
     app.get('/x-admin', (req, res) => {
-        let activeApps = [];
-        try { activeApps = JSON.parse(fs.readFileSync(dbFile)); } catch(e) {}
-
+        let activeApps = JSON.parse(fs.readFileSync(dbFile));
         const pendingFiles = fs.readdirSync(quarantineDir)
             .filter(name => name.endsWith('.json'))
             .map(jsonName => {
                 const id = jsonName.replace('.json', '');
-                let info = {};
-                try { info = JSON.parse(fs.readFileSync(path.join(quarantineDir, jsonName))); } catch(e){}
-                
+                let info = JSON.parse(fs.readFileSync(path.join(quarantineDir, jsonName)));
                 const zipPath = path.join(quarantineDir, id);
                 const hasZip = fs.existsSync(zipPath);
                 
                 let scanLink = '#';
                 let fileReport = 'Нет файла';
-                let safetyStatus = 'gray'; 
+                let borderColor = '#777';
 
                 if (hasZip) {
                     const fileBuffer = fs.readFileSync(zipPath);
                     scanLink = getVirusTotalLink('file_hash', crypto.createHash('sha256').update(fileBuffer).digest('hex'));
-
                     try {
                         const zip = new AdmZip(zipPath);
                         const entries = zip.getEntries();
-                        
-                        // 1. КРИТИЧЕСКИЕ (Сразу КРАСНЫЙ)
-                        const forbiddenExt = ['.php', '.exe', '.bat', '.sh', '.cmd', '.pl', '.cgi'];
-                        
-                        // 2. ПОДОЗРИТЕЛЬНЫЙ КОД (Дает ОРАНЖЕВЫЙ)
-                        const dangerousCode = [
-                            { word: 'eval(', desc: 'Опасное выполнение (eval)' },
-                            { word: 'child_process', desc: 'Доступ к серверу' },
-                            { word: 'exec(', desc: 'Системная команда' },
-                            { word: 'spawn(', desc: 'Запуск процесса' },
-                            { word: 'base64_decode', desc: 'Скрытый код' }
-                        ];
-
-                        let filesListHtml = [];
-                        let hasIndex = false;
-                        let foundCritical = false; 
-                        let foundSuspicious = false;
-
-                        entries.forEach(e => {
-                            const name = e.entryName;
-                            const lowerName = name.toLowerCase();
-                            
-                            if (lowerName === 'index.html' || lowerName.endsWith('/index.html')) hasIndex = true;
-
-                            let color = '#ccc'; 
-                            let icon = '📄';
-                            let warningText = '';
-
-                            // АНАЛИЗ
-                            if (forbiddenExt.some(ext => lowerName.endsWith(ext))) {
-                                color = '#ff4444'; // Красный
-                                icon = '⛔️';
-                                foundCritical = true;
-                                warningText = ' [ЗАПРЕЩЕНО]';
-                            } 
-                            // Проверка внутренностей JS/HTML
-                            else if (!e.isDirectory && (lowerName.endsWith('.js') || lowerName.endsWith('.html'))) {
-                                try {
-                                    const content = e.getData().toString('utf8');
-                                    let detected = [];
-                                    dangerousCode.forEach(danger => {
-                                        if (content.includes(danger.word)) detected.push(danger.desc);
-                                    });
-
-                                    if (detected.length > 0) {
-                                        color = '#ffbb33'; // Оранжевый
-                                        icon = '⚠️';
-                                        foundSuspicious = true;
-                                        warningText = ` [${detected.join(', ')}]`;
-                                    } else {
-                                        color = '#4caf50'; // Зеленый (чисто)
-                                    }
-                                } catch (err) { warningText = ' [Ошибка чтения]'; }
-                            }
-
-                            filesListHtml.push(`<div style="color:${color}; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${icon} ${name} <span style="color:${color === '#ffbb33' ? '#ffbb33' : '#ff6666'}; font-weight:bold;">${warningText}</span></div>`);
-                        });
-
-                        let statusMsg = [];
-                        if (!hasIndex) statusMsg.push("❌ НЕТ INDEX.HTML");
-                        if (foundCritical) statusMsg.push("⛔️ НАЙДЕНЫ ВИРУСЫ (.exe/.php)");
-                        if (foundSuspicious) statusMsg.push("⚠️ ПОДОЗРИТЕЛЬНЫЙ КОД");
-                        
-                        let borderColor = '#777';
-
-                        if (foundCritical) {
-                            safetyStatus = 'red';
-                            borderColor = '#dc3545';
-                            fileReport = `<div style="color:red; font-weight:bold; margin-bottom:5px;">${statusMsg.join('<br>')}</div>`;
-                        } else if (foundSuspicious || !hasIndex) {
-                            safetyStatus = 'orange';
-                            borderColor = '#ffc107';
-                            fileReport = `<div style="color:#ffbb33; font-weight:bold; margin-bottom:5px;">${statusMsg.join('<br>')}</div>`;
-                        } else {
-                            safetyStatus = 'green';
-                            borderColor = '#28a745';
-                            fileReport = `<div style="color:#4caf50; font-weight:bold; margin-bottom:5px;">✅ КОД ЧИСТ</div>`;
-                        }
-
-                        fileReport += `<details><summary style="cursor:pointer; color:#888; font-size:12px;">Показать файлы (${entries.length})</summary><div style="padding-left:10px; margin-top:5px; max-height:150px; overflow-y:auto; background:#111; border-radius:4px; padding:5px;">${filesListHtml.join('')}</div></details>`;
-
-                    } catch (err) {
-                        fileReport = `<div style="color:red;">❌ ОШИБКА ZIP: ${err.message}</div>`;
-                        safetyStatus = 'red';
-                    }
-                } else {
-                    scanLink = `https://www.virustotal.com/gui/search/${encodeURIComponent(info.url)}`;
-                    fileReport = `<div style="color:#aaa;">🔗 Ссылка: ${info.url}</div>`;
+                        let hasIndex = entries.some(e => e.entryName.toLowerCase().endsWith('index.html'));
+                        fileReport = hasIndex ? "✅ INDEX.HTML НАЙДЕН" : "❌ НЕТ INDEX.HTML";
+                        borderColor = hasIndex ? "#28a745" : "#dc3545";
+                    } catch (e) { fileReport = "Ошибка ZIP"; }
                 }
-
-                // Добавляем hasZip для отображения кнопки
-                return { id, name: info.name, cat: info.cat, type: hasZip ? 'ZIP' : 'LINK', url: info.url, scanLink, fileReport, safetyStatus, borderColor, hasZip };
+                return { id, ...info, scanLink, fileReport, borderColor, hasZip };
             }).reverse();
 
         res.send(`
@@ -224,50 +103,71 @@ module.exports = function(app, context) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { background: #0b0b0b; color: #fff; font-family: sans-serif; padding: 15px; margin: 0; }
-        h2 { border-bottom: 2px solid #333; padding-bottom: 10px; font-size: 14px; margin-top: 20px; color: #888; text-transform: uppercase; }
+        body { background: #0b0b0b; color: #fff; font-family: sans-serif; padding: 15px; }
         .card { background: #1a1a1a; border: 1px solid #333; border-radius: 12px; padding: 15px; margin-bottom: 15px; }
-        .title { color: #ff6600; font-weight: bold; font-size: 16px; margin-bottom: 5px; }
-        .btn { width: 100%; padding: 10px; border: none; border-radius: 8px; font-weight: bold; margin-top: 5px; cursor: pointer; color: white; font-size: 12px; display: block; text-decoration: none; text-align: center; }
-        .btn-pub { background: #28a745; } .btn-del { background: #dc3545; } .btn-scan { background: #6f42c1; } 
-        .btn-down { background: #3399ff; color: #fff; }
-        .report-box { background: #222; border: 1px solid #444; padding: 10px; border-radius: 6px; margin: 10px 0; font-family: monospace; }
+        .title { color: #ff6600; font-weight: bold; }
+        .btn { width: 100%; padding: 10px; border: none; border-radius: 8px; font-weight: bold; margin-top: 5px; cursor: pointer; color: white; display:block; text-decoration:none; text-align:center; }
+        .btn-pub { background: #28a745; } .btn-del { background: #dc3545; } .btn-scan { background: #6f42c1; } .btn-down { background: #3399ff; }
     </style>
 </head>
 <body>
-    <h2 style="color: #28a745; border-color: #28a745;">🟢 В МАГАЗИНЕ</h2>
-    ${activeApps.map(app => `<div class="card"><div class="title">${app.title}</div><button class="btn btn-del" onclick="unpublish('${app.id}')">❌ УДАЛИТЬ</button></div>`).join('')}
+    <h2 style="color: #28a745;">🟢 В МАГАЗИНЕ</h2>
+    ${activeApps.map(app => `<div class="card">
+        <div class="title">${app.title}</div>
+        <div style="font-size:10px; color:#666;">Ключ: ${app.accessKey || '---'}</div>
+        <button class="btn btn-del" onclick="unpublish('${app.id}')">❌ УДАЛИТЬ</button>
+    </div>`).join('')}
     
-    <h2 style="color: #ffc107; border-color: #ffc107;">🟡 НА ПРОВЕРКЕ (${pendingFiles.length})</h2>
+    <h2 style="color: #ffc107;">🟡 НОВЫЕ ЗАЯВКИ</h2>
     ${pendingFiles.map(f => `
         <div class="card" style="border-left: 5px solid ${f.borderColor};">
             <div class="title">${f.name}</div>
-            <div style="font-size:12px; color:#888; margin-bottom:5px;">Категория: ${f.cat}</div>
-            
-            <div class="report-box">
-                ${f.fileReport}
-            </div>
-
+            <div style="font-size:12px; color:#aaa;">От: ${f.ownerName || 'Неизвестно'} (${f.accessKey})</div>
+            <div style="margin:10px 0; font-size:12px;">${f.fileReport}</div>
             ${f.hasZip ? `<a href="/x-api/download/${f.id}" class="btn btn-down">📥 СКАЧАТЬ ZIP</a>` : ''}
-            <a href="${f.scanLink}" target="_blank" style="text-decoration:none;"><button class="btn btn-scan">🛡 VIRUS TOTAL CHECK</button></a>
-            
-            <div style="display:flex; gap:5px; margin-top:5px;">
+            <a href="${f.scanLink}" target="_blank" class="btn btn-scan">🛡 VIRUS TOTAL</a>
+            <div style="display:flex; gap:5px;">
                 <button class="btn btn-pub" onclick="publish('${f.id}')">✅ ПРИНЯТЬ</button>
                 <button class="btn btn-del" onclick="reject('${f.id}')">🗑 ОТКЛОНИТЬ</button>
             </div>
         </div>
     `).join('')}
-    
     <script>
-        async function unpublish(id) { if(confirm('Удалить из магазина?')) { await fetch('/x-api/unpublish/'+id, {method:'POST'}); location.reload(); } }
-        async function publish(id) { if(confirm('Опубликовать приложение?')) { await fetch('/x-api/publish/'+id, {method:'POST'}); location.reload(); } }
-        async function reject(id) { if(confirm('Отклонить и удалить файлы?')) { await fetch('/x-api/delete/'+id, {method:'DELETE'}); location.reload(); } }
+        async function unpublish(id) { if(confirm('Удалить?')) { await fetch('/x-api/unpublish/'+id, {method:'POST'}); location.reload(); } }
+        async function publish(id) { if(confirm('Опубликовать?')) { await fetch('/x-api/publish/'+id, {method:'POST'}); location.reload(); } }
+        async function reject(id) { if(confirm('Удалить?')) { await fetch('/x-api/delete/'+id, {method:'DELETE'}); location.reload(); } }
     </script>
 </body>
 </html>`);
     });
 
-    // --- ПУБЛИКАЦИЯ ---
+    // --- ПЕРЕХВАТ ЗАГРУЗКИ С ПРОВЕРКОЙ КЛЮЧА ---
+    app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
+        try {
+            const { accessKey, name, email, cat, url } = req.body;
+            
+            // Проверка ключа через основную базу
+            const keys = await readDatabase();
+            const kData = keys.find(k => k.key === (accessKey || "").toUpperCase());
+
+            if (!kData || new Date(kData.expiry) < new Date()) {
+                if (req.file) fs.unlinkSync(req.file.path); // Удаляем файл если ключ плохой
+                return res.status(403).json({ success: false, error: "Ключ не активен или просрочен" });
+            }
+
+            const id = req.file ? req.file.filename : "req_" + Date.now();
+            // Сохраняем заявку вместе с данными ключа
+            fs.writeFileSync(path.join(quarantineDir, id + '.json'), JSON.stringify({ 
+                name, email, cat, url, accessKey, 
+                ownerName: kData.name,
+                expiryDate: kData.expiry 
+            }));
+            
+            storeBot.telegram.sendMessage(MY_ID, `🆕 ЗАЯВКА X-STORE\nПриложение: ${name}\nВладелец ключа: ${kData.name}\nКлюч: ${accessKey}`);
+            res.json({ success: true });
+        } catch (e) { res.status(500).json({ success: false }); }
+    });
+
     app.post('/x-api/publish/:id', async (req, res) => {
         const id = req.params.id;
         const infoPath = path.join(quarantineDir, id + '.json');
@@ -278,107 +178,54 @@ module.exports = function(app, context) {
         const extractPath = path.join(publicDir, appFolderName);
         let finalUrl = info.url;
         let finalIcon = 'https://cdn-icons-png.flaticon.com/512/3208/3208728.png';
-        let iconFileName = 'icon.png';
 
         const zipPath = path.join(quarantineDir, id);
-        if (fs.existsSync(zipPath) && !info.url) {
+        if (fs.existsSync(zipPath)) {
             try {
                 const zip = new AdmZip(zipPath);
                 zip.extractAllTo(extractPath, true);
                 finalUrl = "https://logist-x.store/public/apps/" + appFolderName + "/index.html";
-
                 const files = fs.readdirSync(extractPath);
                 const iconFile = files.find(f => f.toLowerCase().startsWith('icon.'));
-                if (iconFile) {
-                    iconFileName = iconFile;
-                    finalIcon = "https://logist-x.store/public/apps/" + appFolderName + "/" + iconFile;
-                }
+                if (iconFile) finalIcon = "https://logist-x.store/public/apps/" + appFolderName + "/" + iconFile;
 
-                // Генерация manifest.json
-                const manifest = {
-                    "name": info.name,
-                    "short_name": info.name,
-                    "start_url": "index.html",
-                    "display": "standalone",
-                    "background_color": "#0b0b0b",
-                    "theme_color": "#ff6600",
-                    "icons": [
-                        { "src": iconFileName, "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-                        { "src": iconFileName, "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
-                    ]
-                };
-                fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify(manifest, null, 2));
-
-                // Генерация Service Worker
-                const swCode = "const CACHE_NAME = 'dynamic-" + appFolderName + "'; const ASSETS = ['index.html', 'manifest.json', '" + iconFileName + "']; self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(ASSETS))); self.skipWaiting(); }); self.addEventListener('fetch', (e) => { e.respondWith(fetch(e.request).catch(() => caches.match(e.request))); });";
-                fs.writeFileSync(path.join(extractPath, 'sw.js'), swCode);
-
-                // Инъекция в HTML
-                const htmlPath = path.join(extractPath, 'index.html');
-                if (fs.existsSync(htmlPath)) {
-                    let html = fs.readFileSync(htmlPath, 'utf8');
-                    const injectCode = "<link rel='manifest' href='manifest.json'><script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js');} let defP; window.addEventListener('beforeinstallprompt',(e)=>{ e.preventDefault(); defP=e; });</script>";
-                    html = html.replace('<head>', '<head>' + injectCode);
-                    fs.writeFileSync(htmlPath, html);
-                }
-            } catch (e) {
-                return res.status(500).json({error: "Ошибка распаковки PWA"});
-            }
+                // Генерация PWA файлов...
+                fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify({ "name": info.name, "short_name": info.name, "start_url": "index.html", "display": "standalone", "icons": [{ "src": iconFile || "", "sizes": "512x512", "type": "image/png" }] }));
+                fs.writeFileSync(path.join(extractPath, 'sw.js'), "self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));");
+            } catch (e) { return res.status(500).send("Ошибка ZIP"); }
         }
 
-        // Обновляем БД
         const db = JSON.parse(fs.readFileSync(dbFile));
-        db.push({ id: appFolderName, title: info.name, cat: info.cat, icon: finalIcon, url: finalUrl, folder: appFolderName });
+        db.push({ 
+            id: appFolderName, 
+            title: info.name, 
+            cat: info.cat, 
+            icon: finalIcon, 
+            url: finalUrl, 
+            accessKey: info.accessKey, 
+            expiryDate: info.expiryDate 
+        });
         fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
 
-        // Удаляем временные файлы
         if(fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
         if(fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-        // ОТПРАВЛЯЕМ ПИСЬМО
-        await sendStoreMail(info.email, '🚀 Ваше приложение опубликовано!', `Поздравляем! Приложение "${info.name}" успешно прошло проверку и доступно в магазине.`);
-
-        storeBot.telegram.sendMessage(MY_ID, "✅ ПУБЛИКАЦИЯ: " + info.name, Markup.inlineKeyboard([[Markup.button.url('⚙️ УПРАВЛЕНИЕ', 'https://logist-x.store/x-admin')]]));
+        await sendStoreMail(info.email, '🚀 Опубликовано!', `Приложение "${info.name}" доступно в X-Store.`);
         res.json({ success: true });
     });
 
     app.post('/x-api/unpublish/:id', (req, res) => {
-        const id = req.params.id;
         let db = JSON.parse(fs.readFileSync(dbFile));
-        const appData = db.find(a => String(a.id) === String(id));
-        if (appData && appData.folder) {
-            const folderPath = path.join(publicDir, appData.folder);
-            if (fs.existsSync(folderPath)) fs.rmSync(folderPath, { recursive: true, force: true });
-        }
-        db = db.filter(a => String(a.id) !== String(id));
+        db = db.filter(a => String(a.id) !== String(req.params.id));
         fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
         res.json({ success: true });
     });
 
-    app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
-        const { name, email, cat, desc, url } = req.body;
-        const id = req.file ? req.file.filename : "req_" + Date.now();
-        fs.writeFileSync(path.join(quarantineDir, id + '.json'), JSON.stringify({ name, email, cat, desc, url }));
-        
-        const msg = "🆕 ЗАЯВКА: " + name + "\n📧: " + email + "\n📂: " + cat;
-        storeBot.telegram.sendMessage(MY_ID, msg, Markup.inlineKeyboard([[Markup.button.url('🛡 ПАНЕЛЬ', 'https://logist-x.store/x-admin')]]));
-        res.json({ success: true });
-    });
-
-    app.delete('/x-api/delete/:id', async (req, res) => {
+    app.delete('/x-api/delete/:id', (req, res) => {
         const id = req.params.id;
         const infoPath = path.join(quarantineDir, id + '.json');
-        
-        // Читаем email перед удалением
-        if (fs.existsSync(infoPath)) {
-            const info = JSON.parse(fs.readFileSync(infoPath));
-            await sendStoreMail(info.email, '⚠️ Статус вашей заявки', `К сожалению, ваше приложение "${info.name}" было отклонено модератором.`);
-            fs.unlinkSync(infoPath);
-        }
-
-        const p1 = path.join(quarantineDir, id);
-        if(fs.existsSync(p1)) fs.unlinkSync(p1);
-        
+        if (fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
+        if (fs.existsSync(path.join(quarantineDir, id))) fs.unlinkSync(path.join(quarantineDir, id));
         res.json({success:true});
     });
 
