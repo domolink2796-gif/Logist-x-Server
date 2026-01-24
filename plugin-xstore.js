@@ -29,7 +29,7 @@ const quarantineDir = path.join(process.cwd(), 'uploads-quarantine');
 const publicDir = path.join(process.cwd(), 'public', 'apps');
 const dbFile = path.join(process.cwd(), 'public', 'apps.json');
 
-// Создаем папки, если нет
+// Создаем папки
 if (!fs.existsSync(quarantineDir)) fs.mkdirSync(quarantineDir, { recursive: true });
 if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
 if (!fs.existsSync(dbFile)) fs.writeFileSync(dbFile, '[]');
@@ -75,6 +75,19 @@ module.exports = function(app, context) {
         else res.json([]);
     });
 
+    // --- НОВОЕ: СКАЧИВАНИЕ ФАЙЛА ---
+    app.get('/x-api/download/:id', (req, res) => {
+        const id = req.params.id;
+        const filePath = path.join(quarantineDir, id);
+        
+        if (fs.existsSync(filePath)) {
+            // Отдаем файл как ZIP архив
+            res.download(filePath, `app_check_${id}.zip`);
+        } else {
+            res.status(404).send('Файл архива не найден');
+        }
+    });
+
     app.get('/x-api/ping', (req, res) => res.json({ status: "online" }));
 
     // Старт бота
@@ -84,7 +97,7 @@ module.exports = function(app, context) {
         }
     });
 
-    // --- АДМИН ПАНЕЛЬ (УМНАЯ ПРОВЕРКА) ---
+    // --- АДМИН ПАНЕЛЬ (УМНАЯ ПРОВЕРКА + СКАЧИВАНИЕ) ---
     app.get('/x-admin', (req, res) => {
         let activeApps = [];
         try { activeApps = JSON.parse(fs.readFileSync(dbFile)); } catch(e) {}
@@ -200,8 +213,8 @@ module.exports = function(app, context) {
                     fileReport = `<div style="color:#aaa;">🔗 Ссылка: ${info.url}</div>`;
                 }
 
-                // Добавляем borderColor в объект для HTML
-                return { id, name: info.name, cat: info.cat, type: hasZip ? 'ZIP' : 'LINK', url: info.url, scanLink, fileReport, safetyStatus, borderColor: hasZip ? (fileReport.includes('red') ? '#dc3545' : (fileReport.includes('ffbb33') ? '#ffc107' : '#28a745')) : '#777' };
+                // Добавляем hasZip для отображения кнопки
+                return { id, name: info.name, cat: info.cat, type: hasZip ? 'ZIP' : 'LINK', url: info.url, scanLink, fileReport, safetyStatus, borderColor, hasZip };
             }).reverse();
 
         res.send(`
@@ -215,8 +228,9 @@ module.exports = function(app, context) {
         h2 { border-bottom: 2px solid #333; padding-bottom: 10px; font-size: 14px; margin-top: 20px; color: #888; text-transform: uppercase; }
         .card { background: #1a1a1a; border: 1px solid #333; border-radius: 12px; padding: 15px; margin-bottom: 15px; }
         .title { color: #ff6600; font-weight: bold; font-size: 16px; margin-bottom: 5px; }
-        .btn { width: 100%; padding: 10px; border: none; border-radius: 8px; font-weight: bold; margin-top: 5px; cursor: pointer; color: white; font-size: 12px; }
-        .btn-pub { background: #28a745; } .btn-del { background: #dc3545; } .btn-scan { background: #6f42c1; }
+        .btn { width: 100%; padding: 10px; border: none; border-radius: 8px; font-weight: bold; margin-top: 5px; cursor: pointer; color: white; font-size: 12px; display: block; text-decoration: none; text-align: center; }
+        .btn-pub { background: #28a745; } .btn-del { background: #dc3545; } .btn-scan { background: #6f42c1; } 
+        .btn-down { background: #3399ff; color: #fff; }
         .report-box { background: #222; border: 1px solid #444; padding: 10px; border-radius: 6px; margin: 10px 0; font-family: monospace; }
     </style>
 </head>
@@ -229,8 +243,14 @@ module.exports = function(app, context) {
         <div class="card" style="border-left: 5px solid ${f.borderColor};">
             <div class="title">${f.name}</div>
             <div style="font-size:12px; color:#888; margin-bottom:5px;">Категория: ${f.cat}</div>
-            <div class="report-box">${f.fileReport}</div>
+            
+            <div class="report-box">
+                ${f.fileReport}
+            </div>
+
+            ${f.hasZip ? `<a href="/x-api/download/${f.id}" class="btn btn-down">📥 СКАЧАТЬ ZIP</a>` : ''}
             <a href="${f.scanLink}" target="_blank" style="text-decoration:none;"><button class="btn btn-scan">🛡 VIRUS TOTAL CHECK</button></a>
+            
             <div style="display:flex; gap:5px; margin-top:5px;">
                 <button class="btn btn-pub" onclick="publish('${f.id}')">✅ ПРИНЯТЬ</button>
                 <button class="btn btn-del" onclick="reject('${f.id}')">🗑 ОТКЛОНИТЬ</button>
