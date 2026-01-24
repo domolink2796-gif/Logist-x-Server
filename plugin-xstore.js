@@ -1,4 +1,4 @@
-// 1. ПОДТЯГИВАЕМ ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ (Обязательно первая строка)
+// 1. ПОДТЯГИВАЕМ ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
 require('dotenv').config();
 
 const multer = require('multer');
@@ -14,10 +14,10 @@ const STORE_BOT_TOKEN = '8177397301:AAH4eNkzks_DuvuMB0leavzpcKMowwFz4Uw';
 const MY_ID = 6846149935;
 const storeBot = new Telegraf(STORE_BOT_TOKEN);
 
-// --- НАСТРОЙКИ ПОЧТЫ ---
-// Используем переменную SMTP_PASSWORD из твоего .env
+// --- НАСТРОЙКИ ПОЧТЫ (ИСПРАВЛЕНО НА BEGET) ---
+// Теперь работает с твоим обычным паролем из .env
 const transporter = nodemailer.createTransport({
-    host: 'smtp.mail.ru',
+    host: 'smtp.beget.com', // <--- БЫЛО smtp.mail.ru, СТАЛО smtp.beget.com
     port: 465,
     secure: true,
     auth: {
@@ -50,7 +50,7 @@ async function sendStoreMail(to, subject, text) {
             subject: subject,
             text: text
         });
-        console.log(`✅ Письмо отправлено на: ${to}`);
+        console.log(`✅ Письмо отправлено на: ${to} (через Beget)`);
     } catch (e) {
         console.error("❌ Ошибка отправки почты:", e.message);
     }
@@ -113,13 +113,12 @@ module.exports = function(app, context) {
                     try {
                         const zip = new AdmZip(zipPath);
                         const entries = zip.getEntries();
-                        const forbidden = ['.php', '.exe', '.bat', '.sh', '.cmd', '.js']; // .js под вопросом, но для статики можно оставить
+                        const forbidden = ['.php', '.exe', '.bat', '.sh', '.cmd', '.js']; 
                         let filesListHtml = [];
                         let hasIndex = false;
                         let foundDanger = false;
 
                         entries.forEach(e => {
-                            const isDir = e.isDirectory;
                             const name = e.entryName;
                             const lowerName = name.toLowerCase();
                             
