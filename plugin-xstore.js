@@ -63,15 +63,29 @@ module.exports = function(app, context) {
 
     app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
-    // API: Список приложений (ИСПРАВЛЕНО - добавлена гибкость по дате)
+    // API: Список приложений
     app.get('/x-api/apps', (req, res) => {
         try {
             const db = JSON.parse(fs.readFileSync(dbFile));
             const now = new Date();
-            // Показываем если срок не вышел ИЛИ если срок вообще не указан (для тестов)
             const activeApps = db.filter(a => !a.expiryDate || new Date(a.expiryDate) > now);
             res.json(activeApps);
         } catch (e) { res.json([]); }
+    });
+
+    // --- НОВОЕ: API ДЛЯ СЧЕТЧИКА КЛИКОВ ---
+    app.post('/x-api/click/:id', (req, res) => {
+        try {
+            const db = JSON.parse(fs.readFileSync(dbFile));
+            const appData = db.find(a => a.id === req.params.id);
+            if (appData) {
+                appData.clicks = (appData.clicks || 0) + 1;
+                fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
+                res.json({ success: true, clicks: appData.clicks });
+            } else {
+                res.status(404).json({ error: "App not found" });
+            }
+        } catch (e) { res.status(500).json({ success: false }); }
     });
 
     // API: Скачивание для проверки
@@ -84,13 +98,13 @@ module.exports = function(app, context) {
         }
     });
 
-    // API: Пинг (ИСПРАВЛЕНО - добавлены CORS для оживления кнопки связи)
+    // API: Пинг
     app.get('/x-api/ping', (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.json({ status: "online" });
     });
 
-    // --- ПОЛНОРАЗМЕРНАЯ АДМИНКА С ЛОГАМИ СКАНЕРА ---
+    // --- ПОЛНОРАЗМЕРНАЯ АДМИНКА (ОБНОВЛЕНА ДЛЯ ВЫВОДА КЛИКОВ) ---
     app.get('/x-admin', (req, res) => {
         let activeApps = [];
         try { activeApps = JSON.parse(fs.readFileSync(dbFile)); } catch(e) {}
@@ -172,6 +186,7 @@ module.exports = function(app, context) {
         .btn-down { background: #3399ff; color: #fff; width: 100%; margin-bottom: 10px; }
         .flex-btns { display: flex; gap: 10px; }
         h1, h2 { border-left: 5px solid #ff6600; padding-left: 15px; }
+        .stat-badge { background: #28a745; color: white; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-left: 10px; }
     </style>
 </head>
 <body>
@@ -208,6 +223,7 @@ module.exports = function(app, context) {
             <div class="card" style="padding: 12px; display: flex; align-items: center; justify-content: space-between;">
                 <div>
                     <b style="color:#ff6600;">${app.title || app.name}</b>
+                    <span class="stat-badge">📥 Установок: ${app.clicks || 0}</span>
                     <div style="font-size:11px; color:#666;">ID: ${app.id}</div>
                 </div>
                 <button class="btn btn-del" style="padding: 6px 12px; font-size: 11px;" onclick="unpublish('${app.id}')">УБРАТЬ</button>
@@ -333,8 +349,8 @@ module.exports = function(app, context) {
             }
 
             const db = JSON.parse(fs.readFileSync(dbFile));
-            // Сохраняем все поля, чтобы магазин точно подтянул данные
-            db.push({ ...info, id: appFolderName, title: info.name, name: info.name, icon: finalIcon, url: finalUrl, folder: appFolderName });
+            // Сохраняем все поля + поле clicks по умолчанию 0
+            db.push({ ...info, id: appFolderName, title: info.name, name: info.name, icon: finalIcon, url: finalUrl, folder: appFolderName, clicks: 0 });
             fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
 
             // Чистим карантин
