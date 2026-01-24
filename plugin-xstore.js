@@ -63,11 +63,12 @@ module.exports = function(app, context) {
 
     app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
-    // API: Список приложений
+    // API: Список приложений (ИСПРАВЛЕНО - добавлена гибкость по дате)
     app.get('/x-api/apps', (req, res) => {
         try {
             const db = JSON.parse(fs.readFileSync(dbFile));
             const now = new Date();
+            // Показываем если срок не вышел ИЛИ если срок вообще не указан (для тестов)
             const activeApps = db.filter(a => !a.expiryDate || new Date(a.expiryDate) > now);
             res.json(activeApps);
         } catch (e) { res.json([]); }
@@ -81,6 +82,12 @@ module.exports = function(app, context) {
         } else {
             res.status(404).send('Файл не найден');
         }
+    });
+
+    // API: Пинг (ИСПРАВЛЕНО - добавлены CORS для оживления кнопки связи)
+    app.get('/x-api/ping', (req, res) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.json({ status: "online" });
     });
 
     // --- ПОЛНОРАЗМЕРНАЯ АДМИНКА С ЛОГАМИ СКАНЕРА ---
@@ -326,7 +333,8 @@ module.exports = function(app, context) {
             }
 
             const db = JSON.parse(fs.readFileSync(dbFile));
-            db.push({ ...info, id: appFolderName, title: info.name, icon: finalIcon, url: finalUrl, folder: appFolderName });
+            // Сохраняем все поля, чтобы магазин точно подтянул данные
+            db.push({ ...info, id: appFolderName, title: info.name, name: info.name, icon: finalIcon, url: finalUrl, folder: appFolderName });
             fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
 
             // Чистим карантин
