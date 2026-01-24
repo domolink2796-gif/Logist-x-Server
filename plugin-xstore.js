@@ -14,10 +14,9 @@ const STORE_BOT_TOKEN = '8177397301:AAH4eNkzks_DuvuMB0leavzpcKMowwFz4Uw';
 const MY_ID = 6846149935;
 const storeBot = new Telegraf(STORE_BOT_TOKEN);
 
-// --- НАСТРОЙКИ ПОЧТЫ (ИСПРАВЛЕНО НА BEGET) ---
-// Теперь работает с твоим обычным паролем из .env
+// --- НАСТРОЙКИ ПОЧТЫ (BEGET) ---
 const transporter = nodemailer.createTransport({
-    host: 'smtp.beget.com', // <--- БЫЛО smtp.mail.ru, СТАЛО smtp.beget.com
+    host: 'smtp.beget.com',
     port: 465,
     secure: true,
     auth: {
@@ -85,7 +84,7 @@ module.exports = function(app, context) {
         }
     });
 
-    // --- АДМИН ПАНЕЛЬ С ДЕТАЛЬНЫМ ОТЧЕТОМ ---
+    // --- АДМИН ПАНЕЛЬ (УМНАЯ ПРОВЕРКА) ---
     app.get('/x-admin', (req, res) => {
         let activeApps = [];
         try { activeApps = JSON.parse(fs.readFileSync(dbFile)); } catch(e) {}
@@ -102,60 +101,98 @@ module.exports = function(app, context) {
                 
                 let scanLink = '#';
                 let fileReport = 'Нет файла';
-                let safetyStatus = 'gray'; // gray, red, green
+                let safetyStatus = 'gray'; 
 
                 if (hasZip) {
-                    // Генерируем ссылку на VirusTotal
                     const fileBuffer = fs.readFileSync(zipPath);
                     scanLink = getVirusTotalLink('file_hash', crypto.createHash('sha256').update(fileBuffer).digest('hex'));
 
-                    // --- ВНУТРЕННЯЯ ПРОВЕРКА АРХИВА ДЛЯ ОТЧЕТА ---
                     try {
                         const zip = new AdmZip(zipPath);
                         const entries = zip.getEntries();
-                        const forbidden = ['.php', '.exe', '.bat', '.sh', '.cmd', '.js']; 
+                        
+                        // 1. КРИТИЧЕСКИЕ (Сразу КРАСНЫЙ)
+                        const forbiddenExt = ['.php', '.exe', '.bat', '.sh', '.cmd', '.pl', '.cgi'];
+                        
+                        // 2. ПОДОЗРИТЕЛЬНЫЙ КОД (Дает ОРАНЖЕВЫЙ)
+                        const dangerousCode = [
+                            { word: 'eval(', desc: 'Опасное выполнение (eval)' },
+                            { word: 'child_process', desc: 'Доступ к серверу' },
+                            { word: 'exec(', desc: 'Системная команда' },
+                            { word: 'spawn(', desc: 'Запуск процесса' },
+                            { word: 'base64_decode', desc: 'Скрытый код' }
+                        ];
+
                         let filesListHtml = [];
                         let hasIndex = false;
-                        let foundDanger = false;
+                        let foundCritical = false; 
+                        let foundSuspicious = false;
 
                         entries.forEach(e => {
                             const name = e.entryName;
                             const lowerName = name.toLowerCase();
                             
-                            if (lowerName === 'index.html') hasIndex = true;
+                            if (lowerName === 'index.html' || lowerName.endsWith('/index.html')) hasIndex = true;
 
-                            let color = '#ccc'; // обычный файл
+                            let color = '#ccc'; 
                             let icon = '📄';
+                            let warningText = '';
 
-                            // Проверка на опасные расширения
-                            if (forbidden.some(ext => lowerName.endsWith(ext))) {
-                                color = '#ff4444'; // КРАСНЫЙ
-                                icon = '☢️';
-                                foundDanger = true;
-                            } else if (lowerName.endsWith('.html') || lowerName.endsWith('.css')) {
-                                color = '#4caf50'; // Зеленый
+                            // АНАЛИЗ
+                            if (forbiddenExt.some(ext => lowerName.endsWith(ext))) {
+                                color = '#ff4444'; // Красный
+                                icon = '⛔️';
+                                foundCritical = true;
+                                warningText = ' [ЗАПРЕЩЕНО]';
+                            } 
+                            // Проверка внутренностей JS/HTML
+                            else if (!e.isDirectory && (lowerName.endsWith('.js') || lowerName.endsWith('.html'))) {
+                                try {
+                                    const content = e.getData().toString('utf8');
+                                    let detected = [];
+                                    dangerousCode.forEach(danger => {
+                                        if (content.includes(danger.word)) detected.push(danger.desc);
+                                    });
+
+                                    if (detected.length > 0) {
+                                        color = '#ffbb33'; // Оранжевый
+                                        icon = '⚠️';
+                                        foundSuspicious = true;
+                                        warningText = ` [${detected.join(', ')}]`;
+                                    } else {
+                                        color = '#4caf50'; // Зеленый (чисто)
+                                    }
+                                } catch (err) { warningText = ' [Ошибка чтения]'; }
                             }
 
-                            filesListHtml.push(`<div style="color:${color}; font-size:11px;">${icon} ${name}</div>`);
+                            filesListHtml.push(`<div style="color:${color}; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${icon} ${name} <span style="color:${color === '#ffbb33' ? '#ffbb33' : '#ff6666'}; font-weight:bold;">${warningText}</span></div>`);
                         });
 
                         let statusMsg = [];
                         if (!hasIndex) statusMsg.push("❌ НЕТ INDEX.HTML");
-                        if (foundDanger) statusMsg.push("☢️ НАЙДЕНЫ ОПАСНЫЕ ФАЙЛЫ");
+                        if (foundCritical) statusMsg.push("⛔️ НАЙДЕНЫ ВИРУСЫ (.exe/.php)");
+                        if (foundSuspicious) statusMsg.push("⚠️ ПОДОЗРИТЕЛЬНЫЙ КОД");
                         
-                        if (statusMsg.length > 0) {
+                        let borderColor = '#777';
+
+                        if (foundCritical) {
                             safetyStatus = 'red';
+                            borderColor = '#dc3545';
                             fileReport = `<div style="color:red; font-weight:bold; margin-bottom:5px;">${statusMsg.join('<br>')}</div>`;
+                        } else if (foundSuspicious || !hasIndex) {
+                            safetyStatus = 'orange';
+                            borderColor = '#ffc107';
+                            fileReport = `<div style="color:#ffbb33; font-weight:bold; margin-bottom:5px;">${statusMsg.join('<br>')}</div>`;
                         } else {
                             safetyStatus = 'green';
-                            fileReport = `<div style="color:#4caf50; font-weight:bold; margin-bottom:5px;">✅ СТРУКТУРА КОРРЕКТНА</div>`;
+                            borderColor = '#28a745';
+                            fileReport = `<div style="color:#4caf50; font-weight:bold; margin-bottom:5px;">✅ КОД ЧИСТ</div>`;
                         }
 
-                        // Сворачиваемый список файлов
                         fileReport += `<details><summary style="cursor:pointer; color:#888; font-size:12px;">Показать файлы (${entries.length})</summary><div style="padding-left:10px; margin-top:5px; max-height:150px; overflow-y:auto; background:#111; border-radius:4px; padding:5px;">${filesListHtml.join('')}</div></details>`;
 
                     } catch (err) {
-                        fileReport = `<div style="color:red;">❌ ОШИБКА ЧТЕНИЯ ZIP: ${err.message}</div>`;
+                        fileReport = `<div style="color:red;">❌ ОШИБКА ZIP: ${err.message}</div>`;
                         safetyStatus = 'red';
                     }
                 } else {
@@ -163,7 +200,8 @@ module.exports = function(app, context) {
                     fileReport = `<div style="color:#aaa;">🔗 Ссылка: ${info.url}</div>`;
                 }
 
-                return { id, name: info.name, cat: info.cat, type: hasZip ? 'ZIP' : 'LINK', url: info.url, scanLink, fileReport, safetyStatus };
+                // Добавляем borderColor в объект для HTML
+                return { id, name: info.name, cat: info.cat, type: hasZip ? 'ZIP' : 'LINK', url: info.url, scanLink, fileReport, safetyStatus, borderColor: hasZip ? (fileReport.includes('red') ? '#dc3545' : (fileReport.includes('ffbb33') ? '#ffc107' : '#28a745')) : '#777' };
             }).reverse();
 
         res.send(`
@@ -188,16 +226,11 @@ module.exports = function(app, context) {
     
     <h2 style="color: #ffc107; border-color: #ffc107;">🟡 НА ПРОВЕРКЕ (${pendingFiles.length})</h2>
     ${pendingFiles.map(f => `
-        <div class="card" style="border-left: 5px solid ${f.safetyStatus === 'red' ? '#dc3545' : (f.safetyStatus === 'green' ? '#28a745' : '#777')};">
+        <div class="card" style="border-left: 5px solid ${f.borderColor};">
             <div class="title">${f.name}</div>
             <div style="font-size:12px; color:#888; margin-bottom:5px;">Категория: ${f.cat}</div>
-            
-            <div class="report-box">
-                ${f.fileReport}
-            </div>
-
+            <div class="report-box">${f.fileReport}</div>
             <a href="${f.scanLink}" target="_blank" style="text-decoration:none;"><button class="btn btn-scan">🛡 VIRUS TOTAL CHECK</button></a>
-            
             <div style="display:flex; gap:5px; margin-top:5px;">
                 <button class="btn btn-pub" onclick="publish('${f.id}')">✅ ПРИНЯТЬ</button>
                 <button class="btn btn-del" onclick="reject('${f.id}')">🗑 ОТКЛОНИТЬ</button>
