@@ -5,10 +5,25 @@ const crypto = require('crypto');
 const AdmZip = require('adm-zip'); 
 const express = require('express'); 
 const { Telegraf, Markup } = require('telegraf');
+const nodemailer = require('nodemailer');
+
+// Подключаем системные переменные (для забора пароля из файла сервера)
+require('dotenv').config(); 
 
 const STORE_BOT_TOKEN = '8177397301:AAH4eNkzks_DuvuMB0leavzpcKMowwFz4Uw'; 
 const MY_ID = 6846149935; 
 const storeBot = new Telegraf(STORE_BOT_TOKEN);
+
+// --- НАСТРОЙКИ ПОЧТЫ (Забирает пароль из системы, как в Тест-драйве) ---
+const transporter = nodemailer.createTransport({
+    host: 'smtp.mail.ru', 
+    port: 465,
+    secure: true,
+    auth: {
+        user: 'service@x-platform.ru', 
+        pass: process.env.MAIL_PASS // Именно здесь он тянет пароль из окружения сервера
+    }
+});
 
 const quarantineDir = path.join(process.cwd(), 'uploads-quarantine');
 const publicDir = path.join(process.cwd(), 'public', 'apps');
@@ -19,6 +34,18 @@ if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
 if (!fs.existsSync(dbFile)) fs.writeFileSync(dbFile, '[]');
 
 const upload = multer({ dest: quarantineDir });
+
+// Функция для отправки уведомлений (изолированная доставка)
+async function sendStoreMail(to, subject, text) {
+    try {
+        await transporter.sendMail({
+            from: '"X-PLATFORM CORE" <service@x-platform.ru>',
+            to: to,
+            subject: subject,
+            text: text
+        });
+    } catch (e) { console.error("Ошибка почты:", e); }
+}
 
 function getVirusTotalLink(type, data) {
     if (type === 'file_hash') {
@@ -100,7 +127,7 @@ module.exports = function(app, context) {
 </html>`);
     });
 
-    app.post('/x-api/publish/:id', (req, res) => {
+    app.post('/x-api/publish/:id', async (req, res) => {
         const id = req.params.id;
         const infoPath = path.join(quarantineDir, id + '.json');
         if (!fs.existsSync(infoPath)) return res.status(404).json({error: "Нет заявки"});
@@ -126,13 +153,10 @@ module.exports = function(app, context) {
                     finalIcon = "https://logist-x.store/public/apps/" + appFolderName + "/" + iconFile;
                 }
 
+                // ГЕНЕРАЦИЯ МАНИФЕСТА
                 const manifest = {
-                    "name": info.name,
-                    "short_name": info.name,
-                    "start_url": "index.html",
-                    "display": "standalone",
-                    "background_color": "#0b0b0b",
-                    "theme_color": "#ff6600",
+                    "name": info.name, "short_name": info.name, "start_url": "index.html", "display": "standalone",
+                    "background_color": "#0b0b0b", "theme_color": "#ff6600",
                     "icons": [
                         { "src": iconFileName, "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
                         { "src": iconFileName, "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
@@ -140,9 +164,11 @@ module.exports = function(app, context) {
                 };
                 fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
+                // ГЕНЕРАЦИЯ SERVICE WORKER
                 const swCode = "const CACHE_NAME = 'dynamic-" + appFolderName + "'; const ASSETS = ['index.html', 'manifest.json', '" + iconFileName + "']; self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(ASSETS))); self.skipWaiting(); }); self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); }); self.addEventListener('fetch', (e) => { e.respondWith(caches.match(e.request).then((res) => { const fP = fetch(e.request).then((nR) => { caches.open(CACHE_NAME).then((c) => { if(nR.status === 200) c.put(e.request, nR.clone()); }); return nR; }); return res || fP; })); });";
                 fs.writeFileSync(path.join(extractPath, 'sw.js'), swCode);
 
+                // ИНЪЕКЦИЯ КОДА УСТАНОВКИ В HTML
                 const htmlPath = path.join(extractPath, 'index.html');
                 if (fs.existsSync(htmlPath)) {
                     let html = fs.readFileSync(htmlPath, 'utf8');
@@ -150,10 +176,11 @@ module.exports = function(app, context) {
                     html = html.replace('<head>', '<head>' + injectCode);
                     fs.writeFileSync(htmlPath, html);
                 }
-            } catch (e) {
-                return res.status(500).json({error: "Ошибка PWA"});
-            }
+            } catch (e) { return res.status(500).json({error: "Ошибка PWA"}); }
         }
+
+        // ОТПРАВКА ПИСЬМА ПОЛЬЗОВАТЕЛЮ
+        await sendStoreMail(info.email, '🚀 Приложение опубликовано!', `Поздравляем! Ваше приложение "${info.name}" успешно прошло модерацию и теперь доступно в X-Store.`);
 
         const db = JSON.parse(fs.readFileSync(dbFile));
         db.push({ id: appFolderName, title: info.name, cat: info.cat, icon: finalIcon, url: finalUrl, folder: appFolderName });
@@ -179,8 +206,35 @@ module.exports = function(app, context) {
         res.json({ success: true });
     });
 
+    // --- ПРОВЕРКА ПРИ ЗАГРУЗКЕ (АНТИВИРУС + PWA) ---
     app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
         const { name, email, cat, desc, url } = req.body;
+        
+        if (req.file) {
+            try {
+                const zip = new AdmZip(req.file.path);
+                const entries = zip.getEntries();
+                let hasIndex = false;
+                let badFiles = [];
+                const forbidden = ['.php', '.exe', '.bat', '.cmd', '.sh', '.py'];
+
+                entries.forEach(e => {
+                    const fName = e.entryName.toLowerCase();
+                    if (fName === 'index.html') hasIndex = true;
+                    if (forbidden.some(ext => fName.endsWith(ext))) badFiles.push(e.entryName);
+                });
+
+                if (!hasIndex || badFiles.length > 0) {
+                    fs.unlinkSync(req.file.path);
+                    const errorMsg = !hasIndex ? "Нет index.html в корне ZIP" : "Запрещенные файлы: " + badFiles.join(', ');
+                    return res.status(400).json({ success: false, error: errorMsg });
+                }
+            } catch (e) {
+                if(fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                return res.status(400).json({ success: false, error: "Ошибка чтения архива" });
+            }
+        }
+
         const id = req.file ? req.file.filename : "req_" + Date.now();
         fs.writeFileSync(path.join(quarantineDir, id + '.json'), JSON.stringify({ name, email, cat, desc, url }));
         const msg = "🆕 ЗАЯВКА: " + name + "\n📧: " + email + "\n📂: " + cat;
@@ -188,12 +242,19 @@ module.exports = function(app, context) {
         res.json({ success: true });
     });
 
-    app.delete('/x-api/delete/:id', (req, res) => {
+    app.delete('/x-api/delete/:id', async (req, res) => {
         const id = req.params.id;
-        const p1 = path.join(quarantineDir, id);
-        const p2 = path.join(quarantineDir, id + '.json');
-        if(fs.existsSync(p1)) fs.unlinkSync(p1);
-        if(fs.existsSync(p2)) fs.unlinkSync(p2);
+        const infoPath = path.join(quarantineDir, id + '.json');
+        
+        if (fs.existsSync(infoPath)) {
+            const info = JSON.parse(fs.readFileSync(infoPath));
+            // ПИСЬМО ОБ ОТКАЗЕ
+            await sendStoreMail(info.email, '⚠️ Статус заявки X-Store', `К сожалению, приложение "${info.name}" отклонено. Проверьте структуру архива и безопасность.`);
+            fs.unlinkSync(infoPath);
+        }
+        
+        const zipPath = path.join(quarantineDir, id);
+        if(fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
         res.json({success:true});
     });
 
