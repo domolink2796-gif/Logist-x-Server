@@ -145,11 +145,29 @@ module.exports = function(app, context) {
                                 suspiciousFuncs.forEach(f => {
                                     if (content.includes(f)) safetyAlerts.push(`<span style="color:#ffbb33;">⚠️ ОПАСНЫЙ КОД (${f}): ${name}</span>`);
                                 });
-                                if (content.match(/https?:\/\/(?!logist-x\.store|google|yandex|vk\.com|cdn|unpkg|jsdelivr)/)) {
-                                    safetyAlerts.push(`<span style="color:#3399ff;">📡 ВНЕШНЯЯ СВЯЗЬ: ${name}</span>`);
+                                            // --- НОВЫЙ СКАНЕР ССЫЛОК ---
+                    const links = content.match(/https?:\/\/[^\s"'`<>]+/g);
+                    if (links) {
+                        const uniqueDomains = new Set();
+                        links.forEach(link => {
+                            // Пропускаем твои доверенные сайты
+                            if (!link.match(/logist-x\.store|google|yandex|vk\.com|cdn|unpkg|jsdelivr/)) {
+                                try {
+                                    const domain = new URL(link).hostname;
+                                    uniqueDomains.add(domain);
+                                } catch(e) {
+                                    uniqueDomains.add(link.substring(0, 25) + '...');
                                 }
                             }
                         });
+
+                        // Выводим каждый найденный сайт в админку отдельной строкой
+                        uniqueDomains.forEach(domain => {
+                            safetyAlerts.push(`<span style="color:#3399ff;">📡 СВЯЗЬ: ${domain}</span>`);
+                        });
+                    }
+                    // --- КОНЕЦ НОВОГО СКАНЕРА ---
+   
 
                         if (!hasIndex) safetyAlerts.push("<span style='color:#ff4444;'>❌ НЕТ INDEX.HTML В КОРНЕ</span>");
 
