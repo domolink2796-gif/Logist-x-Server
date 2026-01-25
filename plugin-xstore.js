@@ -145,29 +145,27 @@ module.exports = function(app, context) {
                                 suspiciousFuncs.forEach(f => {
                                     if (content.includes(f)) safetyAlerts.push(`<span style="color:#ffbb33;">⚠️ ОПАСНЫЙ КОД (${f}): ${name}</span>`);
                                 });
-                                            // --- НОВЫЙ СКАНЕР ССЫЛОК ---
-                    const links = content.match(/https?:\/\/[^\s"'`<>]+/g);
-                    if (links) {
-                        const uniqueDomains = new Set();
-                        links.forEach(link => {
-                            // Пропускаем твои доверенные сайты
-                            if (!link.match(/logist-x\.store|google|yandex|vk\.com|cdn|unpkg|jsdelivr/)) {
-                                try {
-                                    const domain = new URL(link).hostname;
-                                    uniqueDomains.add(domain);
-                                } catch(e) {
-                                    uniqueDomains.add(link.substring(0, 25) + '...');
+
+                                // --- НОВЫЙ ЗРЯЧИЙ СКАНЕР ---
+                                const links = content.match(/https?:\/\/[^\s"'`<>]+/g);
+                                if (links) {
+                                    const uniqueDomains = new Set();
+                                    links.forEach(link => {
+                                        if (!link.match(/logist-x\.store|google|yandex|vk\.com|cdn|unpkg|jsdelivr/)) {
+                                            try {
+                                                const domain = new URL(link).hostname;
+                                                uniqueDomains.add(domain);
+                                            } catch(err) {
+                                                uniqueDomains.add(link.substring(0, 25) + '...');
+                                            }
+                                        }
+                                    });
+                                    uniqueDomains.forEach(domain => {
+                                        safetyAlerts.push(`<span style="color:#3399ff;">📡 СВЯЗЬ: ${domain}</span>`);
+                                    });
                                 }
                             }
                         });
-
-                        // Выводим каждый найденный сайт в админку отдельной строкой
-                        uniqueDomains.forEach(domain => {
-                            safetyAlerts.push(`<span style="color:#3399ff;">📡 СВЯЗЬ: ${domain}</span>`);
-                        });
-                    }
-                    // --- КОНЕЦ НОВОГО СКАНЕРА ---
-   
 
                         if (!hasIndex) safetyAlerts.push("<span style='color:#ff4444;'>❌ НЕТ INDEX.HTML В КОРНЕ</span>");
 
@@ -300,7 +298,7 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
-    // --- ПУБЛИКАЦИЯ С ИСПРАВЛЕННОЙ ЛОГИКОЙ PWA (УМНАЯ СКЛЕЙКА) ---
+    // ПУБЛИКАЦИЯ С ЛОГИКОЙ PWA
     app.post('/x-api/publish/:id', async (req, res) => {
         try {
             const id = req.params.id;
@@ -323,7 +321,6 @@ module.exports = function(app, context) {
                 const iconFile = files.find(f => f.toLowerCase().startsWith('icon.'));
                 if (iconFile) finalIcon = `https://logist-x.store/public/apps/${appFolderName}/${iconFile}`;
 
-                // 1. Генерируем манифест (если его нет)
                 if (!fs.existsSync(path.join(extractPath, 'manifest.json'))) {
                     const manifest = {
                         "name": info.name,
@@ -337,40 +334,21 @@ module.exports = function(app, context) {
                     fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify(manifest, null, 2));
                 }
                 
-                // 2. УМНАЯ ПРОВЕРКА SERVICE WORKER
                 const swPath = path.join(extractPath, 'sw.js');
                 if (!fs.existsSync(swPath)) {
-                    // Если пользователь НЕ положил свой воркер — создаем базовый
-                    fs.writeFileSync(swPath, `
-                        // X-STORE AUTO-PWA
-                        self.addEventListener('install', e => self.skipWaiting());
-                        self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));
-                    `);
+                    fs.writeFileSync(swPath, `self.addEventListener('install', e => self.skipWaiting());self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));`);
                 }
 
-                // 3. УМНАЯ СКЛЕЙКА INDEX.HTML
                 const indexPath = path.join(extractPath, 'index.html');
                 if (fs.existsSync(indexPath)) {
                     let html = fs.readFileSync(indexPath, 'utf8');
-                    
-                    // Проверяем, не внедрен ли уже воркер самим автором
                     if (!html.includes('serviceWorker.register')) {
                         const pwaInject = `
     <link rel="manifest" href="manifest.json">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#ff6600">
-    <script>
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('sw.js?v=${Date.now()}').then(() => console.log('X-PWA Active'));
-      }
-    </script>
-                        `;
-                        if (html.includes('<head>')) {
-                            html = html.replace('<head>', '<head>' + pwaInject);
-                        } else {
-                            html = pwaInject + html;
-                        }
+    <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js?v=${Date.now()}');}</script>`;
+                        html = html.includes('<head>') ? html.replace('<head>', '<head>' + pwaInject) : pwaInject + html;
                         fs.writeFileSync(indexPath, html);
                     }
                 }
@@ -381,21 +359,14 @@ module.exports = function(app, context) {
             db.push({ ...info, id: appFolderName, title: info.name, name: info.name, icon: finalIcon, url: finalUrl, folder: appFolderName, clicks: 0 });
             fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
 
-            // Чистим карантин
             if(fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
             if(fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-            // Отправляем уведомление
-            await sendStoreMail(info.email, '🚀 Твое приложение опубликовано!', `Привет! Приложение "${info.name}" успешно прошло проверку и теперь доступно в X-STORE.`);
-            
+            await sendStoreMail(info.email, '🚀 Твое приложение опубликовано!', `Приложение "${info.name}" доступно.`);
             res.json({ success: true });
-        } catch (e) { 
-            console.error(e);
-            res.status(500).json({ success: false, error: e.message }); 
-        }
+        } catch (e) { res.status(500).json({ success: false, error: e.message }); }
     });
 
-    // Снятие с публикации
     app.post('/x-api/unpublish/:id', (req, res) => {
         try {
             let db = JSON.parse(fs.readFileSync(dbFile));
@@ -410,7 +381,6 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
-    // Удаление заявки
     app.delete('/x-api/delete/:id', (req, res) => {
         try {
             const id = req.params.id;
@@ -422,7 +392,6 @@ module.exports = function(app, context) {
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
-    // Запуск бота
     if (storeBot) {
         storeBot.launch().catch(err => {
             if (!err.message.includes('409: Conflict')) console.error('❌ Ошибка бота:', err.message);
