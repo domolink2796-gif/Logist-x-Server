@@ -27,7 +27,6 @@ if (!fs.existsSync(path.join(process.cwd(), 'public'))) {
     fs.mkdirSync(path.join(process.cwd(), 'public'), { recursive: true });
 }
 
-// Оптимизированная очистка (асинхронная запись)
 function cleanOldMessages() {
     const now = Date.now();
     let totalRemoved = 0;
@@ -55,6 +54,9 @@ loadToMemory();
 setInterval(cleanOldMessages, 60 * 60 * 1000);
 
 module.exports = function (app, context) {
+    // ВЫТАСКИВАЕМ ИЗ КОНТЕКСТА НАШ ЖИВОЙ КАНАЛ
+    const io = context.io; 
+
     app.use('/x-api/', express.json({ limit: '100mb' }));
     app.use('/x-api/', express.urlencoded({ limit: '100mb', extended: true }));
 
@@ -70,7 +72,7 @@ module.exports = function (app, context) {
 
     app.get('/x-api/vapid-key', (req, res) => res.send(vapidKeys.publicKey));
 
-    // --- РЕАКТИВНАЯ ОТПРАВКА ---
+    // --- ОБНОВЛЕННАЯ ОТПРАВКА С SOCKET.IO ---
     app.post('/x-api/chat-send', (req, res) => {
         try {
             const { roomId, user, text, avatar, isAudio, isImage, speechText, myChatId } = req.body;
@@ -88,17 +90,22 @@ module.exports = function (app, context) {
             
             memoryDb[targetRoom].push(newMessage);
 
-            // ⚡ ШАГ 1: МОМЕНТАЛЬНЫЙ ОТВЕТ КЛИЕНТУ
+            // ⚡ ШАГ 0: МГНОВЕННЫЙ ВЫСТРЕЛ В ЭФИР (Socket.io)
+            // Это то самое место, где сообщение улетает дочери в ту же секунду!
+            if (io) {
+                io.to(targetRoom).emit('new_message', newMessage);
+                console.log(`🚀 Сообщение от ${user} вытолкнуто в Socket.io (Room: ${targetRoom})`);
+            }
+
+            // ШАГ 1: ОТВЕТ ОТПРАВИТЕЛЮ
             res.json({ success: true });
 
-            // 🛠 ШАГ 2: ФОНОВЫЕ ОПЕРАЦИИ (не тормозят чат)
+            // ШАГ 2: ФОНОВЫЕ ОПЕРАЦИИ (Пуши, Запись файла)
             setImmediate(() => {
-                // Асинхронная запись истории
                 fs.writeFile(chatDbFile, JSON.stringify(memoryDb, null, 2), (err) => {
                     if (err) console.error("❌ Ошибка сохранения истории:", err);
                 });
 
-                // Рассылка пушей
                 const pushPayload = JSON.stringify({
                     title: user,
                     body: isAudio ? "Голосовое сообщение 🎤" : (isImage ? "Фотография 📸" : text),
@@ -117,23 +124,24 @@ module.exports = function (app, context) {
                     }
                 });
 
-                // Обработка автоответа системы
                 const checkText = (String(text || "") + " " + String(speechText || "")).toLowerCase();
                 if (checkText.includes("проверка связи")) {
-                    memoryDb[targetRoom].push({
+                    const sysMsg = {
                         id: 'sys_' + Date.now(),
                         user: "X-SYSTEM",
                         text: "Канал стабилен. Все узлы X-CONNECT онлайн! 🚀",
                         avatar: "https://cdn-icons-png.flaticon.com/512/4712/4712035.png",
                         time: getMskTime(),
                         timestamp: Date.now() + 10
-                    });
+                    };
+                    memoryDb[targetRoom].push(sysMsg);
+                    if (io) io.to(targetRoom).emit('new_message', sysMsg); // Системный ответ тоже через сокеты
                     fs.writeFile(chatDbFile, JSON.stringify(memoryDb, null, 2), () => {});
                 }
             });
 
         } catch (e) { 
-            console.error("❌ КРИТИЧЕСКАЯ ОШИБКА:", e.message);
+            console.error("❌ КРИТИЧЕСКАЯ ОШИБКА ЧАТА:", e.message);
             if (!res.headersSent) res.status(500).json({ success: false }); 
         }
     });
@@ -143,7 +151,11 @@ module.exports = function (app, context) {
             const { roomId, msgId } = req.body;
             if (memoryDb[roomId]) {
                 memoryDb[roomId] = memoryDb[roomId].filter(m => m.id !== msgId);
-                res.json({ success: true }); // Отвечаем сразу
+                
+                // ⚡ ЖИВОЕ УДАЛЕНИЕ: Удаляем сообщение у всех онлайн
+                if (io) io.to(roomId).emit('delete_message', msgId);
+                
+                res.json({ success: true });
                 fs.writeFile(chatDbFile, JSON.stringify(memoryDb, null, 2), () => {});
                 return;
             }
