@@ -59,38 +59,37 @@ module.exports = function (app, context) {
 
     app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
-    // API: Список приложений (только активные и не скрытые)
     app.get('/x-api/apps', (req, res) => {
         try {
-            const db = JSON.parse(fs.readFileSync(dbFile));
+            const db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
             const now = new Date();
             const activeApps = db
                 .filter(a => (!a.expiryDate || new Date(a.expiryDate) > now) && a.hidden !== true)
                 .map(a => ({ ...a, hidden: !!a.hidden }));
             res.json(activeApps);
         } catch (e) {
+            console.error('Ошибка /x-api/apps:', e.message);
             res.json([]);
         }
     });
 
-    // Счётчик кликов
     app.post('/x-api/click/:id', (req, res) => {
         try {
-            const db = JSON.parse(fs.readFileSync(dbFile));
+            const db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
             const appData = db.find(a => a.id === req.params.id);
             if (appData) {
                 appData.clicks = (appData.clicks || 0) + 1;
-                fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
+                fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
                 res.json({ success: true, clicks: appData.clicks });
             } else {
                 res.status(404).json({ error: "App not found" });
             }
         } catch (e) {
+            console.error('Ошибка /x-api/click:', e.message);
             res.status(500).json({ success: false });
         }
     });
 
-    // Скачивание ZIP для проверки
     app.get('/x-api/download/:id', (req, res) => {
         const filePath = path.join(quarantineDir, req.params.id);
         if (fs.existsSync(filePath)) {
@@ -105,18 +104,15 @@ module.exports = function (app, context) {
         res.json({ status: "online" });
     });
 
-    // Новый эндпоинт для переключения скрытия
     app.post('/x-api/toggle-hidden/:id', (req, res) => {
         try {
-            let db = JSON.parse(fs.readFileSync(dbFile));
+            let db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
             const appIndex = db.findIndex(a => String(a.id) === String(req.params.id));
             if (appIndex === -1) {
                 return res.status(404).json({ success: false, error: "App not found" });
             }
-
             db[appIndex].hidden = !db[appIndex].hidden;
-            fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
-
+            fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
             res.json({ success: true, hidden: db[appIndex].hidden });
         } catch (e) {
             console.error("Ошибка toggle-hidden:", e.message);
@@ -124,12 +120,13 @@ module.exports = function (app, context) {
         }
     });
 
-    // Админ-панель
     app.get('/x-admin', (req, res) => {
         let activeApps = [];
         try {
-            activeApps = JSON.parse(fs.readFileSync(dbFile));
-        } catch (e) {}
+            activeApps = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
+        } catch (e) {
+            console.error('Ошибка чтения apps.json в /x-admin:', e.message);
+        }
 
         const pendingFiles = fs.readdirSync(quarantineDir)
             .filter(name => name.endsWith('.json'))
@@ -137,7 +134,7 @@ module.exports = function (app, context) {
                 const id = jsonName.replace('.json', '');
                 let info = {};
                 try {
-                    info = JSON.parse(fs.readFileSync(path.join(quarantineDir, jsonName)));
+                    info = JSON.parse(fs.readFileSync(path.join(quarantineDir, jsonName), 'utf8'));
                 } catch (e) {}
 
                 const zipPath = path.join(quarantineDir, id);
@@ -286,37 +283,29 @@ module.exports = function (app, context) {
     <script>
         async function publish(id) {
             if (!confirm('Подтвердить публикацию?')) return;
-            const res = await fetch('/x-api/publish/' + id, { method: 'POST' });
+            const res = await fetch('/x-api/publish/' + id, {method: 'POST'});
             if (res.ok) location.reload(); else alert('Ошибка сервера');
         }
-
         async function reject(id) {
             if (!confirm('Удалить заявку безвозвратно?')) return;
-            const res = await fetch('/x-api/delete/' + id, { method: 'DELETE' });
+            const res = await fetch('/x-api/delete/' + id, {method: 'DELETE'});
             if (res.ok) location.reload();
         }
-
         async function unpublish(id) {
             if (!confirm('Снять приложение с публикации?')) return;
-            const res = await fetch('/x-api/unpublish/' + id, { method: 'POST' });
+            const res = await fetch('/x-api/unpublish/' + id, {method: 'POST'});
             if (res.ok) location.reload();
         }
-
         async function toggleHidden(id, shouldHide) {
-            if (!confirm(shouldHide ? 'Скрыть приложение?' : 'Показать приложение?')) return;
-            const res = await fetch('/x-api/toggle-hidden/' + id, { method: 'POST' });
-            if (res.ok) {
-                location.reload();
-            } else {
-                alert('Ошибка сервера');
-            }
+            if (!confirm(shouldHide ? 'Скрыть?' : 'Показать?')) return;
+            const res = await fetch('/x-api/toggle-hidden/' + id, {method: 'POST'});
+            if (res.ok) location.reload(); else alert('Ошибка');
         }
     </script>
 </body>
 </html>`);
     });
 
-    // Загрузка ZIP
     app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
         try {
             const { accessKey, name, email, cat, desc } = req.body;
@@ -333,7 +322,7 @@ module.exports = function (app, context) {
                 name, email, cat, desc, accessKey,
                 ownerName: kData.name,
                 expiryDate: kData.expiry
-            }));
+            }, null, 2));
 
             if (storeBot) {
                 const msg = `🆕 *НОВАЯ ЗАЯВКА В X-STORE*\n\n📦 Проект: *${name}*\n👤 От: \( {kData.name}\n🔑 Ключ: \` \){accessKey}\`\n📂 Категория: ${cat}`;
@@ -344,18 +333,18 @@ module.exports = function (app, context) {
             }
             res.json({ success: true });
         } catch (e) {
+            console.error('Ошибка /x-api/upload:', e.message);
             res.status(500).json({ success: false });
         }
     });
 
-    // Публикация с генерацией PWA
     app.post('/x-api/publish/:id', async (req, res) => {
         try {
             const id = req.params.id;
             const infoPath = path.join(quarantineDir, id + '.json');
             if (!fs.existsSync(infoPath)) return res.status(404).json({ error: "Нет данных заявки" });
 
-            const info = JSON.parse(fs.readFileSync(infoPath));
+            const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
             const appFolderName = "app_" + Date.now();
             const extractPath = path.join(publicDir, appFolderName);
 
@@ -442,7 +431,7 @@ self.addEventListener('fetch', event => {
   );
 });
                     `;
-                    fs.writeFileSync(swPath, swContent.trim());
+                    fs.writeFileSync(swPath, swContent.trim(), 'utf8');
                 }
 
                 const indexPath = path.join(extractPath, 'index.html');
@@ -455,14 +444,14 @@ self.addEventListener('fetch', event => {
     <meta name="theme-color" content="#ff6600">
     <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js?v=${Date.now()}');}</script>`;
                         html = html.includes('<head>') ? html.replace('<head>', '<head>' + pwaInject) : pwaInject + html;
-                        fs.writeFileSync(indexPath, html);
+                        fs.writeFileSync(indexPath, html, 'utf8');
                     }
                 }
 
                 finalUrl = `https://logist-x.store/public/apps/${appFolderName}/index.html`;
             }
 
-            const db = JSON.parse(fs.readFileSync(dbFile));
+            const db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
             db.push({
                 ...info,
                 id: appFolderName,
@@ -474,7 +463,7 @@ self.addEventListener('fetch', event => {
                 clicks: 0,
                 hidden: false
             });
-            fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
+            fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
 
             if (fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
             if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
@@ -483,23 +472,24 @@ self.addEventListener('fetch', event => {
 
             res.json({ success: true });
         } catch (e) {
-            console.error("❌ Ошибка публикации:", e.message);
+            console.error("❌ Ошибка публикации:", e.message, e.stack);
             res.status(500).json({ success: false, error: e.message });
         }
     });
 
     app.post('/x-api/unpublish/:id', (req, res) => {
         try {
-            let db = JSON.parse(fs.readFileSync(dbFile));
+            let db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
             const appData = db.find(a => String(a.id) === String(req.params.id));
             if (appData && appData.folder) {
                 const folderPath = path.join(publicDir, appData.folder);
                 if (fs.existsSync(folderPath)) fs.rmSync(folderPath, { recursive: true, force: true });
             }
             db = db.filter(a => String(a.id) !== String(req.params.id));
-            fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
+            fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
             res.json({ success: true });
         } catch (e) {
+            console.error('Ошибка unpublish:', e.message);
             res.status(500).json({ success: false });
         }
     });
@@ -513,6 +503,7 @@ self.addEventListener('fetch', event => {
             if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
             res.json({ success: true });
         } catch (e) {
+            console.error('Ошибка delete:', e.message);
             res.status(500).json({ success: false });
         }
     });
