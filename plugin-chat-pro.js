@@ -5,22 +5,48 @@ const express = require('express');
 const chatDbFile = path.join(process.cwd(), 'public', 'chat_history.json');
 let memoryDb = {};
 
+// Настройка: удаляем сообщения старше 24 часов
+const MAX_MESSAGE_AGE_MS = 24 * 60 * 60 * 1000; 
+
 if (!fs.existsSync(path.join(process.cwd(), 'public'))) {
     fs.mkdirSync(path.join(process.cwd(), 'public'), { recursive: true });
+}
+
+// ФУНКЦИЯ ОЧИСТКИ СТАРОГО МУСОРА
+function cleanOldMessages() {
+    const now = Date.now();
+    let totalRemoved = 0;
+
+    for (const roomId in memoryDb) {
+        const countBefore = memoryDb[roomId].length;
+        // Оставляем только те, что моложе 24 часов
+        memoryDb[roomId] = memoryDb[roomId].filter(m => (now - m.timestamp) < MAX_MESSAGE_AGE_MS);
+        totalRemoved += (countBefore - memoryDb[roomId].length);
+    }
+
+    if (totalRemoved > 0) {
+        console.log(`🧹 АВТО-ОЧИСТКА: Удалено ${totalRemoved} старых сообщений.`);
+        fs.writeFileSync(chatDbFile, JSON.stringify(memoryDb, null, 2));
+    }
 }
 
 function loadToMemory() {
     if (!fs.existsSync(chatDbFile)) return;
     try {
         const data = fs.readFileSync(chatDbFile, 'utf8');
-        if (data) memoryDb = JSON.parse(data);
+        if (data) {
+            memoryDb = JSON.parse(data);
+            cleanOldMessages(); // Чистим сразу при старте
+        }
     } catch (e) { memoryDb = {}; }
 }
+
 loadToMemory();
 
-module.exports = function (app, context) {
+// Запускаем очистку каждый час
+setInterval(cleanOldMessages, 60 * 60 * 1000);
 
-    // Лимит 100мб для фото и голоса
+module.exports = function (app, context) {
     app.use('/x-api/', express.json({ limit: '100mb' }));
     app.use('/x-api/', express.urlencoded({ limit: '100mb', extended: true }));
 
@@ -30,6 +56,12 @@ module.exports = function (app, context) {
             const { roomId, user, text, avatar, isAudio, isImage, speechText } = req.body;
             const targetRoom = roomId || 'public';
             
+            // ЛОГИРОВАНИЕ ДЛЯ КОНТРОЛЯ
+            let type = "ТЕКСТ";
+            if (isAudio) type = "ГОЛОС 🎤";
+            if (isImage) type = "ФОТО 📸";
+            console.log(`📩 [${targetRoom}] ${user}: Прислал ${type}`);
+
             if (!memoryDb[targetRoom]) memoryDb[targetRoom] = [];
 
             const newMessage = { 
@@ -38,62 +70,68 @@ module.exports = function (app, context) {
                 text, 
                 avatar, 
                 isAudio: !!isAudio,
-                isImage: !!isImage, // Новое поле для фото
+                isImage: !!isImage,
                 time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
                 timestamp: Date.now() 
             };
             
             memoryDb[targetRoom].push(newMessage);
 
-            // Логика автоответа
+            // Автоответ системы
             const checkText = (String(text || "") + " " + String(speechText || "")).toLowerCase();
             if (checkText.includes("проверка связи")) {
+                console.log("🤖 X-SYSTEM: Даю ответ...");
                 memoryDb[targetRoom].push({
                     id: 'sys_' + Date.now(),
                     user: "X-SYSTEM",
-                    text: "Система X-CONNECT онлайн. Все каналы работают штатно! 🚀",
+                    text: "Канал стабилен. Все узлы X-CONNECT онлайн! 🚀",
                     avatar: "https://cdn-icons-png.flaticon.com/512/4712/4712035.png",
                     time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-                    timestamp: Date.now() + 5
+                    timestamp: Date.now() + 10
                 });
             }
 
+            // Жёсткая запись в файл
             fs.writeFileSync(chatDbFile, JSON.stringify(memoryDb, null, 2));
             res.json({ success: true });
-        } catch (e) { res.status(500).json({ success: false }); }
+
+        } catch (e) { 
+            console.error("❌ ОШИБКА:", e.message);
+            res.status(500).json({ success: false }); 
+        }
     });
 
-    // 2. УДАЛЕНИЕ ОДНОГО СООБЩЕНИЯ
+    // 2. УДАЛЕНИЕ
     app.post('/x-api/chat-delete', (req, res) => {
         try {
             const { roomId, msgId } = req.body;
             if (memoryDb[roomId]) {
                 memoryDb[roomId] = memoryDb[roomId].filter(m => m.id !== msgId);
                 fs.writeFileSync(chatDbFile, JSON.stringify(memoryDb, null, 2));
+                console.log(`🗑️ УДАЛЕНИЕ: Сообщение ${msgId} стерто.`);
                 return res.json({ success: true });
             }
             res.json({ success: false });
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
-    // 3. ПОЛНАЯ ОЧИСТКА ЧАТА (Для Админа)
+    // 3. ОЧИСТКА ЧАТА (Админ)
     app.post('/x-api/chat-clear', (req, res) => {
         try {
             const { roomId } = req.body;
             memoryDb[roomId] = [];
             fs.writeFileSync(chatDbFile, JSON.stringify(memoryDb, null, 2));
+            console.log(`🧹 ОЧИСТКА: Комната ${roomId} полностью обнулена.`);
             res.json({ success: true });
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
-    // ИСТОРИЯ
     app.get('/x-api/chat-history', (req, res) => {
         const roomId = req.query.roomId || 'public';
         res.setHeader('Cache-Control', 'no-cache');
         res.json(memoryDb[roomId] || []);
     });
 
-    // СПИСОК ЧАТОВ
     app.get('/x-api/chat-list', (req, res) => {
         const list = Object.keys(memoryDb).map(id => ({
             id,
@@ -103,5 +141,6 @@ module.exports = function (app, context) {
     });
 
     app.get('/x-api/ping', (req, res) => res.send('ok'));
-    console.log("🦾 МОЩНЫЙ СЕРВЕР X-CHAT (ФОТО/УДАЛЕНИЕ/БЕЗЛИМИТ) ЗАПУЩЕН");
+    
+    console.log("🦾 СЕРВЕР X-CONNECT ГОТОВ: ЛОГИ И АВТО-КЛИНИНГ ЗАПУЩЕНЫ");
 };
