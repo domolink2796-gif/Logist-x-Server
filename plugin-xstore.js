@@ -33,9 +33,14 @@ const quarantineDir = path.join(process.cwd(), 'uploads-quarantine');
 const publicDir = path.join(process.cwd(), 'public', 'apps');
 const dbFile = path.join(process.cwd(), 'public', 'apps.json');
 
+// Автосоздание apps.json, если файла нет
+if (!fs.existsSync(dbFile)) {
+    console.log('⚠️ apps.json не найден — создаём пустой');
+    fs.writeFileSync(dbFile, '[]', 'utf8');
+}
+
 if (!fs.existsSync(quarantineDir)) fs.mkdirSync(quarantineDir, { recursive: true });
 if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
-if (!fs.existsSync(dbFile)) fs.writeFileSync(dbFile, '[]');
 
 const upload = multer({ dest: quarantineDir });
 
@@ -59,34 +64,34 @@ module.exports = function (app, context) {
 
     app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
-    app.get('/x-api/apps', (req, res) => {
+    // Защищённая функция чтения JSON
+    function safeReadJson(file) {
         try {
-            const db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
-            const now = new Date();
-            const activeApps = db
-                .filter(a => (!a.expiryDate || new Date(a.expiryDate) > now) && a.hidden !== true)
-                .map(a => ({ ...a, hidden: !!a.hidden }));
-            res.json(activeApps);
+            return JSON.parse(fs.readFileSync(file, 'utf8'));
         } catch (e) {
-            console.error('Ошибка /x-api/apps:', e.message);
-            res.json([]);
+            console.error(`Ошибка чтения JSON ${path.basename(file)}:`, e.message);
+            return [];
         }
+    }
+
+    app.get('/x-api/apps', (req, res) => {
+        const db = safeReadJson(dbFile);
+        const now = new Date();
+        const activeApps = db
+            .filter(a => (!a.expiryDate || new Date(a.expiryDate) > now) && a.hidden !== true)
+            .map(a => ({ ...a, hidden: !!a.hidden }));
+        res.json(activeApps);
     });
 
     app.post('/x-api/click/:id', (req, res) => {
-        try {
-            const db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
-            const appData = db.find(a => a.id === req.params.id);
-            if (appData) {
-                appData.clicks = (appData.clicks || 0) + 1;
-                fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
-                res.json({ success: true, clicks: appData.clicks });
-            } else {
-                res.status(404).json({ error: "App not found" });
-            }
-        } catch (e) {
-            console.error('Ошибка /x-api/click:', e.message);
-            res.status(500).json({ success: false });
+        let db = safeReadJson(dbFile);
+        const appData = db.find(a => a.id === req.params.id);
+        if (appData) {
+            appData.clicks = (appData.clicks || 0) + 1;
+            fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
+            res.json({ success: true, clicks: appData.clicks });
+        } else {
+            res.status(404).json({ error: "App not found" });
         }
     });
 
@@ -105,28 +110,18 @@ module.exports = function (app, context) {
     });
 
     app.post('/x-api/toggle-hidden/:id', (req, res) => {
-        try {
-            let db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
-            const appIndex = db.findIndex(a => String(a.id) === String(req.params.id));
-            if (appIndex === -1) {
-                return res.status(404).json({ success: false, error: "App not found" });
-            }
-            db[appIndex].hidden = !db[appIndex].hidden;
-            fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
-            res.json({ success: true, hidden: db[appIndex].hidden });
-        } catch (e) {
-            console.error("Ошибка toggle-hidden:", e.message);
-            res.status(500).json({ success: false });
+        let db = safeReadJson(dbFile);
+        const appIndex = db.findIndex(a => String(a.id) === String(req.params.id));
+        if (appIndex === -1) {
+            return res.status(404).json({ success: false, error: "App not found" });
         }
+        db[appIndex].hidden = !db[appIndex].hidden;
+        fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
+        res.json({ success: true, hidden: db[appIndex].hidden });
     });
 
     app.get('/x-admin', (req, res) => {
-        let activeApps = [];
-        try {
-            activeApps = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
-        } catch (e) {
-            console.error('Ошибка чтения apps.json в /x-admin:', e.message);
-        }
+        let activeApps = safeReadJson(dbFile);
 
         const pendingFiles = fs.readdirSync(quarantineDir)
             .filter(name => name.endsWith('.json'))
@@ -325,7 +320,7 @@ module.exports = function (app, context) {
             }, null, 2));
 
             if (storeBot) {
-                const msg = `🆕 *НОВАЯ ЗАЯВКА В X-STORE*\n\n📦 Проект: *${name}*\n👤 От: \( {kData.name}\n🔑 Ключ: \` \){accessKey}\`\n📂 Категория: ${cat}`;
+                const msg = `🆕 *НОВАЯ ЗАЯВКА В X-STORE*\\n\\n📦 Проект: *${name}*\\n👤 От: \( {kData.name}\\n🔑 Ключ: \` \){accessKey}\`\\n📂 Категория: ${cat}`;
                 storeBot.telegram.sendMessage(MY_ID, msg, {
                     parse_mode: 'Markdown',
                     ...Markup.inlineKeyboard([[Markup.button.url('🛡 ПЕРЕЙТИ В АДМИНКУ', ADMIN_URL)]])
@@ -418,16 +413,12 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   event.respondWith(
-    caches.match(event.request).then(response => {
-      return response || fetch(event.request).then(fetchResponse => {
-        if (!fetchResponse || fetchResponse.status !== 200 || fetchResponse.type !== 'basic') {
-          return fetchResponse;
-        }
-        const responseToCache = fetchResponse.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseToCache));
-        return fetchResponse;
-      }).catch(() => caches.match('./index.html'));
-    })
+    caches.match(event.request).then(response => response || fetch(event.request).then(fetchResponse => {
+      if (!fetchResponse || fetchResponse.status !== 200 || fetchResponse.type !== 'basic') return fetchResponse;
+      const responseToCache = fetchResponse.clone();
+      caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseToCache));
+      return fetchResponse;
+    }).catch(() => caches.match('./index.html')))
   );
 });
                     `;
@@ -451,7 +442,7 @@ self.addEventListener('fetch', event => {
                 finalUrl = `https://logist-x.store/public/apps/${appFolderName}/index.html`;
             }
 
-            const db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
+            let db = safeReadJson(dbFile);
             db.push({
                 ...info,
                 id: appFolderName,
@@ -478,34 +469,24 @@ self.addEventListener('fetch', event => {
     });
 
     app.post('/x-api/unpublish/:id', (req, res) => {
-        try {
-            let db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
-            const appData = db.find(a => String(a.id) === String(req.params.id));
-            if (appData && appData.folder) {
-                const folderPath = path.join(publicDir, appData.folder);
-                if (fs.existsSync(folderPath)) fs.rmSync(folderPath, { recursive: true, force: true });
-            }
-            db = db.filter(a => String(a.id) !== String(req.params.id));
-            fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
-            res.json({ success: true });
-        } catch (e) {
-            console.error('Ошибка unpublish:', e.message);
-            res.status(500).json({ success: false });
+        let db = safeReadJson(dbFile);
+        const appData = db.find(a => String(a.id) === String(req.params.id));
+        if (appData && appData.folder) {
+            const folderPath = path.join(publicDir, appData.folder);
+            if (fs.existsSync(folderPath)) fs.rmSync(folderPath, { recursive: true, force: true });
         }
+        db = db.filter(a => String(a.id) !== String(req.params.id));
+        fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
+        res.json({ success: true });
     });
 
     app.delete('/x-api/delete/:id', (req, res) => {
-        try {
-            const id = req.params.id;
-            const jsonPath = path.join(quarantineDir, id + '.json');
-            const zipPath = path.join(quarantineDir, id);
-            if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
-            if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
-            res.json({ success: true });
-        } catch (e) {
-            console.error('Ошибка delete:', e.message);
-            res.status(500).json({ success: false });
-        }
+        const id = req.params.id;
+        const jsonPath = path.join(quarantineDir, id + '.json');
+        const zipPath = path.join(quarantineDir, id);
+        if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
+        if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+        res.json({ success: true });
     });
 
     if (storeBot) {
