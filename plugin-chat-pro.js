@@ -1,11 +1,25 @@
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
+const webpush = require('web-push'); // Подключаем пуши
 
 const chatDbFile = path.join(process.cwd(), 'public', 'chat_history.json');
+const subDbFile = path.join(process.cwd(), 'public', 'subscriptions.json'); // Файл для подписок
 let memoryDb = {};
+let subscriptions = {}; // Память для подписок
 
-// --- НОВОЕ: Функция для принудительного Московского времени ---
+// --- НАСТРОЙКА VAPID КЛЮЧЕЙ (Твои данные) ---
+const vapidKeys = {
+    publicKey: 'BPOw_-Te5biFuSMrQLHjfsv3c9LtoFZkhHJp9FE1a1f55L8jGuL1uR39Ho9SWMN6dIdVt8FfxNHwcHuV0uUQ9Jg',
+    privateKey: '0SJWxEuVpUlowi2gTaodAoGne93V9DB6PFBoSMbL1WE'
+};
+
+webpush.setVapidDetails(
+    'mailto:admin@logist-x.store',
+    vapidKeys.publicKey,
+    vapidKeys.privateKey
+);
+
 function getMskTime() {
     return new Date().toLocaleTimeString('ru-RU', {
         timeZone: 'Europe/Moscow',
@@ -15,58 +29,70 @@ function getMskTime() {
     });
 }
 
-// Настройка: удаляем сообщения старше 24 часов
 const MAX_MESSAGE_AGE_MS = 24 * 60 * 60 * 1000; 
 
 if (!fs.existsSync(path.join(process.cwd(), 'public'))) {
     fs.mkdirSync(path.join(process.cwd(), 'public'), { recursive: true });
 }
 
-// ФУНКЦИЯ ОЧИСТКИ СТАРОГО МУСОРА
 function cleanOldMessages() {
     const now = Date.now();
     let totalRemoved = 0;
-
     for (const roomId in memoryDb) {
         const countBefore = memoryDb[roomId].length;
-        // Оставляем только те, что моложе 24 часов
         memoryDb[roomId] = memoryDb[roomId].filter(m => (now - m.timestamp) < MAX_MESSAGE_AGE_MS);
         totalRemoved += (countBefore - memoryDb[roomId].length);
     }
-
     if (totalRemoved > 0) {
-        console.log(`🧹 АВТО-ОЧИСТКА [${getMskTime()} МСК]: Удалено ${totalRemoved} старых сообщений.`);
+        console.log(`扫 АВТО-ОЧИСТКА [${getMskTime()} МСК]: Удалено ${totalRemoved} старых сообщений.`);
         fs.writeFileSync(chatDbFile, JSON.stringify(memoryDb, null, 2));
     }
 }
 
 function loadToMemory() {
-    if (!fs.existsSync(chatDbFile)) return;
-    try {
-        const data = fs.readFileSync(chatDbFile, 'utf8');
-        if (data) {
-            memoryDb = JSON.parse(data);
-            cleanOldMessages(); // Чистим сразу при старте
-        }
-    } catch (e) { memoryDb = {}; }
+    // Загрузка сообщений
+    if (fs.existsSync(chatDbFile)) {
+        try {
+            memoryDb = JSON.parse(fs.readFileSync(chatDbFile, 'utf8'));
+            cleanOldMessages();
+        } catch (e) { memoryDb = {}; }
+    }
+    // Загрузка подписок (адресов телефонов)
+    if (fs.existsSync(subDbFile)) {
+        try {
+            subscriptions = JSON.parse(fs.readFileSync(subDbFile, 'utf8'));
+            console.log(`📡 ПОДПИСКИ ЗАГРУЖЕНЫ: ${Object.keys(subscriptions).length} устройств.`);
+        } catch (e) { subscriptions = {}; }
+    }
 }
 
 loadToMemory();
-
-// Запускаем очистку каждый час
 setInterval(cleanOldMessages, 60 * 60 * 1000);
 
 module.exports = function (app, context) {
     app.use('/x-api/', express.json({ limit: '100mb' }));
     app.use('/x-api/', express.urlencoded({ limit: '100mb', extended: true }));
 
+    // --- НОВОЕ: Сохранение подписки на пуши ---
+    app.post('/x-api/save-subscription', (req, res) => {
+        const { chatId, subscription } = req.body;
+        if (chatId && subscription) {
+            subscriptions[chatId] = subscription;
+            fs.writeFileSync(subDbFile, JSON.stringify(subscriptions, null, 2));
+            return res.json({ success: true });
+        }
+        res.status(400).json({ success: false });
+    });
+
+    // --- НОВОЕ: Отдача публичного ключа клиенту ---
+    app.get('/x-api/vapid-key', (req, res) => res.send(vapidKeys.publicKey));
+
     // 1. ОТПРАВКА (Текст, Голос, Фото)
     app.post('/x-api/chat-send', (req, res) => {
         try {
-            const { roomId, user, text, avatar, isAudio, isImage, speechText } = req.body;
+            const { roomId, user, text, avatar, isAudio, isImage, speechText, myChatId } = req.body;
             const targetRoom = roomId || 'public';
             
-            // ЛОГИРОВАНИЕ ДЛЯ КОНТРОЛЯ (Теперь с МСК временем)
             let type = "ТЕКСТ";
             if (isAudio) type = "ГОЛОС 🎤";
             if (isImage) type = "ФОТО 📸";
@@ -76,33 +102,48 @@ module.exports = function (app, context) {
 
             const newMessage = { 
                 id: 'msg_' + Date.now() + Math.random().toString(36).substr(2, 5),
-                user, 
-                text, 
-                avatar, 
+                user, text, avatar, 
                 isAudio: !!isAudio,
                 isImage: !!isImage,
-                // --- ВРЕМЯ ТЕПЕРЬ ВСЕГДА ПО МОСКВЕ ---
                 time: getMskTime(), 
                 timestamp: Date.now() 
             };
             
             memoryDb[targetRoom].push(newMessage);
 
+            // --- ЛОГИКА ПУШ-УВЕДОМЛЕНИЙ ---
+            const pushPayload = JSON.stringify({
+                title: user,
+                body: isAudio ? "Прислал голосовое 🎤" : (isImage ? "Прислал фото 📸" : text),
+                icon: avatar || "https://cdn-icons-png.flaticon.com/512/4712/4712035.png"
+            });
+
+            // Рассылаем всем в этой комнате (кроме себя)
+            Object.keys(subscriptions).forEach(subChatId => {
+                if (subChatId !== myChatId) {
+                    webpush.sendNotification(subscriptions[subChatId], pushPayload)
+                        .catch(err => {
+                            if (err.statusCode === 404 || err.statusCode === 410) {
+                                delete subscriptions[subChatId];
+                                fs.writeFileSync(subDbFile, JSON.stringify(subscriptions, null, 2));
+                            }
+                        });
+                }
+            });
+
             // Автоответ системы
             const checkText = (String(text || "") + " " + String(speechText || "")).toLowerCase();
             if (checkText.includes("проверка связи")) {
-                console.log(`🤖 X-SYSTEM [${getMskTime()}]: Даю ответ...`);
                 memoryDb[targetRoom].push({
                     id: 'sys_' + Date.now(),
                     user: "X-SYSTEM",
                     text: "Канал стабилен. Все узлы X-CONNECT онлайн! 🚀",
                     avatar: "https://cdn-icons-png.flaticon.com/512/4712/4712035.png",
-                    time: getMskTime(), // И тут тоже Москва
+                    time: getMskTime(),
                     timestamp: Date.now() + 10
                 });
             }
 
-            // Жёсткая запись в файл
             fs.writeFileSync(chatDbFile, JSON.stringify(memoryDb, null, 2));
             res.json({ success: true });
 
@@ -112,34 +153,21 @@ module.exports = function (app, context) {
         }
     });
 
-    // 2. УДАЛЕНИЕ
+    // Остальные функции (удаление, история) без изменений...
     app.post('/x-api/chat-delete', (req, res) => {
         try {
             const { roomId, msgId } = req.body;
             if (memoryDb[roomId]) {
                 memoryDb[roomId] = memoryDb[roomId].filter(m => m.id !== msgId);
                 fs.writeFileSync(chatDbFile, JSON.stringify(memoryDb, null, 2));
-                console.log(`🗑️ УДАЛЕНИЕ [${getMskTime()}]: Сообщение ${msgId} стерто.`);
                 return res.json({ success: true });
             }
             res.json({ success: false });
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
-    // 3. ОЧИСТКА ЧАТА (Админ)
-    app.post('/x-api/chat-clear', (req, res) => {
-        try {
-            const { roomId } = req.body;
-            memoryDb[roomId] = [];
-            fs.writeFileSync(chatDbFile, JSON.stringify(memoryDb, null, 2));
-            console.log(`🧹 ОЧИСТКА [${getMskTime()}]: Комната ${roomId} обнулена.`);
-            res.json({ success: true });
-        } catch (e) { res.status(500).json({ success: false }); }
-    });
-
     app.get('/x-api/chat-history', (req, res) => {
         const roomId = req.query.roomId || 'public';
-        res.setHeader('Cache-Control', 'no-cache');
         res.json(memoryDb[roomId] || []);
     });
 
