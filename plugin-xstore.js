@@ -105,14 +105,36 @@ module.exports = function (app, context) {
     // Раздача статики для приложений
     app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
-    // 1. API: Получить список активных приложений
+    // 1. API: Получить список активных приложений (ВЕЧНЫЙ РЕЖИМ + ЛЕКАРСТВО)
     app.get('/x-api/apps', (req, res) => {
-        const db = safeReadJson(dbFile);
-        const now = new Date();
-        const activeApps = db
-            .filter(a => (!a.expiryDate || new Date(a.expiryDate) > now) && a.hidden !== true);
-        res.json(activeApps);
+        try {
+            const db = safeReadJson(dbFile);
+            
+            // 1. Убираем проверку времени (теперь показывает даже просроченные)
+            // Оставляем только те, что НЕ скрыты вручную
+            const cleanList = db.filter(a => a.hidden !== true);
+
+            // 2. Лечим старые приложения (добавляем заглушки, чтобы сайт не падал)
+            const normalizedApps = cleanList.map(app => {
+                return {
+                    id: app.id,
+                    title: app.title || app.name || "App",
+                    desc: app.desc || "",          // <-- Защита от сбоя
+                    cat: app.cat || "Приложения",  // <-- Защита от сбоя
+                    icon: app.icon || "https://cdn-icons-png.flaticon.com/512/3208/3208728.png",
+                    url: app.url || "#",
+                    clicks: app.clicks || 0
+                };
+            });
+
+            res.json(normalizedApps);
+
+        } catch (e) {
+            console.error("API Error:", e.message);
+            res.json([]);
+        }
     });
+
 
     // 2. ПИНГ (Для проверки связи)
     app.get('/x-api/ping', (req, res) => {
