@@ -420,10 +420,9 @@ module.exports = function (app, context) {
                 fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
             }
 
-            // --- ТОЧЕЧНО: SERVICE WORKER ULTRA (ТОЛЬКО ЕСЛИ НЕТ) ---
+                 // --- SERVICE WORKER С ПОДДЕРЖКОЙ ПУШ-УВЕДОМЛЕНИЙ ---
             const swPath = path.join(extractPath, 'sw.js');
-            if (!fs.existsSync(swPath)) {
-                const swCode = `
+            const swCode = `
 const CACHE_NAME = 'x-pwa-${appFolderName}-v2';
 const OFFLINE_URL = './index.html';
 
@@ -447,14 +446,27 @@ self.addEventListener('fetch', event => {
     }
 });
 
+// ПЕРЕХВАТ ПУШ-УВЕДОМЛЕНИЙ ОТ СЕРВЕРА ЧАТА
 self.addEventListener('push', event => {
-    const data = event.data ? event.data.json() : { title: 'X-PLATFORM', body: 'Новое уведомление!' };
+    let data = { title: 'X-SYSTEM', body: 'Новое сообщение' };
+    try {
+        data = event.data.json();
+    } catch (e) {
+        data = { title: 'X-SYSTEM', body: event.data ? event.data.text() : 'Уведомление' };
+    }
     event.waitUntil(self.registration.showNotification(data.title, {
-        body: data.body, icon: './icon.png', data: { url: data.url || '/' }
+        body: data.body,
+        icon: './icon.png',
+        badge: './icon.png',
+        vibrate: [200, 100, 200]
     }));
+});
+
+self.addEventListener('notificationclick', event => {
+    event.notification.close();
+    event.waitUntil(clients.openWindow('./'));
 });`;
-                fs.writeFileSync(swPath, swCode.trim());
-            }
+            fs.writeFileSync(swPath, swCode.trim());
 
             // --- ТОЧЕЧНО: ИНЪЕКЦИЯ (ТОЛЬКО ЕСЛИ НЕТ) ---
             const indexPath = path.join(extractPath, 'index.html');
