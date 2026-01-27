@@ -1,20 +1,17 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto');
 const AdmZip = require('adm-zip');
 const express = require('express');
 const { Telegraf, Markup } = require('telegraf');
 const nodemailer = require('nodemailer');
 
-// Подтягиваем переменные окружения
 require('dotenv').config();
 
 const STORE_BOT_TOKEN = '8177397301:AAH4eNkzks_DuvuMB0leavzpcKMowwFz4Uw';
 const MY_ID = 6846149935;
 const ADMIN_URL = 'https://logist-x.store/x-admin';
 
-// Инициализируем бота
 let storeBot;
 try {
     storeBot = new Telegraf(STORE_BOT_TOKEN);
@@ -22,14 +19,13 @@ try {
     console.error("❌ Ошибка инициализации бота:", e.message);
 }
 
-// --- НАСТРОЙКИ ПОЧТЫ (BEGET) ---
 const transporter = nodemailer.createTransport({
     host: 'smtp.beget.com',
     port: 465,
     secure: true,
-    auth: { 
-        user: 'service@x-platform.ru', 
-        pass: process.env.SMTP_PASSWORD 
+    auth: {
+        user: 'service@x-platform.ru',
+        pass: process.env.SMTP_PASSWORD
     }
 });
 
@@ -37,43 +33,47 @@ const quarantineDir = path.join(process.cwd(), 'uploads-quarantine');
 const publicDir = path.join(process.cwd(), 'public', 'apps');
 const dbFile = path.join(process.cwd(), 'public', 'apps.json');
 
-// Создаем необходимые директории
 if (!fs.existsSync(quarantineDir)) fs.mkdirSync(quarantineDir, { recursive: true });
 if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
 if (!fs.existsSync(dbFile)) fs.writeFileSync(dbFile, '[]');
 
 const upload = multer({ dest: quarantineDir });
 
-// Функция отправки почты
 async function sendStoreMail(to, subject, text) {
     try {
         if (!process.env.SMTP_PASSWORD) return;
-        await transporter.sendMail({ 
-            from: '"X-PLATFORM CORE" <service@x-platform.ru>', 
-            to, 
-            subject, 
-            text 
+        await transporter.sendMail({
+            from: '"X-PLATFORM CORE" <service@x-platform.ru>',
+            to,
+            subject,
+            text
         });
         console.log(`✅ Письмо отправлено: ${to}`);
-    } catch (e) { console.error("❌ Ошибка почты:", e.message); }
+    } catch (e) {
+        console.error("❌ Ошибка почты:", e.message);
+    }
 }
 
-module.exports = function(app, context) {
+module.exports = function (app, context) {
     const { readDatabase } = context;
 
     app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
-    // API: Список приложений
+    // API: Список приложений (только активные и не скрытые)
     app.get('/x-api/apps', (req, res) => {
         try {
             const db = JSON.parse(fs.readFileSync(dbFile));
             const now = new Date();
-            const activeApps = db.filter(a => !a.expiryDate || new Date(a.expiryDate) > now);
+            const activeApps = db
+                .filter(a => (!a.expiryDate || new Date(a.expiryDate) > now) && a.hidden !== true)
+                .map(a => ({ ...a, hidden: !!a.hidden }));
             res.json(activeApps);
-        } catch (e) { res.json([]); }
+        } catch (e) {
+            res.json([]);
+        }
     });
 
-    // --- API ДЛЯ СЧЕТЧИКА КЛИКОВ ---
+    // Счётчик кликов
     app.post('/x-api/click/:id', (req, res) => {
         try {
             const db = JSON.parse(fs.readFileSync(dbFile));
@@ -85,10 +85,12 @@ module.exports = function(app, context) {
             } else {
                 res.status(404).json({ error: "App not found" });
             }
-        } catch (e) { res.status(500).json({ success: false }); }
+        } catch (e) {
+            res.status(500).json({ success: false });
+        }
     });
 
-    // API: Скачивание для проверки
+    // Скачивание ZIP для проверки
     app.get('/x-api/download/:id', (req, res) => {
         const filePath = path.join(quarantineDir, req.params.id);
         if (fs.existsSync(filePath)) {
@@ -98,27 +100,49 @@ module.exports = function(app, context) {
         }
     });
 
-    // API: Пинг
     app.get('/x-api/ping', (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.json({ status: "online" });
     });
 
-    // --- ПОЛНОРАЗМЕРНАЯ АДМИНКА ---
+    // Новый эндпоинт для переключения скрытия
+    app.post('/x-api/toggle-hidden/:id', (req, res) => {
+        try {
+            let db = JSON.parse(fs.readFileSync(dbFile));
+            const appIndex = db.findIndex(a => String(a.id) === String(req.params.id));
+            if (appIndex === -1) {
+                return res.status(404).json({ success: false, error: "App not found" });
+            }
+
+            db[appIndex].hidden = !db[appIndex].hidden;
+            fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
+
+            res.json({ success: true, hidden: db[appIndex].hidden });
+        } catch (e) {
+            console.error("Ошибка toggle-hidden:", e.message);
+            res.status(500).json({ success: false });
+        }
+    });
+
+    // Админ-панель
     app.get('/x-admin', (req, res) => {
         let activeApps = [];
-        try { activeApps = JSON.parse(fs.readFileSync(dbFile)); } catch(e) {}
-        
+        try {
+            activeApps = JSON.parse(fs.readFileSync(dbFile));
+        } catch (e) {}
+
         const pendingFiles = fs.readdirSync(quarantineDir)
             .filter(name => name.endsWith('.json'))
             .map(jsonName => {
                 const id = jsonName.replace('.json', '');
                 let info = {};
-                try { info = JSON.parse(fs.readFileSync(path.join(quarantineDir, jsonName))); } catch(e) {}
-                
+                try {
+                    info = JSON.parse(fs.readFileSync(path.join(quarantineDir, jsonName)));
+                } catch (e) {}
+
                 const zipPath = path.join(quarantineDir, id);
                 const hasZip = fs.existsSync(zipPath);
-                
+
                 let fileReport = 'Ожидание анализа...';
                 let borderColor = '#444';
                 let safetyAlerts = [];
@@ -146,7 +170,6 @@ module.exports = function(app, context) {
                                     if (content.includes(f)) safetyAlerts.push(`<span style="color:#ffbb33;">⚠️ ОПАСНЫЙ КОД (${f}): ${name}</span>`);
                                 });
 
-                                // --- НОВЫЙ ЗРЯЧИЙ СКАНЕР ---
                                 const links = content.match(/https?:\/\/[^\s"'`<>]+/g);
                                 if (links) {
                                     const uniqueDomains = new Set();
@@ -155,7 +178,7 @@ module.exports = function(app, context) {
                                             try {
                                                 const domain = new URL(link).hostname;
                                                 uniqueDomains.add(domain);
-                                            } catch(err) {
+                                            } catch (err) {
                                                 uniqueDomains.add(link.substring(0, 25) + '...');
                                             }
                                         }
@@ -176,7 +199,10 @@ module.exports = function(app, context) {
                             borderColor = safetyAlerts.some(a => a.includes('⛔️')) ? "#dc3545" : "#ffc107";
                             fileReport = safetyAlerts.join('<br>');
                         }
-                    } catch (err) { fileReport = "Ошибка чтения архива"; borderColor = "#dc3545"; }
+                    } catch (err) {
+                        fileReport = "Ошибка чтения архива";
+                        borderColor = "#dc3545";
+                    }
                 }
 
                 return { id, ...info, fileReport, borderColor, hasZip };
@@ -192,14 +218,17 @@ module.exports = function(app, context) {
     <style>
         body { background: #0b0b0b; color: #fff; font-family: 'Segoe UI', sans-serif; padding: 20px; }
         .container { max-width: 900px; margin: 0 auto; }
-        .card { background: #1a1a1a; border-radius: 12px; padding: 20px; margin-bottom: 20px; position: relative; overflow: hidden; border: 1px solid #333; }
+        .card { background: #1a1a1a; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid #333; }
+        .hidden-app { opacity: 0.6; border-left: 4px solid #888; }
         .title { color: #ff6600; font-size: 20px; font-weight: bold; margin-bottom: 10px; }
         .meta { font-size: 13px; color: #888; margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 10px; }
         .log-box { background: #000; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 12px; border: 1px solid #444; margin-bottom: 15px; line-height: 1.6; }
-        .btn { padding: 12px 20px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; text-align: center; font-size: 14px; }
-        .btn-pub { background: #28a745; color: #fff; flex: 2; }
-        .btn-del { background: #dc3545; color: #fff; flex: 1; }
-        .btn-down { background: #3399ff; color: #fff; width: 100%; margin-bottom: 10px; }
+        .btn { padding: 12px 20px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; display: inline-block; text-align: center; font-size: 14px; color: #fff; }
+        .btn-pub { background: #28a745; flex: 2; }
+        .btn-del { background: #dc3545; flex: 1; }
+        .btn-down { background: #3399ff; width: 100%; margin-bottom: 10px; }
+        .btn-hide { background: #6c757d; padding: 6px 12px; font-size: 11px; }
+        .btn-show { background: #17a2b8; padding: 6px 12px; font-size: 11px; }
         .flex-btns { display: flex; gap: 10px; }
         h1, h2 { border-left: 5px solid #ff6600; padding-left: 15px; }
         .stat-badge { background: #28a745; color: white; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-left: 10px; }
@@ -208,7 +237,7 @@ module.exports = function(app, context) {
 <body>
     <div class="container">
         <h1>🛡 ПАНЕЛЬ УПРАВЛЕНИЯ X-STORE</h1>
-        
+
         <h2 style="color: #ffc107;">🟡 ОЖИДАЮТ ПРОВЕРКИ (${pendingFiles.length})</h2>
         ${pendingFiles.length === 0 ? '<p style="color:#666;">Новых заявок пока нет...</p>' : ''}
         ${pendingFiles.map(f => `
@@ -234,41 +263,60 @@ module.exports = function(app, context) {
             </div>
         `).join('')}
 
-        <h2 style="color: #28a745;">🟢 ОПУБЛИКОВАНО</h2>
+        <h2 style="color: #28a745;">🟢 ОПУБЛИКОВАНО (${activeApps.length})</h2>
         ${activeApps.map(app => `
-            <div class="card" style="padding: 12px; display: flex; align-items: center; justify-content: space-between;">
+            <div class="card ${app.hidden ? 'hidden-app' : ''}" style="padding: 12px; display: flex; align-items: center; justify-content: space-between;">
                 <div>
                     <b style="color:#ff6600;">${app.title || app.name}</b>
                     <span class="stat-badge">📥 Установок: ${app.clicks || 0}</span>
+                    ${app.hidden ? '<span style="color:#dc3545; font-size:11px; margin-left:10px;">(скрыто)</span>' : ''}
                     <div style="font-size:11px; color:#666;">ID: ${app.id}</div>
                 </div>
-                <button class="btn btn-del" style="padding: 6px 12px; font-size: 11px;" onclick="unpublish('${app.id}')">УБРАТЬ</button>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn ${app.hidden ? 'btn-show' : 'btn-hide'}" 
+                            onclick="toggleHidden('${app.id}', ${!app.hidden})">
+                        ${app.hidden ? 'Показать' : 'Скрыть'}
+                    </button>
+                    <button class="btn btn-del" onclick="unpublish('${app.id}')">УБРАТЬ</button>
+                </div>
             </div>
         `).join('')}
     </div>
 
     <script>
         async function publish(id) {
-            if(!confirm('Подтвердить публикацию?')) return;
-            const res = await fetch('/x-api/publish/'+id, {method:'POST'});
-            if(res.ok) location.reload(); else alert('Ошибка сервера');
+            if (!confirm('Подтвердить публикацию?')) return;
+            const res = await fetch('/x-api/publish/' + id, { method: 'POST' });
+            if (res.ok) location.reload(); else alert('Ошибка сервера');
         }
+
         async function reject(id) {
-            if(!confirm('Удалить заявку безвозвратно?')) return;
-            const res = await fetch('/x-api/delete/'+id, {method:'DELETE'});
-            if(res.ok) location.reload();
+            if (!confirm('Удалить заявку безвозвратно?')) return;
+            const res = await fetch('/x-api/delete/' + id, { method: 'DELETE' });
+            if (res.ok) location.reload();
         }
+
         async function unpublish(id) {
-            if(!confirm('Снять приложение с публикации?')) return;
-            const res = await fetch('/x-api/unpublish/'+id, {method:'POST'});
-            if(res.ok) location.reload();
+            if (!confirm('Снять приложение с публикации?')) return;
+            const res = await fetch('/x-api/unpublish/' + id, { method: 'POST' });
+            if (res.ok) location.reload();
+        }
+
+        async function toggleHidden(id, shouldHide) {
+            if (!confirm(shouldHide ? 'Скрыть приложение?' : 'Показать приложение?')) return;
+            const res = await fetch('/x-api/toggle-hidden/' + id, { method: 'POST' });
+            if (res.ok) {
+                location.reload();
+            } else {
+                alert('Ошибка сервера');
+            }
         }
     </script>
 </body>
 </html>`);
     });
 
-    // Прием файла от пользователя
+    // Загрузка ZIP
     app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
         try {
             const { accessKey, name, email, cat, desc } = req.body;
@@ -281,12 +329,12 @@ module.exports = function(app, context) {
             }
 
             const id = req.file ? req.file.filename : "req_" + Date.now();
-            fs.writeFileSync(path.join(quarantineDir, id + '.json'), JSON.stringify({ 
-                name, email, cat, desc, accessKey, 
+            fs.writeFileSync(path.join(quarantineDir, id + '.json'), JSON.stringify({
+                name, email, cat, desc, accessKey,
                 ownerName: kData.name,
-                expiryDate: kData.expiry 
+                expiryDate: kData.expiry
             }));
-            
+
             if (storeBot) {
                 const msg = `🆕 *НОВАЯ ЗАЯВКА В X-STORE*\n\n📦 Проект: *${name}*\n👤 От: \( {kData.name}\n🔑 Ключ: \` \){accessKey}\`\n📂 Категория: ${cat}`;
                 storeBot.telegram.sendMessage(MY_ID, msg, {
@@ -295,20 +343,22 @@ module.exports = function(app, context) {
                 });
             }
             res.json({ success: true });
-        } catch (e) { res.status(500).json({ success: false }); }
+        } catch (e) {
+            res.status(500).json({ success: false });
+        }
     });
 
-    // ПУБЛИКАЦИЯ С ЛОГИКОЙ PWA
+    // Публикация с генерацией PWA
     app.post('/x-api/publish/:id', async (req, res) => {
         try {
             const id = req.params.id;
             const infoPath = path.join(quarantineDir, id + '.json');
-            if (!fs.existsSync(infoPath)) return res.status(404).json({error: "Нет данных заявки"});
+            if (!fs.existsSync(infoPath)) return res.status(404).json({ error: "Нет данных заявки" });
 
             const info = JSON.parse(fs.readFileSync(infoPath));
             const appFolderName = "app_" + Date.now();
             const extractPath = path.join(publicDir, appFolderName);
-            
+
             let finalIcon = 'https://cdn-icons-png.flaticon.com/512/3208/3208728.png';
             let finalUrl = "";
 
@@ -316,12 +366,11 @@ module.exports = function(app, context) {
             if (fs.existsSync(zipPath)) {
                 const zip = new AdmZip(zipPath);
                 zip.extractAllTo(extractPath, true);
-                
+
                 const files = fs.readdirSync(extractPath);
                 const iconFile = files.find(f => f.toLowerCase().startsWith('icon.'));
                 if (iconFile) finalIcon = `https://logist-x.store/public/apps/\( {appFolderName}/ \){iconFile}`;
 
-                // Собираем список файлов для кэширования в SW
                 const urlsToCache = [];
                 function collectFiles(dir) {
                     const items = fs.readdirSync(dir, { withFileTypes: true });
@@ -330,10 +379,8 @@ module.exports = function(app, context) {
                         if (item.isDirectory()) {
                             collectFiles(fullPath);
                         } else {
-                            // Добавляем только статические файлы: html, js, css, png, jpg, svg, json и т.д.
                             const ext = path.extname(item.name).toLowerCase();
                             if (['.html', '.js', '.css', '.png', '.jpg', '.jpeg', '.svg', '.json', '.ico', '.webmanifest'].includes(ext)) {
-                                // Относительный путь от корня приложения
                                 const relativePath = fullPath.replace(extractPath, '').replace(/\\/g, '/').replace(/^\//, '');
                                 urlsToCache.push(relativePath || item.name);
                             }
@@ -353,9 +400,9 @@ module.exports = function(app, context) {
                         "icons": [{ "src": iconFile || "icon.png", "sizes": "512x512", "type": "image/png" }]
                     };
                     fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify(manifest, null, 2));
-                    urlsToCache.push('manifest.json'); // Добавляем в кэш
+                    urlsToCache.push('manifest.json');
                 }
-                
+
                 const swPath = path.join(extractPath, 'sw.js');
                 if (!fs.existsSync(swPath)) {
                     const swContent = `
@@ -367,20 +414,16 @@ const urlsToCache = [
 
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => {
-      return cache.addAll(urlsToCache);
-    })
+    caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache))
   );
   self.skipWaiting();
 });
 
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(cacheNames => {
-      return Promise.all(
-        cacheNames.filter(name => name !== CACHE_NAME).map(name => caches.delete(name))
-      );
-    }).then(() => self.clients.claim())
+    caches.keys().then(cacheNames => Promise.all(
+      cacheNames.filter(name => name !== CACHE_NAME).map(name => caches.delete(name))
+    )).then(() => self.clients.claim())
   );
 });
 
@@ -392,13 +435,9 @@ self.addEventListener('fetch', event => {
           return fetchResponse;
         }
         const responseToCache = fetchResponse.clone();
-        caches.open(CACHE_NAME).then(cache => {
-          cache.put(event.request, responseToCache);
-        });
+        caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseToCache));
         return fetchResponse;
-      }).catch(() => {
-        return caches.match('./index.html');
-      });
+      }).catch(() => caches.match('./index.html'));
     })
   );
 });
@@ -419,22 +458,33 @@ self.addEventListener('fetch', event => {
                         fs.writeFileSync(indexPath, html);
                     }
                 }
+
                 finalUrl = `https://logist-x.store/public/apps/${appFolderName}/index.html`;
             }
 
             const db = JSON.parse(fs.readFileSync(dbFile));
-            db.push({ ...info, id: appFolderName, title: info.name, name: info.name, icon: finalIcon, url: finalUrl, folder: appFolderName, clicks: 0 });
+            db.push({
+                ...info,
+                id: appFolderName,
+                title: info.name,
+                name: info.name,
+                icon: finalIcon,
+                url: finalUrl,
+                folder: appFolderName,
+                clicks: 0,
+                hidden: false
+            });
             fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
 
-            if(fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
-            if(fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+            if (fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
+            if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
             await sendStoreMail(info.email, '🚀 Твое приложение опубликовано!', `Приложение "${info.name}" доступно.`);
+
             res.json({ success: true });
-        } catch (e) { 
+        } catch (e) {
             console.error("❌ Ошибка публикации:", e.message);
-            // Можно добавить отправку в Telegram здесь, если нужно
-            res.status(500).json({ success: false, error: e.message }); 
+            res.status(500).json({ success: false, error: e.message });
         }
     });
 
@@ -449,18 +499,22 @@ self.addEventListener('fetch', event => {
             db = db.filter(a => String(a.id) !== String(req.params.id));
             fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
             res.json({ success: true });
-        } catch (e) { res.status(500).json({ success: false }); }
+        } catch (e) {
+            res.status(500).json({ success: false });
+        }
     });
 
     app.delete('/x-api/delete/:id', (req, res) => {
         try {
             const id = req.params.id;
-            const i = path.join(quarantineDir, id + '.json');
-            const z = path.join(quarantineDir, id);
-            if (fs.existsSync(i)) fs.unlinkSync(i);
-            if (fs.existsSync(z)) fs.unlinkSync(z);
-            res.json({success:true});
-        } catch (e) { res.status(500).json({ success: false }); }
+            const jsonPath = path.join(quarantineDir, id + '.json');
+            const zipPath = path.join(quarantineDir, id);
+            if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
+            if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ success: false });
+        }
     });
 
     if (storeBot) {
