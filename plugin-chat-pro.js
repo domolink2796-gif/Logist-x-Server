@@ -54,7 +54,6 @@ loadToMemory();
 setInterval(cleanOldMessages, 60 * 60 * 1000);
 
 module.exports = function (app, context) {
-    // ВЫТАСКИВАЕМ ИЗ КОНТЕКСТА НАШ ЖИВОЙ КАНАЛ
     const io = context.io; 
 
     app.use('/x-api/', express.json({ limit: '100mb' }));
@@ -72,12 +71,10 @@ module.exports = function (app, context) {
 
     app.get('/x-api/vapid-key', (req, res) => res.send(vapidKeys.publicKey));
 
-    // --- ОБНОВЛЕННАЯ ОТПРАВКА С SOCKET.IO ---
     app.post('/x-api/chat-send', (req, res) => {
         try {
             const { roomId, user, text, avatar, isAudio, isImage, speechText, myChatId } = req.body;
             const targetRoom = roomId || 'public';
-            
             if (!memoryDb[targetRoom]) memoryDb[targetRoom] = [];
 
             const newMessage = { 
@@ -89,61 +86,28 @@ module.exports = function (app, context) {
             };
             
             memoryDb[targetRoom].push(newMessage);
-
-            // ⚡ ШАГ 0: МГНОВЕННЫЙ ВЫСТРЕЛ В ЭФИР (Socket.io)
-            // Это то самое место, где сообщение улетает дочери в ту же секунду!
-            if (io) {
-                io.to(targetRoom).emit('new_message', newMessage);
-                console.log(`🚀 Сообщение от ${user} вытолкнуто в Socket.io (Room: ${targetRoom})`);
-            }
-
-            // ШАГ 1: ОТВЕТ ОТПРАВИТЕЛЮ
+            if (io) io.to(targetRoom).emit('new_message', newMessage);
             res.json({ success: true });
 
-            // ШАГ 2: ФОНОВЫЕ ОПЕРАЦИИ (Пуши, Запись файла)
             setImmediate(() => {
-                fs.writeFile(chatDbFile, JSON.stringify(memoryDb, null, 2), (err) => {
-                    if (err) console.error("❌ Ошибка сохранения истории:", err);
-                });
-
+                fs.writeFile(chatDbFile, JSON.stringify(memoryDb, null, 2), () => {});
                 const pushPayload = JSON.stringify({
                     title: user,
                     body: isAudio ? "Голосовое сообщение 🎤" : (isImage ? "Фотография 📸" : text),
                     icon: avatar || "https://cdn-icons-png.flaticon.com/512/4712/4712035.png"
                 });
-
                 Object.keys(subscriptions).forEach(subChatId => {
                     if (subChatId !== myChatId) {
-                        webpush.sendNotification(subscriptions[subChatId], pushPayload)
-                            .catch(err => {
-                                if (err.statusCode === 404 || err.statusCode === 410) {
-                                    delete subscriptions[subChatId];
-                                    fs.writeFile(subDbFile, JSON.stringify(subscriptions, null, 2), () => {});
-                                }
-                            });
+                        webpush.sendNotification(subscriptions[subChatId], pushPayload).catch(err => {
+                            if (err.statusCode === 404 || err.statusCode === 410) {
+                                delete subscriptions[subChatId];
+                                fs.writeFile(subDbFile, JSON.stringify(subscriptions, null, 2), () => {});
+                            }
+                        });
                     }
                 });
-
-                const checkText = (String(text || "") + " " + String(speechText || "")).toLowerCase();
-                if (checkText.includes("проверка связи")) {
-                    const sysMsg = {
-                        id: 'sys_' + Date.now(),
-                        user: "X-SYSTEM",
-                        text: "Канал стабилен. Все узлы X-CONNECT онлайн! 🚀",
-                        avatar: "https://cdn-icons-png.flaticon.com/512/4712/4712035.png",
-                        time: getMskTime(),
-                        timestamp: Date.now() + 10
-                    };
-                    memoryDb[targetRoom].push(sysMsg);
-                    if (io) io.to(targetRoom).emit('new_message', sysMsg); // Системный ответ тоже через сокеты
-                    fs.writeFile(chatDbFile, JSON.stringify(memoryDb, null, 2), () => {});
-                }
             });
-
-        } catch (e) { 
-            console.error("❌ КРИТИЧЕСКАЯ ОШИБКА ЧАТА:", e.message);
-            if (!res.headersSent) res.status(500).json({ success: false }); 
-        }
+        } catch (e) { res.status(500).json({ success: false }); }
     });
 
     app.post('/x-api/chat-delete', (req, res) => {
@@ -151,16 +115,26 @@ module.exports = function (app, context) {
             const { roomId, msgId } = req.body;
             if (memoryDb[roomId]) {
                 memoryDb[roomId] = memoryDb[roomId].filter(m => m.id !== msgId);
-                
-                // ⚡ ЖИВОЕ УДАЛЕНИЕ: Удаляем сообщение у всех онлайн
                 if (io) io.to(roomId).emit('delete_message', msgId);
-                
                 res.json({ success: true });
                 fs.writeFile(chatDbFile, JSON.stringify(memoryDb, null, 2), () => {});
                 return;
             }
             res.json({ success: false });
         } catch (e) { res.status(500).json({ success: false }); }
+    });
+
+    // --- ВОТ ЭТОТ БЛОК ДЛЯ УДАЛЕНИЯ ЦЕЛОГО ЧАТА ---
+    app.post('/x-api/chat-room-delete', (req, res) => {
+        const { roomId } = req.body;
+        if (memoryDb[roomId]) {
+            delete memoryDb[roomId];
+            fs.writeFile(chatDbFile, JSON.stringify(memoryDb, null, 2), () => {
+                res.json({ success: true });
+            });
+        } else {
+            res.json({ success: false });
+        }
     });
 
     app.get('/x-api/chat-history', (req, res) => {
