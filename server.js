@@ -1,3 +1,5 @@
+const http = require('http'); // Добавляем модуль сервера
+const { Server } = require('socket.io'); // Добавляем движок сокетов
 const express = require('express');
 const { google } = require('googleapis');
 const { Telegraf } = require('telegraf');
@@ -10,6 +12,20 @@ const crypto = require('crypto');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const app = express();
+const server = http.createServer(app); // Оборачиваем express в сервер
+const io = new Server(server, { 
+    cors: { origin: "*" }, 
+    maxHttpBufferSize: 1e8 // Разрешаем передачу тяжелых файлов (до 100мб) через сокеты
+});
+
+// Логика комнат (чтобы сообщения не летели всем подряд)
+io.on('connection', (socket) => {
+    socket.on('join_room', (roomId) => {
+        socket.join(roomId);
+        console.log(`📡 Socket: Клиент вошел в комнату [${roomId}]`);
+    });
+});
+
 app.use(cors());
 app.use(bodyParser.json({ limit: '150mb' }));
 app.use(bodyParser.urlencoded({ limit: '150mb', extended: true }));
@@ -836,6 +852,7 @@ const path = require('path');
 
 const pluginContext = {
     app, 
+    io,
     drive, 
     google, 
     sheets, 
@@ -936,9 +953,9 @@ bot.launch().then(() => {
     console.error('❌ Ошибка бота:', err);
 });
 
-// --- ЗАПУСК СЕРВЕРА (ЧЕРЕЗ NGINX) ---
+// --- ЗАПУСК ЖИВОГО СЕРВЕРА (SOCKET.IO) ---
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 СЕРВЕР ЗАПУЩЕН НА ПОРТУ ${PORT}`);
-    console.log(`📡 Nginx пробрасывает трафик с https://logist-x.store на этот порт`);
+server.listen(PORT, () => { // <--- Видишь, здесь теперь server вместо app
+    console.log(`🚀 СИСТЕМА X-CONNECT ОЖИЛА!`);
+    console.log(`📡 Живой эфир на порту ${PORT}. Сокеты готовы.`);
 });
