@@ -5,6 +5,16 @@ const express = require('express');
 const chatDbFile = path.join(process.cwd(), 'public', 'chat_history.json');
 let memoryDb = {};
 
+// --- НОВОЕ: Функция для принудительного Московского времени ---
+function getMskTime() {
+    return new Date().toLocaleTimeString('ru-RU', {
+        timeZone: 'Europe/Moscow',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    });
+}
+
 // Настройка: удаляем сообщения старше 24 часов
 const MAX_MESSAGE_AGE_MS = 24 * 60 * 60 * 1000; 
 
@@ -25,7 +35,7 @@ function cleanOldMessages() {
     }
 
     if (totalRemoved > 0) {
-        console.log(`🧹 АВТО-ОЧИСТКА: Удалено ${totalRemoved} старых сообщений.`);
+        console.log(`🧹 АВТО-ОЧИСТКА [${getMskTime()} МСК]: Удалено ${totalRemoved} старых сообщений.`);
         fs.writeFileSync(chatDbFile, JSON.stringify(memoryDb, null, 2));
     }
 }
@@ -56,11 +66,11 @@ module.exports = function (app, context) {
             const { roomId, user, text, avatar, isAudio, isImage, speechText } = req.body;
             const targetRoom = roomId || 'public';
             
-            // ЛОГИРОВАНИЕ ДЛЯ КОНТРОЛЯ
+            // ЛОГИРОВАНИЕ ДЛЯ КОНТРОЛЯ (Теперь с МСК временем)
             let type = "ТЕКСТ";
             if (isAudio) type = "ГОЛОС 🎤";
             if (isImage) type = "ФОТО 📸";
-            console.log(`📩 [${targetRoom}] ${user}: Прислал ${type}`);
+            console.log(`📩 [${targetRoom}] ${user} (${getMskTime()} МСК): Прислал ${type}`);
 
             if (!memoryDb[targetRoom]) memoryDb[targetRoom] = [];
 
@@ -71,7 +81,8 @@ module.exports = function (app, context) {
                 avatar, 
                 isAudio: !!isAudio,
                 isImage: !!isImage,
-                time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                // --- ВРЕМЯ ТЕПЕРЬ ВСЕГДА ПО МОСКВЕ ---
+                time: getMskTime(), 
                 timestamp: Date.now() 
             };
             
@@ -80,13 +91,13 @@ module.exports = function (app, context) {
             // Автоответ системы
             const checkText = (String(text || "") + " " + String(speechText || "")).toLowerCase();
             if (checkText.includes("проверка связи")) {
-                console.log("🤖 X-SYSTEM: Даю ответ...");
+                console.log(`🤖 X-SYSTEM [${getMskTime()}]: Даю ответ...`);
                 memoryDb[targetRoom].push({
                     id: 'sys_' + Date.now(),
                     user: "X-SYSTEM",
                     text: "Канал стабилен. Все узлы X-CONNECT онлайн! 🚀",
                     avatar: "https://cdn-icons-png.flaticon.com/512/4712/4712035.png",
-                    time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                    time: getMskTime(), // И тут тоже Москва
                     timestamp: Date.now() + 10
                 });
             }
@@ -108,7 +119,7 @@ module.exports = function (app, context) {
             if (memoryDb[roomId]) {
                 memoryDb[roomId] = memoryDb[roomId].filter(m => m.id !== msgId);
                 fs.writeFileSync(chatDbFile, JSON.stringify(memoryDb, null, 2));
-                console.log(`🗑️ УДАЛЕНИЕ: Сообщение ${msgId} стерто.`);
+                console.log(`🗑️ УДАЛЕНИЕ [${getMskTime()}]: Сообщение ${msgId} стерто.`);
                 return res.json({ success: true });
             }
             res.json({ success: false });
@@ -121,7 +132,7 @@ module.exports = function (app, context) {
             const { roomId } = req.body;
             memoryDb[roomId] = [];
             fs.writeFileSync(chatDbFile, JSON.stringify(memoryDb, null, 2));
-            console.log(`🧹 ОЧИСТКА: Комната ${roomId} полностью обнулена.`);
+            console.log(`🧹 ОЧИСТКА [${getMskTime()}]: Комната ${roomId} обнулена.`);
             res.json({ success: true });
         } catch (e) { res.status(500).json({ success: false }); }
     });
@@ -142,5 +153,5 @@ module.exports = function (app, context) {
 
     app.get('/x-api/ping', (req, res) => res.send('ok'));
     
-    console.log("🦾 СЕРВЕР X-CONNECT ГОТОВ: ЛОГИ И АВТО-КЛИНИНГ ЗАПУЩЕНЫ");
+    console.log(`🦾 X-CONNECT ЗАПУЩЕН. ТЕКУЩЕЕ ВРЕМЯ МСК: ${getMskTime()}`);
 };
