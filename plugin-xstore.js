@@ -6,19 +6,24 @@ const express = require('express');
 const { Telegraf, Markup } = require('telegraf');
 const nodemailer = require('nodemailer');
 
+// Подключаем переменные окружения
 require('dotenv').config();
 
+// --- КОНФИГУРАЦИЯ ---
 const STORE_BOT_TOKEN = '8177397301:AAH4eNkzks_DuvuMB0leavzpcKMowwFz4Uw';
 const MY_ID = 6846149935;
 const ADMIN_URL = 'https://logist-x.store/x-admin';
 
+// --- ИНИЦИАЛИЗАЦИЯ БОТА ---
 let storeBot;
 try {
     storeBot = new Telegraf(STORE_BOT_TOKEN);
+    console.log("✅ Бот магазина инициализирован");
 } catch (e) {
     console.error("❌ Ошибка инициализации бота:", e.message);
 }
 
+// --- НАСТРОЙКИ ПОЧТЫ (BEGET) ---
 const transporter = nodemailer.createTransport({
     host: 'smtp.beget.com',
     port: 465,
@@ -29,38 +34,47 @@ const transporter = nodemailer.createTransport({
     }
 });
 
+// --- ПУТИ И ДИРЕКТОРИИ ---
 const quarantineDir = path.join(process.cwd(), 'uploads-quarantine');
 const publicDir = path.join(process.cwd(), 'public', 'apps');
 const dbFile = path.join(process.cwd(), 'public', 'apps.json');
 
-// Диагностика пути и файла
-console.log("X-STORE: START");
-console.log("Рабочий каталог:", process.cwd());
-console.log("Путь к apps.json:", dbFile);
-
-// Автосоздание apps.json
-if (!fs.existsSync(dbFile)) {
-    console.log('⚠️ apps.json не найден — создаём');
-    fs.writeFileSync(dbFile, '[]', 'utf8');
-} else {
-    console.log('apps.json найден, размер:', fs.statSync(dbFile).size, 'байт');
-    try {
-        const content = fs.readFileSync(dbFile, 'utf8');
-        console.log('Содержимое apps.json:', content.trim());
-        JSON.parse(content); // тест парсинга
-        console.log('apps.json валидный');
-    } catch (e) {
-        console.error('apps.json повреждён:', e.message);
-        fs.writeFileSync(dbFile, '[]', 'utf8');
-        console.log('Заменили на пустой []');
-    }
-}
-
+// Автосоздание папок и базы
 if (!fs.existsSync(quarantineDir)) fs.mkdirSync(quarantineDir, { recursive: true });
 if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
 
-const upload = multer({ dest: quarantineDir });
+if (!fs.existsSync(dbFile)) {
+    fs.writeFileSync(dbFile, '[]', 'utf8');
+} else {
+    // Проверка целостности базы при старте
+    try {
+        JSON.parse(fs.readFileSync(dbFile, 'utf8'));
+    } catch (e) {
+        console.error("⚠️ База apps.json повреждена, сброс.");
+        fs.writeFileSync(dbFile, '[]', 'utf8');
+    }
+}
 
+// Настройка Multer (загрузчик файлов)
+const upload = multer({
+    dest: quarantineDir,
+    limits: { fileSize: 100 * 1024 * 1024 } // Лимит 100 МБ
+});
+
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+
+// Безопасное чтение JSON
+function safeReadJson(file) {
+    try {
+        if (!fs.existsSync(file)) return [];
+        const content = fs.readFileSync(file, 'utf8');
+        return JSON.parse(content);
+    } catch (e) {
+        return [];
+    }
+}
+
+// Отправка почты
 async function sendStoreMail(to, subject, text) {
     try {
         if (!process.env.SMTP_PASSWORD) return;
@@ -76,30 +90,23 @@ async function sendStoreMail(to, subject, text) {
     }
 }
 
+// --- ЭКСПОРТ МОДУЛЯ ---
 module.exports = function (app, context) {
     const { readDatabase } = context;
 
+    // Раздача статики для приложений
     app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
-    function safeReadJson(file) {
-        try {
-            const content = fs.readFileSync(file, 'utf8');
-            return JSON.parse(content);
-        } catch (e) {
-            console.error(`Ошибка чтения JSON ${path.basename(file)}:`, e.message);
-            return [];
-        }
-    }
-
+    // 1. API: Получить список активных приложений
     app.get('/x-api/apps', (req, res) => {
         const db = safeReadJson(dbFile);
         const now = new Date();
         const activeApps = db
-            .filter(a => (!a.expiryDate || new Date(a.expiryDate) > now) && a.hidden !== true)
-            .map(a => ({ ...a, hidden: !!a.hidden }));
+            .filter(a => (!a.expiryDate || new Date(a.expiryDate) > now) && a.hidden !== true);
         res.json(activeApps);
     });
 
+    // 2. API: Счетчик кликов (установок)
     app.post('/x-api/click/:id', (req, res) => {
         let db = safeReadJson(dbFile);
         const appData = db.find(a => a.id === req.params.id);
@@ -112,6 +119,7 @@ module.exports = function (app, context) {
         }
     });
 
+    // 3. API: Скачивание архива (для админа)
     app.get('/x-api/download/:id', (req, res) => {
         const filePath = path.join(quarantineDir, req.params.id);
         if (fs.existsSync(filePath)) {
@@ -121,34 +129,28 @@ module.exports = function (app, context) {
         }
     });
 
-    app.get('/x-api/ping', (req, res) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.json({ status: "online" });
-    });
-
+    // 4. API: Скрыть/Показать приложение
     app.post('/x-api/toggle-hidden/:id', (req, res) => {
         let db = safeReadJson(dbFile);
         const appIndex = db.findIndex(a => String(a.id) === String(req.params.id));
-        if (appIndex === -1) {
-            return res.status(404).json({ success: false, error: "App not found" });
-        }
+        if (appIndex === -1) return res.status(404).json({ success: false });
+        
         db[appIndex].hidden = !db[appIndex].hidden;
         fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
         res.json({ success: true, hidden: db[appIndex].hidden });
     });
 
+    // 5. ГЛАВНАЯ АДМИН-ПАНЕЛЬ (Рендеринг HTML)
     app.get('/x-admin', (req, res) => {
         let activeApps = safeReadJson(dbFile);
 
+        // Сканируем папку карантина
         const pendingFiles = fs.readdirSync(quarantineDir)
             .filter(name => name.endsWith('.json'))
             .map(jsonName => {
                 const id = jsonName.replace('.json', '');
-                let info = {};
-                try {
-                    info = safeReadJson(path.join(quarantineDir, jsonName));
-                } catch (e) {}
-
+                let info = safeReadJson(path.join(quarantineDir, jsonName));
+                
                 const zipPath = path.join(quarantineDir, id);
                 const hasZip = fs.existsSync(zipPath);
 
@@ -161,55 +163,42 @@ module.exports = function (app, context) {
                         const zip = new AdmZip(zipPath);
                         const entries = zip.getEntries();
                         const forbidden = ['.php', '.exe', '.bat', '.py', '.sh', '.sql', '.env'];
-                        const suspiciousFuncs = ['eval(', 'exec(', 'spawn(', 'base64_decode', 'child_process'];
+                        const suspiciousFuncs = ['eval(', 'exec(', 'spawn(', 'base64_decode'];
 
                         let hasIndex = false;
+
                         entries.forEach(e => {
                             const name = e.entryName;
                             const lowerName = name.toLowerCase();
+
                             if (lowerName.endsWith('index.html')) hasIndex = true;
 
                             if (forbidden.some(ext => lowerName.endsWith(ext))) {
-                                safetyAlerts.push(`<span style="color:#ff4444;">⛔️ ЗАПРЕЩЕННЫЙ ФАЙЛ: ${name}</span>`);
+                                safetyAlerts.push(`<span style="color:#ff4444;">⛔️ ЗАПРЕЩЕННЫЙ: ${name}</span>`);
                             }
 
+                            // Проверка кода JS/HTML
                             if (!e.isDirectory && (lowerName.endsWith('.js') || lowerName.endsWith('.html'))) {
                                 const content = e.getData().toString('utf8');
-                                suspiciousFuncs.forEach(f => {
-                                    if (content.includes(f)) safetyAlerts.push(`<span style="color:#ffbb33;">⚠️ ОПАСНЫЙ КОД (${f}): ${name}</span>`);
+                                suspiciousFuncs.forEach(func => {
+                                    if (content.includes(func)) {
+                                        safetyAlerts.push(`<span style="color:#ffbb33;">⚠️ Code Warning: ${func} in ${name}</span>`);
+                                    }
                                 });
-
-                                const links = content.match(/https?:\/\/[^\s"'`<>]+/g);
-                                if (links) {
-                                    const uniqueDomains = new Set();
-                                    links.forEach(link => {
-                                        if (!link.match(/logist-x\.store|google|yandex|vk\.com|cdn|unpkg|jsdelivr/)) {
-                                            try {
-                                                const domain = new URL(link).hostname;
-                                                uniqueDomains.add(domain);
-                                            } catch (err) {
-                                                uniqueDomains.add(link.substring(0, 25) + '...');
-                                            }
-                                        }
-                                    });
-                                    uniqueDomains.forEach(domain => {
-                                        safetyAlerts.push(`<span style="color:#3399ff;">📡 СВЯЗЬ: ${domain}</span>`);
-                                    });
-                                }
                             }
                         });
 
-                        if (!hasIndex) safetyAlerts.push("<span style='color:#ff4444;'>❌ НЕТ INDEX.HTML В КОРНЕ</span>");
+                        if (!hasIndex) safetyAlerts.push("<span style='color:#ff4444;'>❌ НЕТ INDEX.HTML В КОРНЕ!</span>");
 
                         if (safetyAlerts.length === 0) {
-                            fileReport = "<b style='color:#4caf50;'>✅ ПРОВЕРКА ПРОЙДЕНА: ВИРУСОВ НЕ ОБНАРУЖЕНО</b>";
+                            fileReport = "<b style='color:#4caf50;'>✅ ЧИСТО: Вирусов нет, структура верная.</b>";
                             borderColor = "#28a745";
                         } else {
                             borderColor = safetyAlerts.some(a => a.includes('⛔️')) ? "#dc3545" : "#ffc107";
                             fileReport = safetyAlerts.join('<br>');
                         }
                     } catch (err) {
-                        fileReport = "Ошибка чтения архива";
+                        fileReport = "Ошибка чтения архива (битый файл?)";
                         borderColor = "#dc3545";
                     }
                 }
@@ -217,76 +206,66 @@ module.exports = function (app, context) {
                 return { id, ...info, fileReport, borderColor, hasZip };
             }).reverse();
 
+        // Генерация HTML страницы админки
         res.send(`
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>X-STORE ADMIN</title>
+    <title>X-STORE BOSS</title>
     <style>
         body { background: #0b0b0b; color: #fff; font-family: 'Segoe UI', sans-serif; padding: 20px; }
         .container { max-width: 900px; margin: 0 auto; }
-        .card { background: #1a1a1a; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid #333; }
-        .hidden-app { opacity: 0.6; border-left: 4px solid #888; }
-        .title { color: #ff6600; font-size: 20px; font-weight: bold; margin-bottom: 10px; }
-        .meta { font-size: 13px; color: #888; margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 10px; }
-        .log-box { background: #000; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 12px; border: 1px solid #444; margin-bottom: 15px; line-height: 1.6; }
-        .btn { padding: 12px 20px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; display: inline-block; text-align: center; font-size: 14px; color: #fff; }
-        .btn-pub { background: #28a745; flex: 2; }
-        .btn-del { background: #dc3545; flex: 1; }
-        .btn-down { background: #3399ff; width: 100%; margin-bottom: 10px; }
-        .btn-hide { background: #6c757d; padding: 6px 12px; font-size: 11px; }
-        .btn-show { background: #17a2b8; padding: 6px 12px; font-size: 11px; }
-        .flex-btns { display: flex; gap: 10px; }
-        h1, h2 { border-left: 5px solid #ff6600; padding-left: 15px; }
-        .stat-badge { background: #28a745; color: white; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-left: 10px; }
+        .card { background: #1a1a1a; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid #333; position: relative; }
+        .hidden-app { opacity: 0.6; border-left: 5px solid #666; }
+        .log-box { background: #000; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 12px; border: 1px solid #444; margin: 15px 0; }
+        .btn { padding: 10px 15px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; color: #fff; margin-right: 5px; font-size: 13px; }
+        .btn-pub { background: #28a745; }
+        .btn-del { background: #dc3545; }
+        .btn-down { background: #3399ff; }
+        .btn-hide { background: #6c757d; }
+        h1, h2 { border-left: 4px solid #ff6600; padding-left: 15px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🛡 ПАНЕЛЬ УПРАВЛЕНИЯ X-STORE</h1>
+        <h1>🛡 X-STORE CONTROL PANEL</h1>
 
-        <h2 style="color: #ffc107;">🟡 ОЖИДАЮТ ПРОВЕРКИ (${pendingFiles.length})</h2>
-        ${pendingFiles.length === 0 ? '<p style="color:#666;">Новых заявок пока нет...</p>' : ''}
+        <h2 style="color: #ffc107;">🟡 НОВЫЕ ЗАЯВКИ (${pendingFiles.length})</h2>
+        ${pendingFiles.length === 0 ? '<p style="color:#666;">Пока пусто, Шеф.</p>' : ''}
+        
         ${pendingFiles.map(f => `
             <div class="card" style="border-top: 4px solid ${f.borderColor};">
-                <div class="title">${f.name}</div>
-                <div class="meta">
-                    <b>Владелец:</b> ${f.ownerName} | <b>Ключ:</b> ${f.accessKey}<br>
-                    <b>Email:</b> ${f.email} | <b>Категория:</b> ${f.cat}
+                <h3 style="margin:0 0 10px 0; color:#ff6600;">${f.name}</h3>
+                <div style="font-size:13px; color:#aaa; margin-bottom:10px;">
+                    Владелец: <b>${f.ownerName}</b> | Email: ${f.email}<br>
+                    Ключ: ${f.accessKey} | Категория: ${f.cat}
                 </div>
-                <div style="font-size:14px; margin-bottom:15px; color:#ddd;">${f.desc || 'Описание отсутствует'}</div>
                 
                 <div class="log-box">
-                    <div style="color:#888; margin-bottom:5px;">[X-SCANNER REPORT]</div>
                     ${f.fileReport}
                 </div>
 
-                <a href="/x-api/download/${f.id}" class="btn btn-down">📥 СКАЧАТЬ АРХИВ ДЛЯ ОСМОТРА</a>
-                
-                <div class="flex-btns">
-                    <button class="btn btn-pub" onclick="publish('${f.id}')">✅ ОПУБЛИКОВАТЬ В МАГАЗИН</button>
+                <div style="display:flex; gap:10px; margin-top:10px;">
+                    <button class="btn btn-down" onclick="window.location.href='/x-api/download/${f.id}'">📥 Скачать</button>
+                    <button class="btn btn-pub" onclick="publish('${f.id}')">✅ ОПУБЛИКОВАТЬ</button>
                     <button class="btn btn-del" onclick="reject('${f.id}')">🗑 УДАЛИТЬ</button>
                 </div>
             </div>
         `).join('')}
 
-        <h2 style="color: #28a745;">🟢 ОПУБЛИКОВАНО (${activeApps.length})</h2>
+        <h2 style="color: #28a745;">🟢 АКТИВНЫЕ ПРИЛОЖЕНИЯ (${activeApps.length})</h2>
         ${activeApps.map(app => `
-            <div class="card ${app.hidden ? 'hidden-app' : ''}" style="padding: 12px; display: flex; align-items: center; justify-content: space-between;">
+            <div class="card ${app.hidden ? 'hidden-app' : ''}" style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
-                    <b style="color:#ff6600;">${app.title || app.name}</b>
-                    <span class="stat-badge">📥 Установок: ${app.clicks || 0}</span>
-                    ${app.hidden ? '<span style="color:#dc3545; font-size:11px; margin-left:10px;">(скрыто)</span>' : ''}
-                    <div style="font-size:11px; color:#666;">ID: ${app.id}</div>
+                    <b style="font-size:16px;">${app.title}</b>
+                    <div style="font-size:12px; color:#888;">ID: ${app.id} | Кликов: ${app.clicks || 0}</div>
+                    ${app.hidden ? '<span style="color:red; font-size:10px;">(СКРЫТО)</span>' : ''}
                 </div>
-                <div style="display: flex; gap: 8px;">
-                    <button class="btn ${app.hidden ? 'btn-show' : 'btn-hide'}" 
-                            onclick="toggleHidden('${app.id}', ${!app.hidden})">
-                        ${app.hidden ? 'Показать' : 'Скрыть'}
-                    </button>
-                    <button class="btn btn-del" onclick="unpublish('${app.id}')">УБРАТЬ</button>
+                <div>
+                    <button class="btn btn-hide" onclick="toggleHidden('${app.id}')">${app.hidden ? 'Показать' : 'Скрыть'}</button>
+                    <button class="btn btn-del" onclick="unpublish('${app.id}')">Снять</button>
                 </div>
             </div>
         `).join('')}
@@ -294,227 +273,236 @@ module.exports = function (app, context) {
 
     <script>
         async function publish(id) {
-            if (!confirm('Подтвердить публикацию?')) return;
-            const res = await fetch('/x-api/publish/' + id, {method: 'POST'});
-            if (res.ok) location.reload(); else alert('Ошибка сервера');
+            if(!confirm('Опубликовать приложение?')) return;
+            const res = await fetch('/x-api/publish/'+id, {method:'POST'});
+            if(res.ok) location.reload(); else alert('Ошибка сервера');
         }
         async function reject(id) {
-            if (!confirm('Удалить заявку безвозвратно?')) return;
-            const res = await fetch('/x-api/delete/' + id, {method: 'DELETE'});
-            if (res.ok) location.reload();
+            if(!confirm('Удалить заявку?')) return;
+            const res = await fetch('/x-api/delete/'+id, {method:'DELETE'});
+            if(res.ok) location.reload();
         }
         async function unpublish(id) {
-            if (!confirm('Снять приложение с публикации?')) return;
-            const res = await fetch('/x-api/unpublish/' + id, {method: 'POST'});
-            if (res.ok) location.reload();
+            if(!confirm('Удалить из магазина?')) return;
+            const res = await fetch('/x-api/unpublish/'+id, {method:'POST'});
+            if(res.ok) location.reload();
         }
-        async function toggleHidden(id, shouldHide) {
-            if (!confirm(shouldHide ? 'Скрыть?' : 'Показать?')) return;
-            const res = await fetch('/x-api/toggle-hidden/' + id, {method: 'POST'});
-            if (res.ok) location.reload(); else alert('Ошибка');
+        async function toggleHidden(id) {
+            const res = await fetch('/x-api/toggle-hidden/'+id, {method:'POST'});
+            if(res.ok) location.reload();
         }
     </script>
 </body>
 </html>`);
     });
 
+    // 6. ЗАГРУЗКА ЗАЯВКИ (От клиента)
     app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
         try {
             const { accessKey, name, email, cat, desc } = req.body;
+            
+            // Проверка ключа
             const keys = await readDatabase();
             const kData = keys.find(k => k.key === (accessKey || "").toUpperCase());
 
             if (!kData || new Date(kData.expiry) < new Date()) {
                 if (req.file) fs.unlinkSync(req.file.path);
-                return res.status(403).json({ success: false, error: "Ключ не активен" });
+                return res.status(403).json({ success: false, error: "Ключ недействителен" });
             }
 
             const id = req.file ? req.file.filename : "req_" + Date.now();
+            
+            // Сохраняем инфо о заявке
             fs.writeFileSync(path.join(quarantineDir, id + '.json'), JSON.stringify({
                 name, email, cat, desc, accessKey,
                 ownerName: kData.name,
                 expiryDate: kData.expiry
             }, null, 2));
 
+            // Уведомление в Телеграм
             if (storeBot) {
-                const msg = `🆕 *НОВАЯ ЗАЯВКА В X-STORE*\n\n📦 Проект: *${name}*\n👤 От: \( {kData.name}\n🔑 Ключ: \` \){accessKey}\`\n📂 Категория: ${cat}`;
+                const msg = `🆕 *НОВАЯ ЗАЯВКА*\n\n📦 Проект: *${name}*\n👤 От: ${kData.name}\n🔑 Ключ: \`${accessKey}\``;
                 storeBot.telegram.sendMessage(MY_ID, msg, {
                     parse_mode: 'Markdown',
-                    ...Markup.inlineKeyboard([[Markup.button.url('🛡 ПЕРЕЙТИ В АДМИНКУ', ADMIN_URL)]])
-                });
+                    ...Markup.inlineKeyboard([[Markup.button.url('🛡 В АДМИНКУ', ADMIN_URL)]])
+                }).catch(e => console.log('TG Error:', e.message));
             }
+
             res.json({ success: true });
         } catch (e) {
-            console.error('Ошибка /x-api/upload:', e.message);
+            console.error(e);
             res.status(500).json({ success: false });
         }
     });
 
+    // 7. ПУБЛИКАЦИЯ (МАГИЯ PWA)
     app.post('/x-api/publish/:id', async (req, res) => {
         try {
             const id = req.params.id;
-            const infoPath = path.join(quarantineDir, id + '.json');
-            if (!fs.existsSync(infoPath)) return res.status(404).json({ error: "Нет данных заявки" });
+            const jsonPath = path.join(quarantineDir, id + '.json');
+            const zipPath = path.join(quarantineDir, id);
 
-            const info = safeReadJson(infoPath);
+            if (!fs.existsSync(jsonPath)) return res.status(404).json({error: "Нет данных"});
+
+            const info = safeReadJson(jsonPath);
             const appFolderName = "app_" + Date.now();
             const extractPath = path.join(publicDir, appFolderName);
+            
+            // 1. Распаковка
+            const zip = new AdmZip(zipPath);
+            zip.extractAllTo(extractPath, true);
 
+            // 2. Поиск иконки
+            const files = fs.readdirSync(extractPath);
+            const iconFile = files.find(f => f.toLowerCase().startsWith('icon.'));
             let finalIcon = 'https://cdn-icons-png.flaticon.com/512/3208/3208728.png';
-            let finalUrl = "";
+            if (iconFile) {
+                finalIcon = `https://logist-x.store/public/apps/${appFolderName}/${iconFile}`;
+            }
 
-            const zipPath = path.join(quarantineDir, id);
-            if (fs.existsSync(zipPath)) {
-                const zip = new AdmZip(zipPath);
-                zip.extractAllTo(extractPath, true);
-
-                const files = fs.readdirSync(extractPath);
-                const iconFile = files.find(f => f.toLowerCase().startsWith('icon.'));
-                if (iconFile) finalIcon = `https://logist-x.store/public/apps/\( {appFolderName}/ \){iconFile}`;
-
-                const urlsToCache = [];
-                function collectFiles(dir) {
-                    const items = fs.readdirSync(dir, { withFileTypes: true });
-                    items.forEach(item => {
-                        const fullPath = path.join(dir, item.name);
-                        if (item.isDirectory()) {
-                            collectFiles(fullPath);
-                        } else {
-                            const ext = path.extname(item.name).toLowerCase();
-                            if (['.html', '.js', '.css', '.png', '.jpg', '.jpeg', '.svg', '.json', '.ico', '.webmanifest'].includes(ext)) {
-                                const relativePath = fullPath.replace(extractPath, '').replace(/\\/g, '/').replace(/^\//, '');
-                                urlsToCache.push(relativePath || item.name);
-                            }
+            // 3. Сбор файлов для кэша (Service Worker)
+            const urlsToCache = [];
+            function scanDir(dir) {
+                const items = fs.readdirSync(dir, { withFileTypes: true });
+                items.forEach(item => {
+                    if (item.isDirectory()) {
+                        scanDir(path.join(dir, item.name));
+                    } else {
+                        const ext = path.extname(item.name).toLowerCase();
+                        if(['.html','.js','.css','.png','.jpg','.svg','.json'].includes(ext)) {
+                            // Путь относительно корня приложения
+                            let rel = path.join(dir, item.name).replace(extractPath, '').replace(/\\/g, '/');
+                            if(rel.startsWith('/')) rel = rel.substring(1);
+                            urlsToCache.push(rel);
                         }
-                    });
-                }
-                collectFiles(extractPath);
+                    }
+                });
+            }
+            scanDir(extractPath);
 
-                if (!fs.existsSync(path.join(extractPath, 'manifest.json'))) {
-                    const manifest = {
-                        "name": info.name,
-                        "short_name": info.name,
-                        "start_url": "index.html",
-                        "display": "standalone",
-                        "background_color": "#0b0b0b",
-                        "theme_color": "#ff6600",
-                        "icons": [{ "src": iconFile || "icon.png", "sizes": "512x512", "type": "image/png" }]
-                    };
-                    fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify(manifest, null, 2));
-                    urlsToCache.push('manifest.json');
-                }
+            // 4. Генерация manifest.json (если нет)
+            if (!fs.existsSync(path.join(extractPath, 'manifest.json'))) {
+                const manifest = {
+                    "name": info.name,
+                    "short_name": info.name,
+                    "start_url": "index.html",
+                    "display": "standalone",
+                    "background_color": "#0b0b0b",
+                    "theme_color": "#ff6600",
+                    "icons": [{ "src": iconFile || "icon.png", "sizes": "512x512", "type": "image/png" }]
+                };
+                fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify(manifest, null, 2));
+                urlsToCache.push('manifest.json');
+            }
 
-                const swPath = path.join(extractPath, 'sw.js');
-                if (!fs.existsSync(swPath)) {
-                    const swContent = `
+            // 5. Генерация sw.js (Service Worker)
+            // ВНИМАНИЕ: Здесь исправлен синтаксис для записи файла
+            const swCode = `
 const CACHE_NAME = 'x-pwa-${appFolderName}-v1';
-const urlsToCache = [
+const urls = [
   './index.html',
-  \( {urlsToCache.map(url => `' \){url}',`).join('\n  ')}
+  ${urlsToCache.map(u => `'${u}'`).join(',\n  ')}
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache))
-  );
-  self.skipWaiting();
-});
-
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(cacheNames => Promise.all(
-      cacheNames.filter(name => name !== CACHE_NAME).map(name => caches.delete(name))
-    )).then(() => self.clients.claim())
-  );
+    event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(urls)));
 });
 
 self.addEventListener('fetch', event => {
-  event.respondWith(
-    caches.match(event.request).then(response => {
-      return response || fetch(event.request).then(fetchResponse => {
-        if (!fetchResponse || fetchResponse.status !== 200 || fetchResponse.type !== 'basic') {
-          return fetchResponse;
-        }
-        const responseToCache = fetchResponse.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseToCache));
-        return fetchResponse;
-      }).catch(() => caches.match('./index.html'));
-    })
-  );
-});
-                    `;
-                    fs.writeFileSync(swPath, swContent.trim(), 'utf8');
-                }
+    event.respondWith(
+        caches.match(event.request).then(response => {
+            return response || fetch(event.request);
+        }).catch(() => caches.match('./index.html'))
+    );
+});`;
+            fs.writeFileSync(path.join(extractPath, 'sw.js'), swCode.trim());
 
-                const indexPath = path.join(extractPath, 'index.html');
-                if (fs.existsSync(indexPath)) {
-                    let html = fs.readFileSync(indexPath, 'utf8');
-                    if (!html.includes('serviceWorker.register')) {
-                        const pwaInject = `
+            // 6. Инъекция в index.html
+            const indexPath = path.join(extractPath, 'index.html');
+            if (fs.existsSync(indexPath)) {
+                let html = fs.readFileSync(indexPath, 'utf8');
+                const pwaInject = `
     <link rel="manifest" href="manifest.json">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#ff6600">
-    <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js?v=${Date.now()}');}</script>`;
-                        html = html.includes('<head>') ? html.replace('<head>', '<head>' + pwaInject) : pwaInject + html;
-                        fs.writeFileSync(indexPath, html, 'utf8');
-                    }
+    <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js');}</script>
+                `;
+                // Вставляем перед закрывающим head или в начало
+                if(html.includes('</head>')) {
+                    html = html.replace('</head>', pwaInject + '</head>');
+                } else {
+                    html = pwaInject + html;
                 }
-
-                finalUrl = `https://logist-x.store/public/apps/${appFolderName}/index.html`;
+                fs.writeFileSync(indexPath, html);
             }
 
+            // 7. Запись в базу
             let db = safeReadJson(dbFile);
             db.push({
                 ...info,
                 id: appFolderName,
                 title: info.name,
-                name: info.name,
                 icon: finalIcon,
-                url: finalUrl,
+                url: `https://logist-x.store/public/apps/${appFolderName}/index.html`,
                 folder: appFolderName,
                 clicks: 0,
                 hidden: false
             });
             fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
 
-            if (fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
-            if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+            // 8. Чистка карантина
+            if(fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
+            if(fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-            await sendStoreMail(info.email, '🚀 Твое приложение опубликовано!', `Приложение "${info.name}" доступно.`);
+            // 9. Письмо счастья
+            await sendStoreMail(info.email, '🚀 Публикация успешна!', `Твое приложение "${info.name}" доступно в X-STORE.`);
 
             res.json({ success: true });
+
         } catch (e) {
-            console.error("❌ Ошибка публикации:", e.message, e.stack);
+            console.error("Publish Error:", e);
             res.status(500).json({ success: false, error: e.message });
         }
     });
 
+    // 8. УДАЛЕНИЕ ИЗ ПУБЛИКАЦИИ
     app.post('/x-api/unpublish/:id', (req, res) => {
-        let db = safeReadJson(dbFile);
-        const appData = db.find(a => String(a.id) === String(req.params.id));
-        if (appData && appData.folder) {
-            const folderPath = path.join(publicDir, appData.folder);
-            if (fs.existsSync(folderPath)) fs.rmSync(folderPath, { recursive: true, force: true });
+        try {
+            let db = safeReadJson(dbFile);
+            const appData = db.find(a => String(a.id) === String(req.params.id));
+            
+            if (appData && appData.folder) {
+                const folderPath = path.join(publicDir, appData.folder);
+                if (fs.existsSync(folderPath)) fs.rmSync(folderPath, { recursive: true, force: true });
+            }
+            
+            db = db.filter(a => String(a.id) !== String(req.params.id));
+            fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ success: false });
         }
-        db = db.filter(a => String(a.id) !== String(req.params.id));
-        fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
-        res.json({ success: true });
     });
 
+    // 9. УДАЛЕНИЕ ЗАЯВКИ (Отклонить)
     app.delete('/x-api/delete/:id', (req, res) => {
-        const id = req.params.id;
-        const jsonPath = path.join(quarantineDir, id + '.json');
-        const zipPath = path.join(quarantineDir, id);
-        if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
-        if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
-        res.json({ success: true });
+        try {
+            const id = req.params.id;
+            const i = path.join(quarantineDir, id + '.json');
+            const z = path.join(quarantineDir, id);
+            if (fs.existsSync(i)) fs.unlinkSync(i);
+            if (fs.existsSync(z)) fs.unlinkSync(z);
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ success: false });
+        }
     });
 
+    // Запуск бота
     if (storeBot) {
-        storeBot.launch().catch(err => {
-            if (!err.message.includes('409: Conflict')) console.error('❌ Ошибка бота:', err.message);
+        storeBot.launch().catch(e => {
+            if(!e.message.includes('409')) console.error("Bot Error:", e.message);
         });
     }
 
-    console.log("X-STORE: МОДУЛЬ ЗАГРУЖЕН УСПЕШНО");
+    console.log("🔥 МОДУЛЬ X-STORE УСПЕШНО ЗАГРУЖЕН");
 };
