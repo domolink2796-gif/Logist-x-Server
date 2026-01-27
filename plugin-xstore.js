@@ -358,7 +358,7 @@ module.exports = function (app, context) {
         }
     });
 
-    // 8. ПУБЛИКАЦИЯ (МАГИЯ PWA)
+    // 8. ПУБЛИКАЦИЯ (МАГИЯ PWA С УМНОЙ ЗАЩИТОЙ)
     app.post('/x-api/publish/:id', async (req, res) => {
         try {
             const id = req.params.id;
@@ -371,9 +371,11 @@ module.exports = function (app, context) {
             const appFolderName = "app_" + Date.now();
             const extractPath = path.join(publicDir, appFolderName);
             
+            // 1. Распаковка
             const zip = new AdmZip(zipPath);
             zip.extractAllTo(extractPath, true);
 
+            // 2. Поиск иконки
             const files = fs.readdirSync(extractPath);
             const iconFile = files.find(f => f.toLowerCase().startsWith('icon.'));
             let finalIcon = 'https://cdn-icons-png.flaticon.com/512/3208/3208728.png';
@@ -381,25 +383,9 @@ module.exports = function (app, context) {
                 finalIcon = `https://logist-x.store/public/apps/${appFolderName}/${iconFile}`;
             }
 
-            const urlsToCache = [];
-            function scanDir(dir) {
-                const items = fs.readdirSync(dir, { withFileTypes: true });
-                items.forEach(item => {
-                    if (item.isDirectory()) {
-                        scanDir(path.join(dir, item.name));
-                    } else {
-                        const ext = path.extname(item.name).toLowerCase();
-                        if(['.html','.js','.css','.png','.jpg','.svg','.json'].includes(ext)) {
-                            let rel = path.join(dir, item.name).replace(extractPath, '').replace(/\\/g, '/');
-                            if(rel.startsWith('/')) rel = rel.substring(1);
-                            urlsToCache.push(rel);
-                        }
-                    }
-                });
-            }
-            scanDir(extractPath);
-
-            if (!fs.existsSync(path.join(extractPath, 'manifest.json'))) {
+            // --- ТОЧЕЧНО: MANIFEST (ТОЛЬКО ЕСЛИ НЕТ) ---
+            const manifestPath = path.join(extractPath, 'manifest.json');
+            if (!fs.existsSync(manifestPath)) {
                 const manifest = {
                     "name": info.name,
                     "short_name": info.name,
@@ -409,44 +395,62 @@ module.exports = function (app, context) {
                     "theme_color": "#ff6600",
                     "icons": [{ "src": iconFile || "icon.png", "sizes": "512x512", "type": "image/png" }]
                 };
-                fs.writeFileSync(path.join(extractPath, 'manifest.json'), JSON.stringify(manifest, null, 2));
-                urlsToCache.push('manifest.json');
+                fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
             }
 
-            const swCode = `
-const CACHE_NAME = 'x-pwa-${appFolderName}-v1';
-const urls = [
-  './index.html',
-  ${urlsToCache.map(u => `'${u}'`).join(',\n  ')}
-];
+            // --- ТОЧЕЧНО: SERVICE WORKER ULTRA (ТОЛЬКО ЕСЛИ НЕТ) ---
+            const swPath = path.join(extractPath, 'sw.js');
+            if (!fs.existsSync(swPath)) {
+                const swCode = `
+const CACHE_NAME = 'x-pwa-${appFolderName}-v2';
+const OFFLINE_URL = './index.html';
 
 self.addEventListener('install', event => {
-    event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(urls)));
+    event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll([OFFLINE_URL, './manifest.json'])));
+    self.skipWaiting();
+});
+
+self.addEventListener('activate', event => {
+    event.waitUntil(caches.keys().then(keys => Promise.all(
+        keys.map(key => { if (key !== CACHE_NAME) return caches.delete(key); })
+    )));
+    self.clients.claim();
 });
 
 self.addEventListener('fetch', event => {
-    event.respondWith(
-        caches.match(event.request).then(response => {
-            return response || fetch(event.request);
-        }).catch(() => caches.match('./index.html'))
-    );
-});`;
-            fs.writeFileSync(path.join(extractPath, 'sw.js'), swCode.trim());
+    if (event.request.mode === 'navigate') {
+        event.respondWith(fetch(event.request).catch(() => caches.match(OFFLINE_URL)));
+    } else {
+        event.respondWith(caches.match(event.request).then(res => res || fetch(event.request)));
+    }
+});
 
+self.addEventListener('push', event => {
+    const data = event.data ? event.data.json() : { title: 'X-PLATFORM', body: 'Новое уведомление!' };
+    event.waitUntil(self.registration.showNotification(data.title, {
+        body: data.body, icon: './icon.png', data: { url: data.url || '/' }
+    }));
+});`;
+                fs.writeFileSync(swPath, swCode.trim());
+            }
+
+            // --- ТОЧЕЧНО: ИНЪЕКЦИЯ (ТОЛЬКО ЕСЛИ НЕТ) ---
             const indexPath = path.join(extractPath, 'index.html');
             if (fs.existsSync(indexPath)) {
                 let html = fs.readFileSync(indexPath, 'utf8');
-                const pwaInject = `
+                if (!html.includes('serviceWorker')) {
+                    const pwaInject = `
     <link rel="manifest" href="manifest.json">
     <meta name="mobile-web-app-capable" content="yes">
     <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js');}</script>
-                `;
-                if(html.includes('</head>')) {
-                    html = html.replace('</head>', pwaInject + '</head>');
-                } else {
-                    html = pwaInject + html;
+                    `;
+                    if(html.includes('</head>')) {
+                        html = html.replace('</head>', pwaInject + '</head>');
+                    } else {
+                        html = pwaInject + html;
+                    }
+                    fs.writeFileSync(indexPath, html);
                 }
-                fs.writeFileSync(indexPath, html);
             }
 
             let db = safeReadJson(dbFile);
@@ -510,7 +514,7 @@ self.addEventListener('fetch', event => {
         });
     }
 
-    // 🔥🔥🔥 ДОБАВЛЕНО: АВТО-БЭКАП БАЗЫ (КАЖДЫЙ ЧАС) 🔥🔥🔥
+    // 🔥🔥🔥 АВТО-БЭКАП БАЗЫ (КАЖДЫЙ ЧАС) 🔥🔥🔥
     setInterval(() => {
         try {
             if(fs.existsSync(dbFile)) {
