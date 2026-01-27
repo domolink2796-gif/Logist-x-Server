@@ -2,47 +2,54 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 
-// Файл истории (будет лежать в папке public)
+// Файл истории (теперь это будет объект с комнатами)
 const chatDbFile = path.join(process.cwd(), 'public', 'chat_history.json');
 
-// Проверяем, есть ли папка public
+// Проверяем папку public
 if (!fs.existsSync(path.join(process.cwd(), 'public'))) {
     fs.mkdirSync(path.join(process.cwd(), 'public'), { recursive: true });
 }
 
+// Помощник для чтения базы
+function readDb() {
+    if (!fs.existsSync(chatDbFile)) return {};
+    try {
+        return JSON.parse(fs.readFileSync(chatDbFile, 'utf8'));
+    } catch (e) { return {}; }
+}
+
 module.exports = function (app, context) {
 
-    // 1. API: Отправка сообщения
+    // 1. API: Отправка сообщения (С поддержкой комнат)
     app.post('/x-api/chat-send', express.json(), (req, res) => {
         try {
-            const { user, text, avatar, time } = req.body;
+            const { roomId, user, text, avatar, time } = req.body;
+            const targetRoom = roomId || 'public'; // Если ID нет, кидаем в общую
             
-            // Лог в консоль сервера (чтобы ты видел активность)
-            console.log(`💬 CHAT | ${user}: ${text}`);
+            console.log(`💬 CHAT [${targetRoom}] | ${user}: ${text}`);
 
-            // Читаем текущую историю
-            let history = [];
-            if (fs.existsSync(chatDbFile)) {
-                try { history = JSON.parse(fs.readFileSync(chatDbFile, 'utf8')); } catch (e) {}
-            }
+            let db = readDb();
+            
+            // Если такой комнаты еще нет — создаем её
+            if (!db[targetRoom]) db[targetRoom] = [];
 
-            // Добавляем новое сообщение
-            const newMessage = { user, text, avatar, time: time || new Date().toLocaleTimeString() };
-            history.push(newMessage);
+            // Добавляем сообщение
+            const newMessage = { 
+                user, 
+                text, 
+                avatar, 
+                time: time || new Date().toLocaleTimeString(),
+                timestamp: Date.now() 
+            };
+            
+            db[targetRoom].push(newMessage);
 
-            // Храним только последние 50 сообщений (чтобы не забивать память)
-            if (history.length > 50) history.shift();
+            // Лимит 100 сообщений на одну комнату
+            if (db[targetRoom].length > 100) db[targetRoom].shift();
 
-            // Сохраняем файл
-            fs.writeFileSync(chatDbFile, JSON.stringify(history, null, 2));
+            fs.writeFileSync(chatDbFile, JSON.stringify(db, null, 2));
 
-            // --- ПРОВЕРКА СВЯЗИ ---
-            let replyMsg = null;
-            if (text && text.toLowerCase().includes('тест системы')) {
-                replyMsg = `✅ Связь отличная, Шеф! Сервер принимает данные.`;
-            }
-
-            res.json({ success: true, reply: replyMsg });
+            res.json({ success: true });
 
         } catch (e) {
             console.error("Chat Error:", e.message);
@@ -50,14 +57,30 @@ module.exports = function (app, context) {
         }
     });
 
-    // 2. API: Загрузка истории (чтобы при входе чат не был пустым)
+    // 2. API: Загрузка истории конкретной комнаты
     app.get('/x-api/chat-history', (req, res) => {
-        if (fs.existsSync(chatDbFile)) {
-            res.json(JSON.parse(fs.readFileSync(chatDbFile, 'utf8')));
-        } else {
+        const roomId = req.query.roomId || 'public';
+        const db = readDb();
+        res.json(db[roomId] || []);
+    });
+
+    // 3. API: Список всех активных чатов (ДЛЯ АДМИНА)
+    app.get('/x-api/chat-list', (req, res) => {
+        try {
+            const db = readDb();
+            const list = Object.keys(db).map(roomId => {
+                const lastMsg = db[roomId][db[roomId].length - 1];
+                return {
+                    id: roomId,
+                    lastUser: lastMsg ? lastMsg.user : 'Empty',
+                    lastText: lastMsg ? lastMsg.text : ''
+                };
+            });
+            res.json(list);
+        } catch (e) {
             res.json([]);
         }
     });
 
-    console.log("🚀 ПЛАГИН X-CHAT (Автономный) ЗАПУЩЕН");
+    console.log("🚀 ПЛАГИН X-CHAT (MULTI-ROOM) ЗАПУЩЕН");
 };
