@@ -94,6 +94,16 @@ async function sendStoreMail(to, subject, text) {
 module.exports = function (app, context) {
     const { readDatabase } = context;
 
+    // 🔥🔥🔥 НАЧАЛО ВСТАВКИ: ЛЕКАРСТВО OT БЛОКИРОВКИ (CORS) 🔥🔥🔥
+    // Это разрешает твоему телефону (с другого домена или файла) видеть сервер
+    app.use((req, res, next) => {
+        res.header("Access-Control-Allow-Origin", "*"); // Разрешить всем
+        res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+        res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+        next();
+    });
+    // 🔥🔥🔥 КОНЕЦ ВСТАВКИ 🔥🔥🔥
+
     // Раздача статики для приложений
     app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
@@ -106,7 +116,12 @@ module.exports = function (app, context) {
         res.json(activeApps);
     });
 
-    // 2. API: Счетчик кликов (установок)
+    // 2. ПИНГ (Добавил для проверки связи с телефоном)
+    app.get('/x-api/ping', (req, res) => {
+        res.json({ status: "online" });
+    });
+
+    // 3. API: Счетчик кликов (установок)
     app.post('/x-api/click/:id', (req, res) => {
         let db = safeReadJson(dbFile);
         const appData = db.find(a => a.id === req.params.id);
@@ -119,7 +134,7 @@ module.exports = function (app, context) {
         }
     });
 
-    // 3. API: Скачивание архива (для админа)
+    // 4. API: Скачивание архива (для админа)
     app.get('/x-api/download/:id', (req, res) => {
         const filePath = path.join(quarantineDir, req.params.id);
         if (fs.existsSync(filePath)) {
@@ -129,7 +144,7 @@ module.exports = function (app, context) {
         }
     });
 
-    // 4. API: Скрыть/Показать приложение
+    // 5. API: Скрыть/Показать приложение
     app.post('/x-api/toggle-hidden/:id', (req, res) => {
         let db = safeReadJson(dbFile);
         const appIndex = db.findIndex(a => String(a.id) === String(req.params.id));
@@ -140,7 +155,7 @@ module.exports = function (app, context) {
         res.json({ success: true, hidden: db[appIndex].hidden });
     });
 
-    // 5. ГЛАВНАЯ АДМИН-ПАНЕЛЬ (Рендеринг HTML)
+    // 6. ГЛАВНАЯ АДМИН-ПАНЕЛЬ (Рендеринг HTML)
     app.get('/x-admin', (req, res) => {
         let activeApps = safeReadJson(dbFile);
 
@@ -296,7 +311,7 @@ module.exports = function (app, context) {
 </html>`);
     });
 
-    // 6. ЗАГРУЗКА ЗАЯВКИ (От клиента)
+    // 7. ЗАГРУЗКА ЗАЯВКИ (От клиента)
     app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
         try {
             const { accessKey, name, email, cat, desc } = req.body;
@@ -335,7 +350,7 @@ module.exports = function (app, context) {
         }
     });
 
-    // 7. ПУБЛИКАЦИЯ (МАГИЯ PWA)
+    // 8. ПУБЛИКАЦИЯ (МАГИЯ PWA)
     app.post('/x-api/publish/:id', async (req, res) => {
         try {
             const id = req.params.id;
@@ -464,7 +479,7 @@ self.addEventListener('fetch', event => {
         }
     });
 
-    // 8. УДАЛЕНИЕ ИЗ ПУБЛИКАЦИИ
+    // 9. УДАЛЕНИЕ ИЗ ПУБЛИКАЦИИ
     app.post('/x-api/unpublish/:id', (req, res) => {
         try {
             let db = safeReadJson(dbFile);
@@ -483,7 +498,7 @@ self.addEventListener('fetch', event => {
         }
     });
 
-    // 9. УДАЛЕНИЕ ЗАЯВКИ (Отклонить)
+    // 10. УДАЛЕНИЕ ЗАЯВКИ (Отклонить)
     app.delete('/x-api/delete/:id', (req, res) => {
         try {
             const id = req.params.id;
