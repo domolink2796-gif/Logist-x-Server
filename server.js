@@ -921,7 +921,13 @@ try {
 } catch (e) {
     console.log("❌ КРИТИЧЕСКАЯ ОШИБКА X-STORE: " + e.message);
 }
-
+// --- [НОВОЕ] 4. ПЛАГИН X-CHAT (СВЯЗЬ) ---
+try {
+    require('./plugin-chat-pro.js')(app, pluginContext);
+    console.log("✅ ПЛАГИН X-CHAT ПОДКЛЮЧЕН");
+} catch (e) {
+    console.log("❌ Ошибка чата: " + e.message);
+}
 
 // --- ЗАПУСК БОТА ---
 bot.launch().then(() => {
