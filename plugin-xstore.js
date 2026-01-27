@@ -33,10 +33,27 @@ const quarantineDir = path.join(process.cwd(), 'uploads-quarantine');
 const publicDir = path.join(process.cwd(), 'public', 'apps');
 const dbFile = path.join(process.cwd(), 'public', 'apps.json');
 
-// Автосоздание apps.json, если файла нет
+// Диагностика пути и файла
+console.log("X-STORE: START");
+console.log("Рабочий каталог:", process.cwd());
+console.log("Путь к apps.json:", dbFile);
+
+// Автосоздание apps.json
 if (!fs.existsSync(dbFile)) {
-    console.log('⚠️ apps.json не найден — создаём пустой');
+    console.log('⚠️ apps.json не найден — создаём');
     fs.writeFileSync(dbFile, '[]', 'utf8');
+} else {
+    console.log('apps.json найден, размер:', fs.statSync(dbFile).size, 'байт');
+    try {
+        const content = fs.readFileSync(dbFile, 'utf8');
+        console.log('Содержимое apps.json:', content.trim());
+        JSON.parse(content); // тест парсинга
+        console.log('apps.json валидный');
+    } catch (e) {
+        console.error('apps.json повреждён:', e.message);
+        fs.writeFileSync(dbFile, '[]', 'utf8');
+        console.log('Заменили на пустой []');
+    }
 }
 
 if (!fs.existsSync(quarantineDir)) fs.mkdirSync(quarantineDir, { recursive: true });
@@ -64,10 +81,10 @@ module.exports = function (app, context) {
 
     app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
-    // Защищённая функция чтения JSON
     function safeReadJson(file) {
         try {
-            return JSON.parse(fs.readFileSync(file, 'utf8'));
+            const content = fs.readFileSync(file, 'utf8');
+            return JSON.parse(content);
         } catch (e) {
             console.error(`Ошибка чтения JSON ${path.basename(file)}:`, e.message);
             return [];
@@ -129,7 +146,7 @@ module.exports = function (app, context) {
                 const id = jsonName.replace('.json', '');
                 let info = {};
                 try {
-                    info = JSON.parse(fs.readFileSync(path.join(quarantineDir, jsonName), 'utf8'));
+                    info = safeReadJson(path.join(quarantineDir, jsonName));
                 } catch (e) {}
 
                 const zipPath = path.join(quarantineDir, id);
@@ -320,7 +337,7 @@ module.exports = function (app, context) {
             }, null, 2));
 
             if (storeBot) {
-                const msg = `🆕 *НОВАЯ ЗАЯВКА В X-STORE*\\n\\n📦 Проект: *${name}*\\n👤 От: \( {kData.name}\\n🔑 Ключ: \` \){accessKey}\`\\n📂 Категория: ${cat}`;
+                const msg = `🆕 *НОВАЯ ЗАЯВКА В X-STORE*\n\n📦 Проект: *${name}*\n👤 От: \( {kData.name}\n🔑 Ключ: \` \){accessKey}\`\n📂 Категория: ${cat}`;
                 storeBot.telegram.sendMessage(MY_ID, msg, {
                     parse_mode: 'Markdown',
                     ...Markup.inlineKeyboard([[Markup.button.url('🛡 ПЕРЕЙТИ В АДМИНКУ', ADMIN_URL)]])
@@ -339,7 +356,7 @@ module.exports = function (app, context) {
             const infoPath = path.join(quarantineDir, id + '.json');
             if (!fs.existsSync(infoPath)) return res.status(404).json({ error: "Нет данных заявки" });
 
-            const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+            const info = safeReadJson(infoPath);
             const appFolderName = "app_" + Date.now();
             const extractPath = path.join(publicDir, appFolderName);
 
@@ -413,12 +430,16 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   event.respondWith(
-    caches.match(event.request).then(response => response || fetch(event.request).then(fetchResponse => {
-      if (!fetchResponse || fetchResponse.status !== 200 || fetchResponse.type !== 'basic') return fetchResponse;
-      const responseToCache = fetchResponse.clone();
-      caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseToCache));
-      return fetchResponse;
-    }).catch(() => caches.match('./index.html')))
+    caches.match(event.request).then(response => {
+      return response || fetch(event.request).then(fetchResponse => {
+        if (!fetchResponse || fetchResponse.status !== 200 || fetchResponse.type !== 'basic') {
+          return fetchResponse;
+        }
+        const responseToCache = fetchResponse.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseToCache));
+        return fetchResponse;
+      }).catch(() => caches.match('./index.html'));
+    })
   );
 });
                     `;
@@ -494,4 +515,6 @@ self.addEventListener('fetch', event => {
             if (!err.message.includes('409: Conflict')) console.error('❌ Ошибка бота:', err.message);
         });
     }
+
+    console.log("X-STORE: МОДУЛЬ ЗАГРУЖЕН УСПЕШНО");
 };
