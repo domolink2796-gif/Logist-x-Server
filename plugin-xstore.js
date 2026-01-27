@@ -94,15 +94,13 @@ async function sendStoreMail(to, subject, text) {
 module.exports = function (app, context) {
     const { readDatabase } = context;
 
-    // 🔥🔥🔥 НАЧАЛО ВСТАВКИ: ЛЕКАРСТВО OT БЛОКИРОВКИ (CORS) 🔥🔥🔥
-    // Это разрешает твоему телефону (с другого домена или файла) видеть сервер
+    // 🔥🔥🔥 ДОБАВЛЕНО: CORS (ЛЕКАРСТВО OT БЛОКИРОВКИ) 🔥🔥🔥
     app.use((req, res, next) => {
-        res.header("Access-Control-Allow-Origin", "*"); // Разрешить всем
+        res.header("Access-Control-Allow-Origin", "*"); 
         res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
         res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
         next();
     });
-    // 🔥🔥🔥 КОНЕЦ ВСТАВКИ 🔥🔥🔥
 
     // Раздача статики для приложений
     app.use('/public', express.static(path.join(process.cwd(), 'public')));
@@ -116,7 +114,7 @@ module.exports = function (app, context) {
         res.json(activeApps);
     });
 
-    // 2. ПИНГ (Добавил для проверки связи с телефоном)
+    // 2. ПИНГ (Для проверки связи)
     app.get('/x-api/ping', (req, res) => {
         res.json({ status: "online" });
     });
@@ -155,11 +153,10 @@ module.exports = function (app, context) {
         res.json({ success: true, hidden: db[appIndex].hidden });
     });
 
-    // 6. ГЛАВНАЯ АДМИН-ПАНЕЛЬ (Рендеринг HTML)
+    // 6. ГЛАВНАЯ АДМИН-ПАНЕЛЬ (Рендеринг HTML + СКАНЕР)
     app.get('/x-admin', (req, res) => {
         let activeApps = safeReadJson(dbFile);
 
-        // Сканируем папку карантина
         const pendingFiles = fs.readdirSync(quarantineDir)
             .filter(name => name.endsWith('.json'))
             .map(jsonName => {
@@ -172,6 +169,7 @@ module.exports = function (app, context) {
                 let fileReport = 'Ожидание анализа...';
                 let borderColor = '#444';
                 let safetyAlerts = [];
+                let uniqueDomains = new Set(); // 🔥 ШПИОН ССЫЛОК
 
                 if (hasZip) {
                     try {
@@ -192,7 +190,6 @@ module.exports = function (app, context) {
                                 safetyAlerts.push(`<span style="color:#ff4444;">⛔️ ЗАПРЕЩЕННЫЙ: ${name}</span>`);
                             }
 
-                            // Проверка кода JS/HTML
                             if (!e.isDirectory && (lowerName.endsWith('.js') || lowerName.endsWith('.html'))) {
                                 const content = e.getData().toString('utf8');
                                 suspiciousFuncs.forEach(func => {
@@ -200,8 +197,24 @@ module.exports = function (app, context) {
                                         safetyAlerts.push(`<span style="color:#ffbb33;">⚠️ Code Warning: ${func} in ${name}</span>`);
                                     }
                                 });
+
+                                // 🔥🔥🔥 ШПИОН ВНЕШНИХ ССЫЛОК 🔥🔥🔥
+                                const links = content.match(/https?:\/\/[^\s"'`<>]+/g);
+                                if (links) {
+                                    links.forEach(link => {
+                                        try {
+                                            const u = new URL(link);
+                                            if (!u.hostname.includes('logist-x.store') && !u.hostname.includes('w3.org')) {
+                                                uniqueDomains.add(u.hostname);
+                                            }
+                                        } catch(err) {}
+                                    });
+                                }
                             }
                         });
+
+                        // Вывод доменов в отчет
+                        uniqueDomains.forEach(d => safetyAlerts.push(`<span style="color:#3399ff;">📡 СВЯЗЬ: ${d}</span>`));
 
                         if (!hasIndex) safetyAlerts.push("<span style='color:#ff4444;'>❌ НЕТ INDEX.HTML В КОРНЕ!</span>");
 
@@ -221,7 +234,6 @@ module.exports = function (app, context) {
                 return { id, ...info, fileReport, borderColor, hasZip };
             }).reverse();
 
-        // Генерация HTML страницы админки
         res.send(`
 <!DOCTYPE html>
 <html>
@@ -315,8 +327,6 @@ module.exports = function (app, context) {
     app.post('/x-api/upload', upload.single('appZip'), async (req, res) => {
         try {
             const { accessKey, name, email, cat, desc } = req.body;
-            
-            // Проверка ключа
             const keys = await readDatabase();
             const kData = keys.find(k => k.key === (accessKey || "").toUpperCase());
 
@@ -327,14 +337,12 @@ module.exports = function (app, context) {
 
             const id = req.file ? req.file.filename : "req_" + Date.now();
             
-            // Сохраняем инфо о заявке
             fs.writeFileSync(path.join(quarantineDir, id + '.json'), JSON.stringify({
                 name, email, cat, desc, accessKey,
                 ownerName: kData.name,
                 expiryDate: kData.expiry
             }, null, 2));
 
-            // Уведомление в Телеграм
             if (storeBot) {
                 const msg = `🆕 *НОВАЯ ЗАЯВКА*\n\n📦 Проект: *${name}*\n👤 От: ${kData.name}\n🔑 Ключ: \`${accessKey}\``;
                 storeBot.telegram.sendMessage(MY_ID, msg, {
@@ -363,11 +371,9 @@ module.exports = function (app, context) {
             const appFolderName = "app_" + Date.now();
             const extractPath = path.join(publicDir, appFolderName);
             
-            // 1. Распаковка
             const zip = new AdmZip(zipPath);
             zip.extractAllTo(extractPath, true);
 
-            // 2. Поиск иконки
             const files = fs.readdirSync(extractPath);
             const iconFile = files.find(f => f.toLowerCase().startsWith('icon.'));
             let finalIcon = 'https://cdn-icons-png.flaticon.com/512/3208/3208728.png';
@@ -375,7 +381,6 @@ module.exports = function (app, context) {
                 finalIcon = `https://logist-x.store/public/apps/${appFolderName}/${iconFile}`;
             }
 
-            // 3. Сбор файлов для кэша (Service Worker)
             const urlsToCache = [];
             function scanDir(dir) {
                 const items = fs.readdirSync(dir, { withFileTypes: true });
@@ -385,7 +390,6 @@ module.exports = function (app, context) {
                     } else {
                         const ext = path.extname(item.name).toLowerCase();
                         if(['.html','.js','.css','.png','.jpg','.svg','.json'].includes(ext)) {
-                            // Путь относительно корня приложения
                             let rel = path.join(dir, item.name).replace(extractPath, '').replace(/\\/g, '/');
                             if(rel.startsWith('/')) rel = rel.substring(1);
                             urlsToCache.push(rel);
@@ -395,7 +399,6 @@ module.exports = function (app, context) {
             }
             scanDir(extractPath);
 
-            // 4. Генерация manifest.json (если нет)
             if (!fs.existsSync(path.join(extractPath, 'manifest.json'))) {
                 const manifest = {
                     "name": info.name,
@@ -410,8 +413,6 @@ module.exports = function (app, context) {
                 urlsToCache.push('manifest.json');
             }
 
-            // 5. Генерация sw.js (Service Worker)
-            // ВНИМАНИЕ: Здесь исправлен синтаксис для записи файла
             const swCode = `
 const CACHE_NAME = 'x-pwa-${appFolderName}-v1';
 const urls = [
@@ -432,7 +433,6 @@ self.addEventListener('fetch', event => {
 });`;
             fs.writeFileSync(path.join(extractPath, 'sw.js'), swCode.trim());
 
-            // 6. Инъекция в index.html
             const indexPath = path.join(extractPath, 'index.html');
             if (fs.existsSync(indexPath)) {
                 let html = fs.readFileSync(indexPath, 'utf8');
@@ -441,7 +441,6 @@ self.addEventListener('fetch', event => {
     <meta name="mobile-web-app-capable" content="yes">
     <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js');}</script>
                 `;
-                // Вставляем перед закрывающим head или в начало
                 if(html.includes('</head>')) {
                     html = html.replace('</head>', pwaInject + '</head>');
                 } else {
@@ -450,7 +449,6 @@ self.addEventListener('fetch', event => {
                 fs.writeFileSync(indexPath, html);
             }
 
-            // 7. Запись в базу
             let db = safeReadJson(dbFile);
             db.push({
                 ...info,
@@ -464,11 +462,9 @@ self.addEventListener('fetch', event => {
             });
             fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
 
-            // 8. Чистка карантина
             if(fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
             if(fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-            // 9. Письмо счастья
             await sendStoreMail(info.email, '🚀 Публикация успешна!', `Твое приложение "${info.name}" доступно в X-STORE.`);
 
             res.json({ success: true });
@@ -479,17 +475,14 @@ self.addEventListener('fetch', event => {
         }
     });
 
-    // 9. УДАЛЕНИЕ ИЗ ПУБЛИКАЦИИ
     app.post('/x-api/unpublish/:id', (req, res) => {
         try {
             let db = safeReadJson(dbFile);
             const appData = db.find(a => String(a.id) === String(req.params.id));
-            
             if (appData && appData.folder) {
                 const folderPath = path.join(publicDir, appData.folder);
                 if (fs.existsSync(folderPath)) fs.rmSync(folderPath, { recursive: true, force: true });
             }
-            
             db = db.filter(a => String(a.id) !== String(req.params.id));
             fs.writeFileSync(dbFile, JSON.stringify(db, null, 2), 'utf8');
             res.json({ success: true });
@@ -498,7 +491,6 @@ self.addEventListener('fetch', event => {
         }
     });
 
-    // 10. УДАЛЕНИЕ ЗАЯВКИ (Отклонить)
     app.delete('/x-api/delete/:id', (req, res) => {
         try {
             const id = req.params.id;
@@ -512,12 +504,20 @@ self.addEventListener('fetch', event => {
         }
     });
 
-    // Запуск бота
     if (storeBot) {
         storeBot.launch().catch(e => {
             if(!e.message.includes('409')) console.error("Bot Error:", e.message);
         });
     }
 
-    console.log("🔥 МОДУЛЬ X-STORE УСПЕШНО ЗАГРУЖЕН");
+    // 🔥🔥🔥 ДОБАВЛЕНО: АВТО-БЭКАП БАЗЫ (КАЖДЫЙ ЧАС) 🔥🔥🔥
+    setInterval(() => {
+        try {
+            if(fs.existsSync(dbFile)) {
+                fs.copyFileSync(dbFile, dbFile + '.bak');
+            }
+        } catch (e) { console.error("Backup Error:", e.message); }
+    }, 60 * 60 * 1000);
+
+    console.log("🔥 МОДУЛЬ X-STORE ПОЛНОСТЬЮ ЗАГРУЖЕН (ОРИГИНАЛ + УЛУЧШЕНИЯ)");
 };
