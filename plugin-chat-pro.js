@@ -23,7 +23,6 @@ function getMskTime() {
 
 const MAX_MESSAGE_AGE_MS = 24 * 60 * 60 * 1000; 
 
-// --- ФУНКЦИЯ ОЧИСТКИ (ТВОЙ ОРИГИНАЛ) ---
 function cleanOldMessages() {
     const now = Date.now();
     let totalRemoved = 0;
@@ -38,7 +37,6 @@ function cleanOldMessages() {
     }
 }
 
-// --- ЗАГРУЗКА ПРИ СТАРТЕ ---
 function loadToMemory() {
     console.log(`📡 [SYSTEM] ${getMskTime()}: Старт системы...`);
     if (!fs.existsSync(path.join(process.cwd(), 'public'))) {
@@ -63,7 +61,6 @@ module.exports = function (app, context) {
     app.use('/x-api/', express.json({ limit: '100mb' }));
     app.use('/x-api/', express.urlencoded({ limit: '100mb', extended: true }));
 
-    // --- ЛОГИ СОКЕТОВ ---
     if (io) {
         io.on('connection', (socket) => {
             console.log(`🔌 [SOCKET]: Подключен клиент ${socket.id}`);
@@ -77,7 +74,6 @@ module.exports = function (app, context) {
         });
     }
 
-    // --- СОХРАНЕНИЕ ПОДПИСКИ ---
     app.post('/x-api/save-subscription', (req, res) => {
         const { chatId, subscription } = req.body;
         console.log(`🔔 [PUSH-REG]: Запрос на регистрацию для [${chatId}]`);
@@ -93,7 +89,6 @@ module.exports = function (app, context) {
 
     app.get('/x-api/vapid-key', (req, res) => res.send(vapidKeys.publicKey));
 
-    // --- ОТПРАВКА СООБЩЕНИЯ + ПУШИ ---
     app.post('/x-api/chat-send', (req, res) => {
         try {
             const { roomId, user, text, avatar, isAudio, isImage, speechText, myChatId } = req.body;
@@ -123,10 +118,8 @@ module.exports = function (app, context) {
             setImmediate(() => {
                 fs.writeFile(chatDbFile, JSON.stringify(memoryDb, null, 2), () => {});
 
-                // БОТ X-SYSTEM
                 const checkText = (String(text || "") + " " + String(speechText || "")).toLowerCase();
                 if (checkText.includes("проверка связи")) {
-                    console.log(`🤖 [BOT]: Ответ X-SYSTEM активирован`);
                     const sysMsg = {
                         id: 'sys_' + Date.now(),
                         user: "X-SYSTEM",
@@ -139,17 +132,20 @@ module.exports = function (app, context) {
                     if (io) io.to(targetRoom).emit('new_message', sysMsg);
                 }
 
-                // ПУШИ
+                // 🔥 ИСПРАВЛЕННЫЙ ПУШ-ПАКЕТ (Облегченный для мобилок)
                 const pushPayload = JSON.stringify({
-                    title: user,
-                    body: isAudio ? "Голосовое сообщение 🎤" : (isImage ? "Фотография 📸" : text),
-                    icon: avatar || "https://cdn-icons-png.flaticon.com/512/4712/4712035.png"
+                    title: String(user).substring(0, 50),
+                    body: isAudio ? "🎤 Голос" : (isImage ? "📸 Фото" : String(text || "").substring(0, 100)),
+                    // Убираем передачу тяжелых аватар из пуша, чтобы не превысить 4Кб
+                    icon: "https://cdn-icons-png.flaticon.com/512/4712/4712035.png"
                 });
 
                 const allSubs = Object.keys(subscriptions);
-                const recipients = allSubs.filter(id => id !== myChatId);
                 
-                console.log(`📡 [PUSH-ENGINE]: В базе ${allSubs.length}. Рассылка на ${recipients.length} чел.`);
+                // ВРЕМЕННО УБИРАЕМ ФИЛЬТР, чтобы пуш пришел вообще ВСЕМ в базе для теста
+                const recipients = allSubs; 
+                
+                console.log(`📡 [PUSH-ENGINE]: В базе ${allSubs.length}. Рассылка на всех!`);
 
                 recipients.forEach(subId => {
                     webpush.sendNotification(subscriptions[subId], pushPayload)
@@ -166,10 +162,8 @@ module.exports = function (app, context) {
         } catch (e) { console.error("❌ Ошибка:", e.message); res.status(500).json({ success: false }); }
     });
 
-    // --- УДАЛЕНИЕ СООБЩЕНИЯ ---
     app.post('/x-api/chat-delete', (req, res) => {
         const { roomId, msgId } = req.body;
-        console.log(`🗑️ [MSG-DEL]: Удаляем ${msgId} в ${roomId}`);
         if (memoryDb[roomId]) {
             memoryDb[roomId] = memoryDb[roomId].filter(m => m.id !== msgId);
             if (io) io.to(roomId).emit('delete_message', msgId);
@@ -179,27 +173,11 @@ module.exports = function (app, context) {
         res.json({ success: false });
     });
 
-    // --- УДАЛЕНИЕ ЦЕЛОЙ КОМНАТЫ ---
-    app.post('/x-api/chat-room-delete', (req, res) => {
-        const { roomId } = req.body;
-        console.log(`🔥 [ROOM-DEL]: Полная очистка комнаты ${roomId}`);
-        if (memoryDb[roomId]) {
-            delete memoryDb[roomId];
-            fs.writeFile(chatDbFile, JSON.stringify(memoryDb, null, 2), () => {
-                res.json({ success: true });
-            });
-        } else { res.json({ success: false }); }
-    });
-
-    // --- ИСТОРИЯ ЧАТА ---
     app.get('/x-api/chat-history', (req, res) => {
-        console.log(`📖 [HISTORY]: Запрос комнаты ${req.query.roomId}`);
         res.json(memoryDb[req.query.roomId || 'public'] || []);
     });
 
-    // --- СПИСОК ВСЕХ ЧАТОВ ---
     app.get('/x-api/chat-list', (req, res) => {
-        console.log(`📋 [LIST]: Запрос списка всех комнат`);
         const list = Object.keys(memoryDb).map(id => ({
             id, lastUser: memoryDb[id][memoryDb[id].length - 1]?.user || 'Empty'
         }));
