@@ -8,7 +8,6 @@ const chatDbFile = path.join(process.cwd(), 'public', 'chat_history.json');
 const subDbFile = path.join(process.cwd(), 'public', 'subscriptions.json');
 let memoryDb = {};      // Тут храним переписку
 let subscriptions = {}; // Тут храним токены для пушей
-let connectedUsers = {}; // 🔥 НОВОЕ: Тут храним список тех, кто сейчас ОНЛАЙН
 
 // === БЛОК 2: КЛЮЧИ ДЛЯ PUSH-УВЕДОМЛЕНИЙ ===
 const vapidKeys = {
@@ -81,11 +80,9 @@ module.exports = function (app, context) {
             const messages = memoryDb[chatId] || [];
             
             // Считаем непрочитанные сообщения (те, где read: false и писал НЕ Админ)
-            // Если ты сам Админ, тебе важно знать сколько сообщений ОТ клиента ты не прочел
             const unreadCount = messages.filter(m => !m.read && m.user !== 'admin' && m.user !== 'Дмитрий').length;
             
-            // Проверяем, есть ли кто-то онлайн в этой комнате (кроме админа)
-            // Берем всех сокетов в комнате
+            // Проверяем, есть ли кто-то онлайн в этой комнате
             const roomSockets = io.sockets.adapter.rooms.get(chatId);
             const isOnline = roomSockets && roomSockets.size > 0; 
 
@@ -132,7 +129,7 @@ module.exports = function (app, context) {
                 }
             });
 
-            // 3. 🔥 НОВОЕ: Сигнал "Я открыл чат" (пометить всё прочитанным)
+            // 3. 🔥 НОВОЕ: Сигнал "Я открыл чат" (пометить всё прочитанным скопом)
             socket.on('mark_seen', ({ roomId, userId }) => {
                 if (memoryDb[roomId]) {
                     let updatedIds = [];
@@ -156,7 +153,7 @@ module.exports = function (app, context) {
             // 4. Отключение
             socket.on('disconnect', () => {
                 console.log(`🔌 [SOCKET]: ${socket.id} ушел`);
-                // Обновляем статистику (погасить лампочку)
+                // Обновляем статистику (погасить лампочку с задержкой)
                 setTimeout(broadcastAdminStats, 1000);
             });
         });
@@ -188,9 +185,10 @@ module.exports = function (app, context) {
 
             const newMessage = { 
                 id: 'msg_' + Date.now() + Math.random().toString(36).substr(2, 5),
+                roomId: targetRoom, // 🔥 ИСПРАВЛЕНО: Теперь клиент знает, из какого чата сообщение
                 user, text, avatar, 
                 isAudio: !!isAudio, isImage: !!isImage,
-                read: false, // 🔥 НОВОЕ: По умолчанию не прочитано
+                read: false, // 🔥 НОВОЕ: По умолчанию сообщение не прочитано
                 time: getMskTime(), 
                 timestamp: Date.now() 
             };
@@ -214,6 +212,7 @@ module.exports = function (app, context) {
                 if (checkText.includes("проверка связи")) {
                     const sysMsg = {
                         id: 'sys_' + Date.now(),
+                        roomId: targetRoom,
                         user: "X-SYSTEM",
                         text: "Системы в норме. Статус: ONLINE 🟢",
                         avatar: "https://cdn-icons-png.flaticon.com/512/4712/4712035.png",
@@ -226,7 +225,7 @@ module.exports = function (app, context) {
                 }
 
                 // === БЛОК 9: ОТПРАВКА PUSH-УВЕДОМЛЕНИЙ ===
-                // Логика: если сообщение не прочитали за 2 секунды - шлем пуш
+                // Логика: если сообщение не прочитали за 3 секунды - шлем пуш
                 setTimeout(() => {
                     // Проверяем актуальный статус сообщения из памяти
                     const currentMsg = memoryDb[targetRoom].find(m => m.id === newMessage.id);
@@ -241,10 +240,9 @@ module.exports = function (app, context) {
                             icon: "https://cdn-icons-png.flaticon.com/512/4712/4712035.png"
                         });
 
-                        // Шлем пуш в конкретный чат или всем (пока всем для теста)
                         const allSubs = Object.keys(subscriptions);
                         allSubs.forEach(subId => {
-                            // Не шлем пуш самому себе (если subId совпадает с myChatId отправителя)
+                            // Не шлем пуш самому себе
                             if (subId !== myChatId) {
                                 webpush.sendNotification(subscriptions[subId], pushPayload)
                                     .then(() => console.log(`✅ [PUSH]: Ушло на ${subId}`))
@@ -286,7 +284,6 @@ module.exports = function (app, context) {
         const list = Object.keys(memoryDb).map(chatId => {
             const messages = memoryDb[chatId] || [];
             
-            // Те же расчеты, что и в broadcastAdminStats
             const unreadCount = messages.filter(m => !m.read && m.user !== 'admin' && m.user !== 'Дмитрий').length;
             
             const roomSockets = io ? io.sockets.adapter.rooms.get(chatId) : null;
@@ -304,7 +301,7 @@ module.exports = function (app, context) {
 
     app.get('/x-api/ping', (req, res) => res.send('ok'));
     
-    // 🔥 НОВОЕ: Эндпоинт для удаления всей комнаты (полезно для тестов)
+    // Эндпоинт для удаления всей комнаты
     app.post('/x-api/chat-room-delete', (req, res) => {
         const { roomId } = req.body;
         if(memoryDb[roomId]) {
