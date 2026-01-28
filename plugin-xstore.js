@@ -419,8 +419,7 @@ module.exports = function (app, context) {
                 };
                 fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
             }
-
-                 // --- SERVICE WORKER С ПОДДЕРЖКОЙ ПУШ-УВЕДОМЛЕНИЙ ---
+            // --- SERVICE WORKER С ПОДДЕРЖКОЙ ПУШ-УВЕДОМЛЕНИЙ ---
             const swPath = path.join(extractPath, 'sw.js');
             const swCode = `
 const CACHE_NAME = 'x-pwa-${appFolderName}-v2';
@@ -446,28 +445,30 @@ self.addEventListener('fetch', event => {
     }
 });
 
-// ПЕРЕХВАТ ПУШ-УВЕДОМЛЕНИЙ ОТ СЕРВЕРА ЧАТА
 self.addEventListener('push', event => {
     let data = { title: 'X-SYSTEM', body: 'Новое сообщение' };
     try {
-        data = event.data.json();
+        if (event.data) {
+            data = event.data.json();
+        }
     } catch (e) {
         data = { title: 'X-SYSTEM', body: event.data ? event.data.text() : 'Уведомление' };
     }
     event.waitUntil(self.registration.showNotification(data.title, {
         body: data.body,
-        icon: './icon.png',
-        badge: './icon.png',
-        vibrate: [200, 100, 200]
+        icon: 'icon.png',
+        badge: 'icon.png',
+        vibrate: [200, 100, 200],
+        data: { url: './' }
     }));
 });
 
 self.addEventListener('notificationclick', event => {
     event.notification.close();
-    event.waitUntil(clients.openWindow('./'));
+    event.waitUntil(clients.openWindow(event.notification.data.url));
 });`;
             fs.writeFileSync(swPath, swCode.trim());
-
+                 
             // --- ТОЧЕЧНО: ИНЪЕКЦИЯ (ТОЛЬКО ЕСЛИ НЕТ) ---
             const indexPath = path.join(extractPath, 'index.html');
             if (fs.existsSync(indexPath)) {
