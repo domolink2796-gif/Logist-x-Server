@@ -103,8 +103,12 @@ module.exports = function (app, context) {
         io.emit('admin_update_stats', stats);
     }
 
-    // === БЛОК 6: РАБОТА С СОКЕТАМИ (Real-time) ===
+       // === БЛОК 6: РАБОТА С СОКЕТАМИ (Улучшенная стабильность) ===
     if (io) {
+        // 🔥 Установка интервала пинга, чтобы связь не "засыпала"
+        io.opts.pingInterval = 15000; // Пинг каждые 15 сек
+        io.opts.pingTimeout = 10000;  // Ждем ответ 10 сек до разрыва
+
         io.on('connection', (socket) => {
             console.log(`🔌 [SOCKET]: Подключен ${socket.id}`);
 
@@ -144,12 +148,14 @@ module.exports = function (app, context) {
                 }
             });
 
-            socket.on('disconnect', () => {
+            // 🔥 Расширенный лог выхода — покажет причину (например, transport close)
+            socket.on('disconnect', (reason) => {
+                console.log(`❌ [SOCKET]: Отключен ${socket.id} (${reason})`);
                 setTimeout(broadcastAdminStats, 1000);
             });
         });
     }
-
+ 
     // === БЛОК 7: СОХРАНЕНИЕ ПОДПИСКИ НА ПУШИ ===
     app.post('/x-api/save-subscription', (req, res) => {
         const { chatId, subscription } = req.body;
