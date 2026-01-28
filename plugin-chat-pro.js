@@ -5,6 +5,13 @@ const webpush = require('web-push');
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 
+/**
+ * =====================================================================
+ * X-CONECT ENGINE v4.6: SQLITE MONOLITH (AXX Tuning Edition)
+ * ИЗОЛИРОВАННАЯ СИСТЕМНАЯ ВКЛАДКА + МГНОВЕННЫЕ СТАТУСЫ ПРОЧТЕНИЯ
+ * =====================================================================
+ */
+
 module.exports = async function (app, context) {
     const io = context.io;
     const publicDir = path.join(process.cwd(), 'public');
@@ -25,7 +32,7 @@ module.exports = async function (app, context) {
         CREATE TABLE IF NOT EXISTS push_subs (chatId TEXT PRIMARY KEY, subscription TEXT);
     `);
 
-    console.log("📡 [SYSTEM]: X-CONECT v4.5 запущен.");
+    console.log("📡 [SYSTEM]: X-CONECT v4.6 (SQLite) запущен.");
 
     const vapidKeys = {
         publicKey: 'BPOw_-Te5biFuSMrQLHjfsv3c9LtoFZkhHJp9FE1a1f55L8jGuL1uR39Ho9SWMN6dIdVt8FfxNHwcHuV0uUQ9Jg',
@@ -53,11 +60,11 @@ module.exports = async function (app, context) {
                 const { roomId, userId } = data;
                 await db.run('UPDATE messages SET read = 1 WHERE roomId = ? AND user != ? AND read = 0', [roomId, userId]);
                 io.to(roomId).emit('msg_read_status', { roomId });
+                io.emit('refresh_chat_list'); // Обновляем счетчики у всех
             });
         });
     }
 
-    // --- API РЕГИСТРАЦИИ (БЕЗ ИЗМЕНЕНИЙ) ---
     app.post('/x-api/register-nick', async (req, res) => {
         const { nickname, password, chatId } = req.body;
         const nick = String(nickname).trim().toLowerCase();
@@ -73,7 +80,6 @@ module.exports = async function (app, context) {
         res.json({ success: true });
     });
 
-    // --- ПОИСК (ТВОЯ ВЕРСИЯ) ---
     app.post('/x-api/find-user', async (req, res) => {
         const { myId, searchNick } = req.body;
         const targetNick = String(searchNick).trim().toLowerCase();
@@ -84,7 +90,6 @@ module.exports = async function (app, context) {
         } else { res.json({ success: false, message: "Пользователь не найден" }); }
     });
 
-    // --- ОТПРАВКА (ДОБАВЛЕНА СИСТЕМНАЯ КОМНАТА) ---
     app.post('/x-api/chat-send', async (req, res) => {
         try {
             const { roomId, user, text, avatar, isAudio, isImage, myChatId } = req.body;
@@ -101,16 +106,19 @@ module.exports = async function (app, context) {
                 io.emit('refresh_chat_list');
             }
 
-            // ПРОВЕРКА СВЯЗИ -> ПЕРЕНАПРАВЛЕНИЕ В system_log
             if (text.toLowerCase() === 'проверка связи') {
                 const sysTs = Date.now() + 500;
                 const sysRoom = 'system_log';
-                const sysText = '🛰️ СВЯЗЬ УСТАНОВЛЕНА. SQLite Engine v4.5 активен.';
+                const sysText = '🛰️ СВЯЗЬ УСТАНОВЛЕНА. Все системы в норме.';
                 
+                // Система "читает" твое сообщение
+                await db.run('UPDATE messages SET read = 1 WHERE roomId = ? AND read = 0', [sysRoom]);
+
                 await db.run(`INSERT INTO messages (id, roomId, user, avatar, text, isAudio, isImage, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                     ['sys_'+sysTs, sysRoom, 'СИСТЕМА', '', sysText, 0, 0, sysTs]);
 
                 setTimeout(() => { if (io) { 
+                    io.to(sysRoom).emit('msg_read_status', { roomId: sysRoom });
                     io.emit('new_message', { id: 'sys_'+sysTs, roomId: sysRoom, user: 'СИСТЕМА', text: sysText, time: getMskTime(sysTs) });
                     io.emit('refresh_chat_list');
                 }}, 800);
@@ -119,15 +127,12 @@ module.exports = async function (app, context) {
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
-    // --- СПИСОК ВКЛАДОК (ТВОЯ ЛОГИКА + МОЯ СТРОЧКА ДЛЯ СИСТЕМЫ) ---
     app.get('/x-api/chat-list', async (req, res) => {
         const { myId, myName } = req.query;
-        // Добавил в твой запрос "OR roomId = 'system_log'"
         const rooms = await db.all(`SELECT DISTINCT roomId FROM messages WHERE roomId LIKE ? OR roomId = 'public' OR roomId = 'system_log'`, [`%${myId}%`]);
         const result = [];
         for (let r of rooms) {
             let dName = (r.roomId === 'public') ? "🌐 ОБЩИЙ КАНАЛ" : "Чат";
-            // Добавил проверку на системный лог
             if (r.roomId === 'system_log') dName = "🛰️ СИСТЕМА";
             else if (r.roomId.includes('_')) {
                 const otherId = r.roomId.split('_').find(id => id !== myId);
@@ -140,7 +145,6 @@ module.exports = async function (app, context) {
         res.json(result);
     });
 
-    // --- ИСТОРИЯ, УДАЛЕНИЕ И Т.Д. (ТВОЙ ОРИГИНАЛ) ---
     app.get('/x-api/chat-history', async (req, res) => {
         const msgs = await db.all('SELECT * FROM messages WHERE roomId = ? ORDER BY timestamp ASC LIMIT 200', [req.query.roomId || 'public']);
         res.json(msgs.map(m => ({ ...m, isAudio: !!m.isAudio, isImage: !!m.isImage, time: getMskTime(m.timestamp) })));
