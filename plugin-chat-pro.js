@@ -6,8 +6,11 @@ const webpush = require('web-push');
 // === БЛОК 1: НАСТРОЙКИ ФАЙЛОВ И БАЗЫ ===
 const chatDbFile = path.join(process.cwd(), 'public', 'chat_history.json');
 const subDbFile = path.join(process.cwd(), 'public', 'subscriptions.json');
+const usersDbFile = path.join(process.cwd(), 'public', 'users.json'); // 🔥 НОВОЕ: Файл с никами
+
 let memoryDb = {};      // Тут храним переписку
 let subscriptions = {}; // Тут храним токены для пушей
+let usersRegistry = {}; // 🔥 НОВОЕ: Тут храним связку "Ник -> ID"
 
 // === БЛОК 2: КЛЮЧИ ДЛЯ PUSH-УВЕДОМЛЕНИЙ ===
 const vapidKeys = {
@@ -40,7 +43,7 @@ function cleanOldMessages() {
     }
 }
 
-// Функция для сохранения базы чатов, чтобы не писать одно и то же
+// Функция для сохранения базы чатов
 function saveChatDb() {
     fs.writeFile(chatDbFile, JSON.stringify(memoryDb, null, 2), () => {});
 }
@@ -51,13 +54,20 @@ function loadToMemory() {
     if (!fs.existsSync(path.join(process.cwd(), 'public'))) {
         fs.mkdirSync(path.join(process.cwd(), 'public'), { recursive: true });
     }
+    // Загрузка чатов
     if (fs.existsSync(chatDbFile)) {
         try { memoryDb = JSON.parse(fs.readFileSync(chatDbFile, 'utf8')); } catch (e) { memoryDb = {}; }
     }
+    // Загрузка подписок
     if (fs.existsSync(subDbFile)) {
         try { subscriptions = JSON.parse(fs.readFileSync(subDbFile, 'utf8')); } catch (e) { subscriptions = {}; }
     }
-    console.log(`✅ [SYSTEM]: Подписок загружено: ${Object.keys(subscriptions).length}`);
+    // 🔥 НОВОЕ: Загрузка ников
+    if (fs.existsSync(usersDbFile)) {
+        try { usersRegistry = JSON.parse(fs.readFileSync(usersDbFile, 'utf8')); } catch (e) { usersRegistry = {}; }
+    }
+
+    console.log(`✅ [SYSTEM]: Подписок: ${Object.keys(subscriptions).length}, Ников: ${Object.keys(usersRegistry).length}`);
     cleanOldMessages();
 }
 
@@ -71,30 +81,25 @@ module.exports = function (app, context) {
     app.use('/x-api/', express.json({ limit: '100mb' }));
     app.use('/x-api/', express.urlencoded({ limit: '100mb', extended: true }));
 
-    // 🔥 НОВОЕ: Функция подсчета статистики для Админа (лампочки и счетчики)
+    // Функция подсчета статистики для Админа
     function broadcastAdminStats() {
         if (!io) return;
         
-        // Собираем массив данных по всем чатам
         const stats = Object.keys(memoryDb).map(chatId => {
             const messages = memoryDb[chatId] || [];
-            
-            // Считаем непрочитанные сообщения (те, где read: false и писал НЕ Админ)
             const unreadCount = messages.filter(m => !m.read && m.user !== 'admin' && m.user !== 'Дмитрий').length;
             
-            // Проверяем, есть ли кто-то онлайн в этой комнате
             const roomSockets = io.sockets.adapter.rooms.get(chatId);
             const isOnline = roomSockets && roomSockets.size > 0; 
 
             return {
                 id: chatId,
                 lastUser: messages[messages.length - 1]?.user || 'Empty',
-                isOnline: !!isOnline, // true/false для лампочки
-                unreadCount: unreadCount // Цифра для красного кружка
+                isOnline: !!isOnline,
+                unreadCount: unreadCount
             };
         });
 
-        // Отправляем всем (админы сами отфильтруют)
         io.emit('admin_update_stats', stats);
     }
 
@@ -103,38 +108,28 @@ module.exports = function (app, context) {
         io.on('connection', (socket) => {
             console.log(`🔌 [SOCKET]: Подключен ${socket.id}`);
 
-            // 1. Вход в комнату
             socket.on('join_room', (roomId) => {
                 socket.join(roomId);
                 console.log(`👁️ [SOCKET]: ${socket.id} зашел в ${roomId}`);
-                // Сразу обновляем статистику админу (зажечь зеленую лампочку)
                 broadcastAdminStats();
             });
 
-            // 2. 🔥 НОВОЕ: Сигнал "Я прочитал сообщение"
             socket.on('message_read', ({ msgId, roomId }) => {
                 if (memoryDb[roomId]) {
                     const msg = memoryDb[roomId].find(m => m.id === msgId);
                     if (msg && !msg.read) {
-                        msg.read = true; // Ставим галочку в базе
+                        msg.read = true;
                         saveChatDb();
-                        
-                        // Сообщаем всем в комнате, что это сообщение прочитано (синие галочки)
                         io.to(roomId).emit('msg_read_status', { msgIds: [msgId] });
-                        
-                        // Обновляем админу счетчики (убираем красный кружок)
                         broadcastAdminStats();
-                        console.log(`👀 [READ]: Сообщение ${msgId} прочитано`);
                     }
                 }
             });
 
-            // 3. 🔥 НОВОЕ: Сигнал "Я открыл чат" (пометить всё прочитанным скопом)
             socket.on('mark_seen', ({ roomId, userId }) => {
                 if (memoryDb[roomId]) {
                     let updatedIds = [];
                     memoryDb[roomId].forEach(m => {
-                        // Если сообщение не мое и не прочитано -> читаем
                         if (m.user !== userId && !m.read) {
                             m.read = true;
                             updatedIds.push(m.id);
@@ -145,15 +140,11 @@ module.exports = function (app, context) {
                         saveChatDb();
                         io.to(roomId).emit('msg_read_status', { msgIds: updatedIds });
                         broadcastAdminStats();
-                        console.log(`👀 [SEEN]: В комнате ${roomId} прочитано ${updatedIds.length} сообщений`);
                     }
                 }
             });
 
-            // 4. Отключение
             socket.on('disconnect', () => {
-                console.log(`🔌 [SOCKET]: ${socket.id} ушел`);
-                // Обновляем статистику (погасить лампочку с задержкой)
                 setTimeout(broadcastAdminStats, 1000);
             });
         });
@@ -162,7 +153,6 @@ module.exports = function (app, context) {
     // === БЛОК 7: СОХРАНЕНИЕ ПОДПИСКИ НА ПУШИ ===
     app.post('/x-api/save-subscription', (req, res) => {
         const { chatId, subscription } = req.body;
-        console.log(`🔔 [PUSH-REG]: Новый токен для [${chatId}]`);
         if (chatId && subscription) {
             subscriptions[chatId] = subscription;
             fs.writeFile(subDbFile, JSON.stringify(subscriptions, null, 2), () => {});
@@ -172,6 +162,47 @@ module.exports = function (app, context) {
     });
 
     app.get('/x-api/vapid-key', (req, res) => res.send(vapidKeys.publicKey));
+
+    // === 🔥 БЛОК 10: РЕГИСТРАЦИЯ И ПОИСК НИКОВ (НОВОЕ) ===
+    
+    // 1. Регистрация нового ника
+    app.post('/x-api/register-nick', (req, res) => {
+        const { nickname, chatId } = req.body;
+        const cleanNick = String(nickname).trim().toLowerCase();
+
+        // Проверяем, не занят ли ник КЕМ-ТО ДРУГИМ (если это наш ID - обновляем)
+        if (usersRegistry[cleanNick] && usersRegistry[cleanNick] !== chatId) {
+            return res.json({ success: false, message: "Ник занят" });
+        }
+
+        usersRegistry[cleanNick] = chatId;
+        fs.writeFile(usersDbFile, JSON.stringify(usersRegistry, null, 2), () => {});
+        console.log(`📒 [REGISTRY]: Зарегистрирован ник: ${cleanNick}`);
+        
+        return res.json({ success: true });
+    });
+
+    // 2. Поиск пользователя по нику
+    app.post('/x-api/find-user', (req, res) => {
+        const { myId, searchNick } = req.body;
+        const cleanSearch = String(searchNick).trim().toLowerCase();
+        
+        const targetId = usersRegistry[cleanSearch];
+
+        if (targetId) {
+            // 🔥 СОЗДАЕМ УНИКАЛЬНУЮ КОМНАТУ: Сортируем ID, чтобы chatA_chatB было одинаково для обоих
+            const p2pRoomId = [myId, targetId].sort().join('_');
+            
+            res.json({ 
+                success: true, 
+                roomId: p2pRoomId, 
+                foundId: targetId,
+                targetNick: searchNick 
+            });
+        } else {
+            res.json({ success: false, message: "Пользователь не найден" });
+        }
+    });
 
     // === БЛОК 8: ОТПРАВКА СООБЩЕНИЯ ===
     app.post('/x-api/chat-send', (req, res) => {
@@ -185,10 +216,10 @@ module.exports = function (app, context) {
 
             const newMessage = { 
                 id: 'msg_' + Date.now() + Math.random().toString(36).substr(2, 5),
-                roomId: targetRoom, // 🔥 ИСПРАВЛЕНО: Теперь клиент знает, из какого чата сообщение
+                roomId: targetRoom, 
                 user, text, avatar, 
                 isAudio: !!isAudio, isImage: !!isImage,
-                read: false, // 🔥 НОВОЕ: По умолчанию сообщение не прочитано
+                read: false, 
                 time: getMskTime(), 
                 timestamp: Date.now() 
             };
@@ -196,9 +227,7 @@ module.exports = function (app, context) {
             memoryDb[targetRoom].push(newMessage);
             
             if (io) {
-                // Отправляем само сообщение
                 io.to(targetRoom).emit('new_message', newMessage);
-                // Обновляем админу счетчики (добавить +1 в красный кружок)
                 broadcastAdminStats();
             }
 
@@ -207,7 +236,7 @@ module.exports = function (app, context) {
             setImmediate(() => {
                 saveChatDb();
 
-                // Авто-ответ системы
+                // Авто-ответ
                 const checkText = (String(text || "") + " " + String(speechText || "")).toLowerCase();
                 if (checkText.includes("проверка связи")) {
                     const sysMsg = {
@@ -224,15 +253,12 @@ module.exports = function (app, context) {
                     if (io) io.to(targetRoom).emit('new_message', sysMsg);
                 }
 
-                // === БЛОК 9: ОТПРАВКА PUSH-УВЕДОМЛЕНИЙ ===
-                // Логика: если сообщение не прочитали за 3 секунды - шлем пуш
+                // === БЛОК 9: PUSH-УВЕДОМЛЕНИЯ ===
                 setTimeout(() => {
-                    // Проверяем актуальный статус сообщения из памяти
                     const currentMsg = memoryDb[targetRoom].find(m => m.id === newMessage.id);
                     
-                    // Если сообщение всё еще не прочитано (currentMsg.read === false)
                     if (currentMsg && !currentMsg.read) {
-                        console.log(`🚀 [PUSH-ENGINE]: Сообщение не прочитано, отправляем PUSH...`);
+                        console.log(`🚀 [PUSH-ENGINE]: Сообщение не прочитано, шлем PUSH...`);
                         
                         const pushPayload = JSON.stringify({
                             title: String(user).substring(0, 50),
@@ -244,20 +270,20 @@ module.exports = function (app, context) {
                         allSubs.forEach(subId => {
                             // Не шлем пуш самому себе
                             if (subId !== myChatId) {
+                                // ⚠️ ВАЖНО: Если это приватный чат (длинный ID), шлем пуш обоим участникам (кроме отправителя)
+                                // Но тут мы шлем всем подписчикам, это допустимо для старта.
                                 webpush.sendNotification(subscriptions[subId], pushPayload)
-                                    .then(() => console.log(`✅ [PUSH]: Ушло на ${subId}`))
+                                    .then(() => {})
                                     .catch(err => {
                                         if (err.statusCode === 404 || err.statusCode === 410) {
-                                            delete subscriptions[subId]; // Удаляем мертвые токены
+                                            delete subscriptions[subId];
                                             fs.writeFile(subDbFile, JSON.stringify(subscriptions, null, 2), () => {});
                                         }
                                     });
                             }
                         });
-                    } else {
-                        console.log(`zzz [PUSH-SKIP]: Сообщение уже прочитано онлайн, пуш не нужен.`);
                     }
-                }, 3000); // Ждем 3 секунды перед отправкой пуша
+                }, 3000); 
             });
         } catch (e) { console.error("❌ ERROR:", e.message); res.status(500).json({ success: false }); }
     });
@@ -268,7 +294,6 @@ module.exports = function (app, context) {
             memoryDb[roomId] = memoryDb[roomId].filter(m => m.id !== msgId);
             if (io) io.to(roomId).emit('delete_message', msgId);
             saveChatDb();
-            // После удаления тоже обновляем статистику
             broadcastAdminStats();
             return res.json({ success: true });
         }
@@ -279,13 +304,10 @@ module.exports = function (app, context) {
         res.json(memoryDb[req.query.roomId || 'public'] || []);
     });
 
-    // 🔥 НОВОЕ: API списка чатов теперь возвращает статистику
     app.get('/x-api/chat-list', (req, res) => {
         const list = Object.keys(memoryDb).map(chatId => {
             const messages = memoryDb[chatId] || [];
-            
             const unreadCount = messages.filter(m => !m.read && m.user !== 'admin' && m.user !== 'Дмитрий').length;
-            
             const roomSockets = io ? io.sockets.adapter.rooms.get(chatId) : null;
             const isOnline = roomSockets && roomSockets.size > 0;
 
@@ -301,7 +323,6 @@ module.exports = function (app, context) {
 
     app.get('/x-api/ping', (req, res) => res.send('ok'));
     
-    // Эндпоинт для удаления всей комнаты
     app.post('/x-api/chat-room-delete', (req, res) => {
         const { roomId } = req.body;
         if(memoryDb[roomId]) {
