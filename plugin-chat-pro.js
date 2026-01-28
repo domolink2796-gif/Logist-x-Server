@@ -94,7 +94,8 @@ module.exports = function (app, context) {
 
             return {
                 id: chatId,
-                lastUser: messages[messages.length - 1]?.user || 'Empty',
+                lastUser: [...messages].reverse().find(m => m.user !== 'admin' && m.user !== 'Дмитрий')?.user || (messages[0]?.user || 'Empty'),
+
                 isOnline: !!isOnline,
                 unreadCount: unreadCount
             };
@@ -103,12 +104,8 @@ module.exports = function (app, context) {
         io.emit('admin_update_stats', stats);
     }
 
-       // === БЛОК 6: РАБОТА С СОКЕТАМИ (Улучшенная стабильность) ===
+    // === БЛОК 6: РАБОТА С СОКЕТАМИ (Real-time) ===
     if (io) {
-        // 🔥 Установка интервала пинга, чтобы связь не "засыпала"
-        io.opts.pingInterval = 15000; // Пинг каждые 15 сек
-        io.opts.pingTimeout = 10000;  // Ждем ответ 10 сек до разрыва
-
         io.on('connection', (socket) => {
             console.log(`🔌 [SOCKET]: Подключен ${socket.id}`);
 
@@ -148,14 +145,12 @@ module.exports = function (app, context) {
                 }
             });
 
-            // 🔥 Расширенный лог выхода — покажет причину (например, transport close)
-            socket.on('disconnect', (reason) => {
-                console.log(`❌ [SOCKET]: Отключен ${socket.id} (${reason})`);
+            socket.on('disconnect', () => {
                 setTimeout(broadcastAdminStats, 1000);
             });
         });
     }
- 
+
     // === БЛОК 7: СОХРАНЕНИЕ ПОДПИСКИ НА ПУШИ ===
     app.post('/x-api/save-subscription', (req, res) => {
         const { chatId, subscription } = req.body;
@@ -319,7 +314,8 @@ module.exports = function (app, context) {
 
             return {
                 id: chatId, 
-                lastUser: messages[messages.length - 1]?.user || 'Empty',
+                lastUser: [...messages].reverse().find(m => m.user !== 'admin' && m.user !== 'Дмитрий')?.user || (messages[0]?.user || 'Empty'),
+
                 isOnline: !!isOnline,
                 unreadCount: unreadCount
             };
