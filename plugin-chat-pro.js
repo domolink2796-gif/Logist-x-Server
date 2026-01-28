@@ -7,8 +7,8 @@ const { open } = require('sqlite');
 
 /**
  * =====================================================================
- * X-CONECT ENGINE v4.6: SQLITE MONOLITH (AXX Tuning Edition)
- * ИЗОЛИРОВАННАЯ СИСТЕМНАЯ ВКЛАДКА + МГНОВЕННЫЕ СТАТУСЫ ПРОЧТЕНИЯ
+ * X-CONECT ENGINE v4.7: SQLITE MONOLITH (AXX Tuning Edition)
+ * ИСПРАВЛЕНА ОШИБКА UNIQUE CONSTRAINT + ИМЕНА В ЛОГАХ
  * =====================================================================
  */
 
@@ -32,7 +32,7 @@ module.exports = async function (app, context) {
         CREATE TABLE IF NOT EXISTS push_subs (chatId TEXT PRIMARY KEY, subscription TEXT);
     `);
 
-    console.log("📡 [SYSTEM]: X-CONECT v4.6 (SQLite) запущен.");
+    console.log("📡 [SYSTEM]: X-CONECT v4.7 (SQLite) запущен.");
 
     const vapidKeys = {
         publicKey: 'BPOw_-Te5biFuSMrQLHjfsv3c9LtoFZkhHJp9FE1a1f55L8jGuL1uR39Ho9SWMN6dIdVt8FfxNHwcHuV0uUQ9Jg',
@@ -55,29 +55,55 @@ module.exports = async function (app, context) {
 
     if (io) {
         io.on('connection', (socket) => {
-            socket.on('join_room', (roomId) => socket.join(roomId));
+            // Улучшенные логи сокетов
+            socket.on('join_room', async (roomId) => {
+                socket.join(roomId);
+                // Пытаемся найти имя пользователя для красивого лога
+                const user = await db.get('SELECT nickname FROM users WHERE chatId = ?', [roomId]);
+                const name = user ? user.nickname : 'Клиент';
+                console.log(`📡 Socket: ${name} вошел в комнату [${roomId}]`);
+            });
+            
             socket.on('mark_seen', async (data) => {
                 const { roomId, userId } = data;
                 await db.run('UPDATE messages SET read = 1 WHERE roomId = ? AND user != ? AND read = 0', [roomId, userId]);
                 io.to(roomId).emit('msg_read_status', { roomId });
-                io.emit('refresh_chat_list'); // Обновляем счетчики у всех
+                io.emit('refresh_chat_list');
             });
         });
     }
 
+    // --- API РЕГИСТРАЦИИ: ИСПРАВЛЕНЫ КОНФЛИКТЫ UNIQUE ---
     app.post('/x-api/register-nick', async (req, res) => {
         const { nickname, password, chatId } = req.body;
         const nick = String(nickname).trim().toLowerCase();
-        const existing = await db.get('SELECT * FROM users WHERE nickname = ?', [nick]);
-        if (existing) {
-            if (existing.password === password) {
-                await db.run('UPDATE users SET chatId = ? WHERE nickname = ?', [chatId, nick]);
-                return res.json({ success: true });
+
+        try {
+            const existingNick = await db.get('SELECT * FROM users WHERE nickname = ?', [nick]);
+            
+            if (existingNick) {
+                if (existingNick.password === password) {
+                    // Тот же юзер, просто обновляем ID если сменился
+                    await db.run('UPDATE users SET chatId = ? WHERE nickname = ?', [chatId, nick]);
+                    return res.json({ success: true });
+                }
+                return res.json({ success: false, message: "Ник занят другим паролем" });
             }
-            return res.json({ success: false, message: "Ник занят" });
+
+            // Если ника нет, проверяем не занят ли ID другим ником
+            const existingId = await db.get('SELECT * FROM users WHERE chatId = ?', [chatId]);
+            if (existingId) {
+                // Переименовываем существующий аккаунт этого устройства
+                await db.run('UPDATE users SET nickname = ?, password = ? WHERE chatId = ?', [nick, password, chatId]);
+            } else {
+                // Новый пользователь
+                await db.run('INSERT INTO users (chatId, nickname, password) VALUES (?, ?, ?)', [chatId, nick, password]);
+            }
+            res.json({ success: true });
+        } catch (e) {
+            console.error("❌ REG ERROR:", e);
+            res.json({ success: false });
         }
-        await db.run('INSERT INTO users (chatId, nickname, password) VALUES (?, ?, ?)', [chatId, nick, password]);
-        res.json({ success: true });
     });
 
     app.post('/x-api/find-user', async (req, res) => {
@@ -111,7 +137,6 @@ module.exports = async function (app, context) {
                 const sysRoom = 'system_log';
                 const sysText = '🛰️ СВЯЗЬ УСТАНОВЛЕНА. Все системы в норме.';
                 
-                // Система "читает" твое сообщение
                 await db.run('UPDATE messages SET read = 1 WHERE roomId = ? AND read = 0', [sysRoom]);
 
                 await db.run(`INSERT INTO messages (id, roomId, user, avatar, text, isAudio, isImage, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
