@@ -5,13 +5,6 @@ const webpush = require('web-push');
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 
-/**
- * =====================================================================
- * X-CONECT ENGINE v4.7: SQLITE MONOLITH (AXX Tuning Edition)
- * ИСПРАВЛЕНА ОШИБКА UNIQUE CONSTRAINT + ИМЕНА В ЛОГАХ
- * =====================================================================
- */
-
 module.exports = async function (app, context) {
     const io = context.io;
     const publicDir = path.join(process.cwd(), 'public');
@@ -23,6 +16,7 @@ module.exports = async function (app, context) {
 
     const db = await open({ filename: dbPath, driver: sqlite3.Database });
 
+    // Инициализация таблиц
     await db.exec(`
         CREATE TABLE IF NOT EXISTS users (chatId TEXT PRIMARY KEY, nickname TEXT UNIQUE, password TEXT);
         CREATE TABLE IF NOT EXISTS messages (
@@ -32,7 +26,7 @@ module.exports = async function (app, context) {
         CREATE TABLE IF NOT EXISTS push_subs (chatId TEXT PRIMARY KEY, subscription TEXT);
     `);
 
-    console.log("📡 [SYSTEM]: X-CONECT v4.7 (SQLite) запущен.");
+    console.log("📡 [SYSTEM]: X-CONECT v5.0 (Full Sync) запущен.");
 
     const vapidKeys = {
         publicKey: 'BPOw_-Te5biFuSMrQLHjfsv3c9LtoFZkhHJp9FE1a1f55L8jGuL1uR39Ho9SWMN6dIdVt8FfxNHwcHuV0uUQ9Jg',
@@ -40,9 +34,7 @@ module.exports = async function (app, context) {
     };
     webpush.setVapidDetails('mailto:admin@logist-x.store', vapidKeys.publicKey, vapidKeys.privateKey);
 
-    function getMskTime(ts = Date.now()) {
-        return new Date(ts).toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit', hour12: false });
-    }
+    const getMskTime = (ts = Date.now()) => new Date(ts).toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit', hour12: false });
 
     function saveMediaFile(base64Data, isImage) {
         if (!base64Data || !base64Data.includes('base64')) return base64Data;
@@ -53,15 +45,14 @@ module.exports = async function (app, context) {
         return `/uploads/${fileName}`; 
     }
 
+    // --- SOCKET LOGIC: ОНЛАЙН И СТАТУСЫ ---
     if (io) {
         io.on('connection', (socket) => {
-            // Улучшенные логи сокетов
             socket.on('join_room', async (roomId) => {
                 socket.join(roomId);
-                // Пытаемся найти имя пользователя для красивого лога
                 const user = await db.get('SELECT nickname FROM users WHERE chatId = ?', [roomId]);
-                const name = user ? user.nickname : 'Клиент';
-                console.log(`📡 Socket: ${name} вошел в комнату [${roomId}]`);
+                console.log(`📡 Socket: ${user ? user.nickname : 'Аноним'} в сети.`);
+                io.emit('refresh_chat_list'); // Уведомляем всех об изменении статуса онлайн
             });
             
             socket.on('mark_seen', async (data) => {
@@ -70,42 +61,33 @@ module.exports = async function (app, context) {
                 io.to(roomId).emit('msg_read_status', { roomId });
                 io.emit('refresh_chat_list');
             });
+
+            socket.on('disconnect', () => {
+                io.emit('refresh_chat_list'); // Кто-то ушел — обновляем точки онлайна
+            });
         });
     }
 
-    // --- API РЕГИСТРАЦИИ: ИСПРАВЛЕНЫ КОНФЛИКТЫ UNIQUE ---
+    // --- API РЕГИСТРАЦИИ: УМНОЕ ОБНОВЛЕНИЕ БЕЗ ОШИБОК ---
     app.post('/x-api/register-nick', async (req, res) => {
         const { nickname, password, chatId } = req.body;
         const nick = String(nickname).trim().toLowerCase();
-
         try {
             const existingNick = await db.get('SELECT * FROM users WHERE nickname = ?', [nick]);
-            
             if (existingNick) {
                 if (existingNick.password === password) {
-                    // Тот же юзер, просто обновляем ID если сменился
                     await db.run('UPDATE users SET chatId = ? WHERE nickname = ?', [chatId, nick]);
                     return res.json({ success: true });
                 }
-                return res.json({ success: false, message: "Ник занят другим паролем" });
+                return res.json({ success: false, message: "Ник занят" });
             }
-
-            // Если ника нет, проверяем не занят ли ID другим ником
-            const existingId = await db.get('SELECT * FROM users WHERE chatId = ?', [chatId]);
-            if (existingId) {
-                // Переименовываем существующий аккаунт этого устройства
-                await db.run('UPDATE users SET nickname = ?, password = ? WHERE chatId = ?', [nick, password, chatId]);
-            } else {
-                // Новый пользователь
-                await db.run('INSERT INTO users (chatId, nickname, password) VALUES (?, ?, ?)', [chatId, nick, password]);
-            }
+            // Если ника нет, проверяем ID (чтобы не дублировать устройства)
+            await db.run('INSERT OR REPLACE INTO users (chatId, nickname, password) VALUES (?, ?, ?)', [chatId, nick, password]);
             res.json({ success: true });
-        } catch (e) {
-            console.error("❌ REG ERROR:", e);
-            res.json({ success: false });
-        }
+        } catch (e) { res.json({ success: false }); }
     });
 
+    // --- API ПОИСКА: СОЗДАНИЕ ПРИВАТНЫХ КАНАЛОВ ---
     app.post('/x-api/find-user', async (req, res) => {
         const { myId, searchNick } = req.body;
         const targetNick = String(searchNick).trim().toLowerCase();
@@ -113,32 +95,31 @@ module.exports = async function (app, context) {
         if (target) {
             const roomIds = [myId, target.chatId].sort();
             res.json({ success: true, roomId: roomIds[0] + "_" + roomIds[1], targetNick: target.nickname });
-        } else { res.json({ success: false, message: "Пользователь не найден" }); }
+        } else { res.json({ success: false, message: "Не найден" }); }
     });
 
+    // --- API ОТПРАВКИ: СИСТЕМА + ГАЛОЧКИ ---
     app.post('/x-api/chat-send', async (req, res) => {
         try {
             const { roomId, user, text, avatar, isAudio, isImage, myChatId } = req.body;
-            const finalRoomId = roomId || 'public';
             const ts = Date.now();
             const msgId = 'msg_' + ts;
             const finalContent = (isAudio || isImage) ? saveMediaFile(text, isImage) : text;
 
             await db.run(`INSERT INTO messages (id, roomId, user, avatar, text, isAudio, isImage, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                [msgId, finalRoomId, user, avatar, finalContent, isAudio ? 1 : 0, isImage ? 1 : 0, ts]);
+                [msgId, roomId, user, avatar, finalContent, isAudio ? 1 : 0, isImage ? 1 : 0, ts]);
 
             if (io) {
-                io.to(finalRoomId).emit('new_message', { id: msgId, roomId: finalRoomId, user, avatar, text: finalContent, isAudio: !!isAudio, isImage: !!isImage, read: false, time: getMskTime(ts), timestamp: ts });
+                io.to(roomId).emit('new_message', { id: msgId, roomId, user, avatar, text: finalContent, isAudio: !!isAudio, isImage: !!isImage, read: false, time: getMskTime(ts), timestamp: ts });
                 io.emit('refresh_chat_list');
             }
 
             if (text.toLowerCase() === 'проверка связи') {
                 const sysTs = Date.now() + 500;
                 const sysRoom = 'system_log';
-                const sysText = '🛰️ СВЯЗЬ УСТАНОВЛЕНА. Все системы в норме.';
+                const sysText = '🛰️ СИСТЕМА: SQLite v5.0 Active. Все узлы связи в норме.';
                 
                 await db.run('UPDATE messages SET read = 1 WHERE roomId = ? AND read = 0', [sysRoom]);
-
                 await db.run(`INSERT INTO messages (id, roomId, user, avatar, text, isAudio, isImage, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                     ['sys_'+sysTs, sysRoom, 'СИСТЕМА', '', sysText, 0, 0, sysTs]);
 
@@ -152,26 +133,34 @@ module.exports = async function (app, context) {
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
+    // --- API СПИСКА: УМНЫЕ ИМЕНА И ЗЕЛЕНЫЕ ТОЧКИ ---
     app.get('/x-api/chat-list', async (req, res) => {
         const { myId, myName } = req.query;
-        const rooms = await db.all(`SELECT DISTINCT roomId FROM messages WHERE roomId LIKE ? OR roomId = 'public' OR roomId = 'system_log'`, [`%${myId}%`]);
-        const result = [];
-        for (let r of rooms) {
-            let dName = (r.roomId === 'public') ? "🌐 ОБЩИЙ КАНАЛ" : "Чат";
-            if (r.roomId === 'system_log') dName = "🛰️ СИСТЕМА";
-            else if (r.roomId.includes('_')) {
-                const otherId = r.roomId.split('_').find(id => id !== myId);
-                const u = await db.get('SELECT nickname FROM users WHERE chatId = ?', [otherId]);
-                if (u) dName = u.nickname;
+        try {
+            const rooms = await db.all(`SELECT DISTINCT roomId FROM messages WHERE roomId LIKE ? OR roomId = 'system_log'`, [`%${myId}%`]);
+            const result = [];
+            for (let r of rooms) {
+                let dName = "Чат";
+                let isOnline = false;
+                if (r.roomId === 'system_log') {
+                    dName = "🛰️ СИСТЕМА";
+                    isOnline = true; // Система всегда онлайн
+                } else if (r.roomId.includes('_')) {
+                    const otherId = r.roomId.split('_').find(id => id !== myId);
+                    const u = await db.get('SELECT nickname FROM users WHERE chatId = ?', [otherId]);
+                    dName = u ? u.nickname : "Юзер " + otherId.substring(0, 4);
+                    // Проверяем онлайн через сокеты по chatId собеседника
+                    isOnline = !!(io && io.sockets.adapter.rooms.has(otherId)); 
+                }
+                const unread = await db.get('SELECT COUNT(*) as cnt FROM messages WHERE roomId = ? AND read = 0 AND user != ?', [r.roomId, myName]);
+                result.push({ id: r.roomId, lastUser: dName, unreadCount: unread.cnt, isOnline: isOnline });
             }
-            const unread = await db.get('SELECT COUNT(*) as cnt FROM messages WHERE roomId = ? AND read = 0 AND user != ?', [r.roomId, myName]);
-            result.push({ id: r.roomId, lastUser: dName, unreadCount: unread.cnt, isOnline: !!(io && io.sockets.adapter.rooms.get(r.roomId)?.size > 0) });
-        }
-        res.json(result);
+            res.json(result);
+        } catch (e) { res.json([]); }
     });
 
     app.get('/x-api/chat-history', async (req, res) => {
-        const msgs = await db.all('SELECT * FROM messages WHERE roomId = ? ORDER BY timestamp ASC LIMIT 200', [req.query.roomId || 'public']);
+        const msgs = await db.all('SELECT * FROM messages WHERE roomId = ? ORDER BY timestamp ASC LIMIT 200', [req.query.roomId]);
         res.json(msgs.map(m => ({ ...m, isAudio: !!m.isAudio, isImage: !!m.isImage, time: getMskTime(m.timestamp) })));
     });
 
@@ -187,6 +176,5 @@ module.exports = async function (app, context) {
         res.json({ success: true });
     });
 
-    app.get('/x-api/vapid-key', (req, res) => res.send(vapidKeys.publicKey));
     app.get('/x-api/ping', (req, res) => res.send('ok'));
 };
