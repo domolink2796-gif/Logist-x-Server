@@ -16,7 +16,6 @@ module.exports = async function (app, context) {
 
     const db = await open({ filename: dbPath, driver: sqlite3.Database });
 
-    // Инициализация таблиц
     await db.exec(`
         CREATE TABLE IF NOT EXISTS users (chatId TEXT PRIMARY KEY, nickname TEXT UNIQUE, password TEXT);
         CREATE TABLE IF NOT EXISTS messages (
@@ -26,7 +25,7 @@ module.exports = async function (app, context) {
         CREATE TABLE IF NOT EXISTS push_subs (chatId TEXT PRIMARY KEY, subscription TEXT);
     `);
 
-    console.log("📡 [SYSTEM]: X-CONECT v5.0 (Full Sync) запущен.");
+    console.log("📡 [SYSTEM]: X-CONECT v5.1 запущен. Имена в приоритете.");
 
     const vapidKeys = {
         publicKey: 'BPOw_-Te5biFuSMrQLHjfsv3c9LtoFZkhHJp9FE1a1f55L8jGuL1uR39Ho9SWMN6dIdVt8FfxNHwcHuV0uUQ9Jg',
@@ -45,30 +44,22 @@ module.exports = async function (app, context) {
         return `/uploads/${fileName}`; 
     }
 
-    // --- SOCKET LOGIC: ОНЛАЙН И СТАТУСЫ ---
     if (io) {
         io.on('connection', (socket) => {
             socket.on('join_room', async (roomId) => {
                 socket.join(roomId);
-                const user = await db.get('SELECT nickname FROM users WHERE chatId = ?', [roomId]);
-                console.log(`📡 Socket: ${user ? user.nickname : 'Аноним'} в сети.`);
-                io.emit('refresh_chat_list'); // Уведомляем всех об изменении статуса онлайн
+                io.emit('refresh_chat_list'); 
             });
-            
             socket.on('mark_seen', async (data) => {
                 const { roomId, userId } = data;
                 await db.run('UPDATE messages SET read = 1 WHERE roomId = ? AND user != ? AND read = 0', [roomId, userId]);
                 io.to(roomId).emit('msg_read_status', { roomId });
                 io.emit('refresh_chat_list');
             });
-
-            socket.on('disconnect', () => {
-                io.emit('refresh_chat_list'); // Кто-то ушел — обновляем точки онлайна
-            });
+            socket.on('disconnect', () => io.emit('refresh_chat_list'));
         });
     }
 
-    // --- API РЕГИСТРАЦИИ: УМНОЕ ОБНОВЛЕНИЕ БЕЗ ОШИБОК ---
     app.post('/x-api/register-nick', async (req, res) => {
         const { nickname, password, chatId } = req.body;
         const nick = String(nickname).trim().toLowerCase();
@@ -81,13 +72,11 @@ module.exports = async function (app, context) {
                 }
                 return res.json({ success: false, message: "Ник занят" });
             }
-            // Если ника нет, проверяем ID (чтобы не дублировать устройства)
             await db.run('INSERT OR REPLACE INTO users (chatId, nickname, password) VALUES (?, ?, ?)', [chatId, nick, password]);
             res.json({ success: true });
         } catch (e) { res.json({ success: false }); }
     });
 
-    // --- API ПОИСКА: СОЗДАНИЕ ПРИВАТНЫХ КАНАЛОВ ---
     app.post('/x-api/find-user', async (req, res) => {
         const { myId, searchNick } = req.body;
         const targetNick = String(searchNick).trim().toLowerCase();
@@ -98,10 +87,9 @@ module.exports = async function (app, context) {
         } else { res.json({ success: false, message: "Не найден" }); }
     });
 
-    // --- API ОТПРАВКИ: СИСТЕМА + ГАЛОЧКИ ---
     app.post('/x-api/chat-send', async (req, res) => {
         try {
-            const { roomId, user, text, avatar, isAudio, isImage, myChatId } = req.body;
+            const { roomId, user, text, avatar, isAudio, isImage } = req.body;
             const ts = Date.now();
             const msgId = 'msg_' + ts;
             const finalContent = (isAudio || isImage) ? saveMediaFile(text, isImage) : text;
@@ -117,12 +105,10 @@ module.exports = async function (app, context) {
             if (text.toLowerCase() === 'проверка связи') {
                 const sysTs = Date.now() + 500;
                 const sysRoom = 'system_log';
-                const sysText = '🛰️ СИСТЕМА: SQLite v5.0 Active. Все узлы связи в норме.';
-                
+                const sysText = '🛰️ СИСТЕМА: SQLite v5.1 Active. Каналы синхронизированы.';
                 await db.run('UPDATE messages SET read = 1 WHERE roomId = ? AND read = 0', [sysRoom]);
                 await db.run(`INSERT INTO messages (id, roomId, user, avatar, text, isAudio, isImage, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                     ['sys_'+sysTs, sysRoom, 'СИСТЕМА', '', sysText, 0, 0, sysTs]);
-
                 setTimeout(() => { if (io) { 
                     io.to(sysRoom).emit('msg_read_status', { roomId: sysRoom });
                     io.emit('new_message', { id: 'sys_'+sysTs, roomId: sysRoom, user: 'СИСТЕМА', text: sysText, time: getMskTime(sysTs) });
@@ -133,23 +119,22 @@ module.exports = async function (app, context) {
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
-    // --- API СПИСКА: УМНЫЕ ИМЕНА И ЗЕЛЕНЫЕ ТОЧКИ ---
     app.get('/x-api/chat-list', async (req, res) => {
         const { myId, myName } = req.query;
         try {
             const rooms = await db.all(`SELECT DISTINCT roomId FROM messages WHERE roomId LIKE ? OR roomId = 'system_log'`, [`%${myId}%`]);
             const result = [];
             for (let r of rooms) {
-                let dName = "Чат";
+                let dName = "Собеседник";
                 let isOnline = false;
                 if (r.roomId === 'system_log') {
                     dName = "🛰️ СИСТЕМА";
-                    isOnline = true; // Система всегда онлайн
+                    isOnline = true;
                 } else if (r.roomId.includes('_')) {
                     const otherId = r.roomId.split('_').find(id => id !== myId);
                     const u = await db.get('SELECT nickname FROM users WHERE chatId = ?', [otherId]);
-                    dName = u ? u.nickname : "Юзер " + otherId.substring(0, 4);
-                    // Проверяем онлайн через сокеты по chatId собеседника
+                    // ГЛАВНОЕ ИСПРАВЛЕНИЕ: Если ник есть в базе - ставим его!
+                    dName = u ? u.nickname : otherId.substring(0, 8); 
                     isOnline = !!(io && io.sockets.adapter.rooms.has(otherId)); 
                 }
                 const unread = await db.get('SELECT COUNT(*) as cnt FROM messages WHERE roomId = ? AND read = 0 AND user != ?', [r.roomId, myName]);
@@ -167,12 +152,6 @@ module.exports = async function (app, context) {
     app.post('/x-api/chat-delete', async (req, res) => {
         await db.run('DELETE FROM messages WHERE id = ?', [req.body.msgId]);
         if (io) io.to(req.body.roomId).emit('delete_message', req.body.msgId);
-        res.json({ success: true });
-    });
-
-    app.post('/x-api/chat-room-delete', async (req, res) => {
-        await db.run('DELETE FROM messages WHERE roomId = ?', [req.body.roomId]);
-        io.emit('refresh_chat_list');
         res.json({ success: true });
     });
 
