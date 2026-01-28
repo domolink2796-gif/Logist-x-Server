@@ -7,8 +7,8 @@ const { open } = require('sqlite');
 
 /**
  * =====================================================================
- * X-CONECT ENGINE v4.0: SQLITE MONOLITH (AXX Tuning Edition)
- * Полная оптимизация: База данных + Файловое хранилище медиа
+ * X-CONECT ENGINE v4.2: SQLITE MONOLITH (AXX Tuning Edition)
+ * Добавлена функция автоматической проверки связи
  * =====================================================================
  */
 
@@ -28,7 +28,7 @@ module.exports = async function (app, context) {
         driver: sqlite3.Database
     });
 
-    // Создание таблиц (Пользователи, Сообщения, Пуш-подписки)
+    // Создание таблиц
     await db.exec(`
         CREATE TABLE IF NOT EXISTS users (chatId TEXT PRIMARY KEY, nickname TEXT UNIQUE, password TEXT);
         CREATE TABLE IF NOT EXISTS messages (
@@ -38,7 +38,7 @@ module.exports = async function (app, context) {
         CREATE TABLE IF NOT EXISTS push_subs (chatId TEXT PRIMARY KEY, subscription TEXT);
     `);
 
-    console.log("📡 [SYSTEM]: X-CONECT v4.0 (SQLite) запущен успешно.");
+    console.log("📡 [SYSTEM]: X-CONECT v4.2 (SQLite) запущен успешно.");
 
     // --- НАСТРОЙКА PUSH ---
     const vapidKeys = {
@@ -54,22 +54,19 @@ module.exports = async function (app, context) {
         });
     }
 
-    // Функция сохранения медиа (фото/аудио) в файлы
     function saveMediaFile(base64Data, isImage) {
         if (!base64Data || !base64Data.includes('base64')) return base64Data;
         const ext = isImage ? 'jpg' : 'webm';
         const fileName = `media_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${ext}`;
         const buffer = Buffer.from(base64Data.split(',')[1], 'base64');
         fs.writeFileSync(path.join(uploadsDir, fileName), buffer);
-        return `/uploads/${fileName}`; // Возвращаем путь для базы
+        return `/uploads/${fileName}`; 
     }
 
     // --- ЛОГИКА SOCKET.IO ---
     if (io) {
         io.on('connection', (socket) => {
             socket.on('join_room', (roomId) => socket.join(roomId));
-            
-            // Отметка о прочтении
             socket.on('mark_seen', async (data) => {
                 const { roomId, userId } = data;
                 await db.run('UPDATE messages SET read = 1 WHERE roomId = ? AND user != ? AND read = 0', [roomId, userId]);
@@ -82,7 +79,6 @@ module.exports = async function (app, context) {
     app.post('/x-api/register-nick', async (req, res) => {
         const { nickname, password, chatId } = req.body;
         const nick = String(nickname).trim().toLowerCase();
-        
         const existing = await db.get('SELECT * FROM users WHERE nickname = ?', [nick]);
         if (existing) {
             if (existing.password === password) {
@@ -103,7 +99,6 @@ module.exports = async function (app, context) {
             const ts = Date.now();
             const msgId = 'msg_' + ts + Math.random().toString(36).substr(2, 5);
 
-            // Сохраняем медиа, если оно есть
             const finalContent = (isAudio || isImage) ? saveMediaFile(text, isImage) : text;
 
             await db.run(
@@ -121,6 +116,30 @@ module.exports = async function (app, context) {
             if (io) {
                 io.to(finalRoomId).emit('new_message', newMessage);
                 io.emit('refresh_chat_list');
+            }
+
+            // === БЛОК ПРОВЕРКИ СВЯЗИ ===
+            if (text.toLowerCase() === 'проверка связи') {
+                const systemTs = Date.now() + 500;
+                const systemId = 'sys_' + systemTs;
+                const systemText = '🛰️ Связь установлена. Система X-CONECT на Orange Pi 3 LTS работает штатно. База SQLite активна.';
+                
+                // Сохраняем ответ системы в базу
+                await db.run(
+                    `INSERT INTO messages (id, roomId, user, avatar, text, isAudio, isImage, timestamp) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [systemId, finalRoomId, 'СИСТЕМА', '', systemText, 0, 0, systemTs]
+                );
+
+                const systemResponse = {
+                    id: systemId, roomId: finalRoomId, user: 'СИСТЕМА', avatar: '', 
+                    text: systemText, isAudio: false, isImage: false, read: false,
+                    time: getMskTime(systemTs), timestamp: systemTs
+                };
+
+                setTimeout(() => {
+                    if (io) io.to(finalRoomId).emit('new_message', systemResponse);
+                }, 800);
             }
 
             res.json({ success: true });
@@ -142,20 +161,16 @@ module.exports = async function (app, context) {
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
-    // --- API: СПИСОК ВКЛАДОК (С ИМЕНАМИ) ---
+    // --- API: СПИСОК ВКЛАДОК ---
     app.get('/x-api/chat-list', async (req, res) => {
         const { myId, myName } = req.query;
         const isAdmin = (myName === 'admin' || myName === 'Дмитрий');
-
-        const rooms = await db.all(`SELECT DISTINCT roomId FROM messages WHERE roomId LIKE ? OR ? = 1`, 
-            [`%${myId}%`, isAdmin ? 1 : 0]);
-
+        const rooms = await db.all(`SELECT DISTINCT roomId FROM messages WHERE roomId LIKE ? OR ? = 1`, [`%${myId}%`, isAdmin ? 1 : 0]);
         const result = [];
         for (let r of rooms) {
             const otherId = r.roomId.split('_').find(id => id !== myId && id !== 'admin');
             const userRow = await db.get('SELECT nickname FROM users WHERE chatId = ?', [otherId]);
             const unread = await db.get('SELECT COUNT(*) as cnt FROM messages WHERE roomId = ? AND read = 0 AND user != ?', [r.roomId, myName]);
-
             result.push({
                 id: r.roomId,
                 lastUser: userRow ? userRow.nickname : "Чат",
@@ -174,13 +189,11 @@ module.exports = async function (app, context) {
     });
 
     app.post('/x-api/save-subscription', async (req, res) => {
-        await db.run('INSERT OR REPLACE INTO push_subs (chatId, subscription) VALUES (?, ?)', 
-            [req.body.chatId, JSON.stringify(req.body.subscription)]);
+        await db.run('INSERT OR REPLACE INTO push_subs (chatId, subscription) VALUES (?, ?)', [req.body.chatId, JSON.stringify(req.body.subscription)]);
         res.json({ success: true });
     });
 
     app.get('/x-api/vapid-key', (req, res) => res.send(vapidKeys.publicKey));
-    
     app.post('/x-api/chat-room-delete', async (req, res) => {
         await db.run('DELETE FROM messages WHERE roomId = ?', [req.body.roomId]);
         io.emit('refresh_chat_list');
