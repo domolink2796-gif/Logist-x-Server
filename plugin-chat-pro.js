@@ -81,21 +81,34 @@ module.exports = function (app, context) {
     app.use('/x-api/', express.json({ limit: '100mb' }));
     app.use('/x-api/', express.urlencoded({ limit: '100mb', extended: true }));
 
-    // Функция подсчета статистики для Админа
+        // Функция подсчета статистики для Админа (Улучшенная версия)
     function broadcastAdminStats() {
         if (!io) return;
         
         const stats = Object.keys(memoryDb).map(chatId => {
             const messages = memoryDb[chatId] || [];
-            const unreadCount = messages.filter(m => !m.read && m.user !== 'admin' && m.user !== 'Дмитрий').length;
             
+            // 1. Пытаемся вычислить ID клиента из названия комнаты (chatId)
+            // Если комната приватная (id1_id2), вычитаем твои ID
+            const parts = chatId.split('_');
+            const clientId = parts.find(id => id !== 'admin' && id !== 'Дмитрий' && id !== 'chat');
+
+            // 2. 🔥 Ищем ник в "книге" usersRegistry по этому ID
+            let displayName = Object.keys(usersRegistry).find(nick => usersRegistry[nick] === clientId);
+
+            // 3. Если в базе ника нет (например, старый чат), ищем в сообщениях (не админа)
+            if (!displayName) {
+                const lastMsg = [...messages].reverse().find(m => m.user !== 'admin' && m.user !== 'Дмитрий');
+                displayName = lastMsg ? lastMsg.user : (messages[0]?.user || 'User');
+            }
+
+            const unreadCount = messages.filter(m => !m.read && m.user !== 'admin' && m.user !== 'Дмитрий').length;
             const roomSockets = io.sockets.adapter.rooms.get(chatId);
             const isOnline = roomSockets && roomSockets.size > 0; 
 
             return {
                 id: chatId,
-                lastUser: [...messages].reverse().find(m => m.user !== 'admin' && m.user !== 'Дмитрий')?.user || (messages[0]?.user || 'Empty'),
-
+                lastUser: displayName, // Теперь это Ник из регистрации
                 isOnline: !!isOnline,
                 unreadCount: unreadCount
             };
@@ -306,22 +319,36 @@ module.exports = function (app, context) {
     });
 
     app.get('/x-api/chat-list', (req, res) => {
-        const list = Object.keys(memoryDb).map(chatId => {
-            const messages = memoryDb[chatId] || [];
-            const unreadCount = messages.filter(m => !m.read && m.user !== 'admin' && m.user !== 'Дмитрий').length;
-            const roomSockets = io ? io.sockets.adapter.rooms.get(chatId) : null;
-            const isOnline = roomSockets && roomSockets.size > 0;
+    const list = Object.keys(memoryDb).map(chatId => {
+        const messages = memoryDb[chatId] || [];
+        
+        // 1. Ищем ID клиента в названии комнаты
+        const parts = chatId.split('_');
+        const clientId = parts.find(id => id !== 'admin' && id !== 'Дмитрий' && id !== 'chat');
 
-            return {
-                id: chatId, 
-                lastUser: [...messages].reverse().find(m => m.user !== 'admin' && m.user !== 'Дмитрий')?.user || (messages[0]?.user || 'Empty'),
+        // 2. Ищем Ник в базе "usersRegistry"
+        let displayName = Object.keys(usersRegistry).find(nick => usersRegistry[nick] === clientId);
 
-                isOnline: !!isOnline,
-                unreadCount: unreadCount
-            };
-        });
-        res.json(list);
+        // 3. Если ника нет в базе, ищем в истории (не админа)
+        if (!displayName) {
+            const lastClientMsg = [...messages].reverse().find(m => m.user !== 'admin' && m.user !== 'Дмитрий');
+            displayName = lastClientMsg ? lastClientMsg.user : (messages[0]?.user || 'User');
+        }
+
+        const unreadCount = messages.filter(m => !m.read && m.user !== 'admin' && m.user !== 'Дмитрий').length;
+        const roomSockets = io ? io.sockets.adapter.rooms.get(chatId) : null;
+        const isOnline = roomSockets && roomSockets.size > 0;
+
+        return {
+            id: chatId, 
+            lastUser: displayName, // Теперь тут всегда будет Ник клиента
+            isOnline: !!isOnline,
+            unreadCount: unreadCount
+        };
     });
+    res.json(list);
+});
+
 
     app.get('/x-api/ping', (req, res) => res.send('ok'));
     
